@@ -61,9 +61,16 @@ jobs:
         run: npm run build
       - name: Deploy Cloudflare Pages
         if: env.CLOUDFLARE_API_TOKEN != ''
-        uses: cloudflare/wrangler-action@v4
-        with:
-          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
-          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
-          workingDirectory: acai-gestao
-          command: pages deploy dist --project-name=prime-acai-gestao --branch=main
+        shell: bash
+        working-directory: acai-gestao
+        run: |
+          token="${CLOUDFLARE_API_TOKEN//$'\r'/}"
+          token="${token//$'\n'/}"
+          token="${token#"${token%%[![:space:]]*}"}"
+          token="${token%"${token##*[![:space:]]}"}"
+          if [[ -z "$token" ]]; then
+            echo "::error::CLOUDFLARE_API_TOKEN is empty after removing whitespace."
+            exit 1
+          fi
+          echo "::add-mask::$token"
+          CLOUDFLARE_API_TOKEN="$token" npx wrangler pages deploy dist --project-name=prime-acai-gestao --branch=main
