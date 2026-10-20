@@ -35,11 +35,9 @@ import { PGlite } from '@electric-sql/pglite'
 const PASTA = dirname(fileURLToPath(import.meta.url))
 
 const ORG = 'b0000000-0000-4000-8000-000000000001'
-const ORG2 = 'b0000000-0000-4000-8000-000000000002'
 const ADMIN = 'a0000000-0000-4000-8000-000000000001'
 const CASHIER = 'a0000000-0000-4000-8000-000000000002'
 const MANAGER = 'a0000000-0000-4000-8000-000000000003'
-const ADMIN2 = 'a0000000-0000-4000-8000-000000000004'
 
 let falhas = 0
 const log = (texto = '') => console.log(texto)
@@ -284,136 +282,6 @@ await devePassar(
   else podeFalhar('registro do self-service', JSON.stringify(p))
 }
 
-log('\n== Fotos de produto: armazenamento binário e salvamento atômico ==')
-{
-  const assinaturaPng = '89504e470d0a1a0a00000000'
-  const registroNovo = JSON.stringify({
-    codigo: 'IMG-ATOMIC',
-    nome: 'Produto com foto',
-    descricao: '',
-    categoria: 'Teste',
-    minimo: 2,
-    unidade: 'un',
-    custo: 3,
-    preco: 7,
-    ativo: true,
-    tipo_venda: 'unidade',
-    controla_estoque: true,
-    metodo_estoque: 'movimentacoes',
-    metodo_peso: null,
-  })
-
-  await autenticar(ADMIN)
-  await db.exec('set role authenticated')
-  let produtoImagem = null
-  try {
-    produtoImagem = await um(
-      `select (public.salvar_produto_com_imagem('${registroNovo}'::jsonb, 'image/png',
-              decode('${assinaturaPng}', 'hex'), false)).id as id`,
-    )
-  } catch (erro) {
-    podeFalhar('salvar produto e imagem pela RPC', erro.message)
-  } finally {
-    await db.exec('reset role')
-  }
-
-  if (produtoImagem?.id) {
-    const salvo = await um(
-      `select p.codigo, p.quantidade, i.mime, i.caminho, octet_length(i.conteudo) as bytes
-         from public.produtos p join public.imagens_produtos i on i.produto_id = p.id
-        where p.id = '${produtoImagem.id}'`,
-    )
-    if (
-      salvo.codigo === 'IMG-ATOMIC' &&
-      Number(salvo.quantidade) === 0 &&
-      salvo.mime === 'image/png' &&
-      salvo.caminho === `produtos/${produtoImagem.id}` &&
-      Number(salvo.bytes) === 12
-    ) {
-      ok('produto e imagem persistem juntos em bytea, com caminho estável e saldo inicial zero')
-    } else {
-      podeFalhar('imagem persistida', JSON.stringify(salvo))
-    }
-
-    await db.exec(`
-      insert into public.user_permissions (user_id, permission_id, allowed)
-      select '${CASHIER}', id, false from public.permissions
-       where module_key = 'estoque' and action_key = 'consultar'
-      on conflict (user_id, permission_id) do update set allowed = false
-    `)
-    const caixaLeFoto = await leComo(
-      CASHIER,
-      `select count(*)::int as n from public.imagens_produtos where produto_id = '${produtoImagem.id}'`,
-    )
-    await db.exec(`delete from public.user_permissions where user_id = '${CASHIER}'`)
-    if (!caixaLeFoto.erro && caixaLeFoto.n === 1) ok('caixa acessa fotos do PDV sem permissão de consulta ao estoque')
-    else podeFalhar('leitura de foto no PDV', caixaLeFoto.erro?.message ?? JSON.stringify(caixaLeFoto))
-
-    const registroEdicao = JSON.stringify({
-      id: produtoImagem.id,
-      codigo: 'IMG-ATOMIC',
-      nome: 'Produto com foto revisado',
-      descricao: '',
-      categoria: 'Teste',
-      quantidade: 999,
-      minimo: 2,
-      unidade: 'un',
-      custo: 4,
-      preco: 8,
-      ativo: true,
-      tipo_venda: 'unidade',
-      controla_estoque: true,
-      metodo_estoque: 'movimentacoes',
-      metodo_peso: null,
-    })
-    await autenticar(ADMIN)
-    await db.exec('set role authenticated')
-    try {
-      await um(
-        `select public.salvar_produto_com_imagem('${registroEdicao}'::jsonb, 'image/png',
-                decode('89504e470d0a1a0a0000000000000000', 'hex'), false)`,
-      )
-      await um(
-        `select public.salvar_produto_com_imagem('${registroEdicao}'::jsonb, null, null, true)`,
-      )
-    } catch (erro) {
-      podeFalhar('substituir e remover imagem', erro.message)
-    } finally {
-      await db.exec('reset role')
-    }
-
-    const aposEdicao = await um(
-      `select p.nome, p.quantidade, (select count(*) from public.imagens_produtos i
-          where i.produto_id = p.id)::int as imagens
-         from public.produtos p where p.id = '${produtoImagem.id}'`,
-    )
-    if (aposEdicao.nome === 'Produto com foto revisado' && Number(aposEdicao.quantidade) === 0 && aposEdicao.imagens === 0) {
-      ok('substituição/removal mantém o saldo do livro-razão e remove só a foto do produto')
-    } else {
-      podeFalhar('preservação de saldo ao editar foto', JSON.stringify(aposEdicao))
-    }
-  }
-
-  await deveFalhar(
-    'assinatura de arquivo incompatível com PNG é recusada no banco',
-    `insert into public.imagens_produtos (produto_id, mime, conteudo)
-     select id, 'image/png', decode('ffd8ffe00000000000000000', 'hex')
-       from public.produtos where codigo = 'IMG-ATOMIC'`,
-    'check constraint|violates check',
-  )
-  const caixaImagem = await escreveComo(
-    CASHIER,
-    `select public.salvar_produto_com_imagem(
-      '{"codigo":"IMG-NEGADO","nome":"Sem permissão","categoria":"Teste","tipo_venda":"unidade"}'::jsonb,
-      'image/png', decode('${assinaturaPng}', 'hex'), false)`,
-  )
-  if (caixaImagem.erro && /row-level security/i.test(caixaImagem.erro.message)) {
-    ok('o caixa não cria produto/foto sem permissão (RLS aplicado à RPC)')
-  } else {
-    podeFalhar('RLS da foto de produto', caixaImagem.erro?.message ?? 'a chamada passou')
-  }
-}
-
 log('\n== A conta do peso, feita pelo próprio banco ==')
 {
   const { total } = await um('select round(0.450 * 69.90, 2) as total')
@@ -539,78 +407,6 @@ log('\n== RLS de produtos: quem pode o quê ==')
   const adminCriaRec = await escreveComo(ADMIN, `insert into public.recipientes (nome, tara_g) values ('Pote 1 litro', 25)`)
   if (!adminCriaRec.erro && adminCriaRec.afetados === 1) ok('admin cadastra recipiente')
   else podeFalhar('cadastro de recipiente pelo admin', adminCriaRec.erro?.message ?? `afetados ${adminCriaRec.afetados}`)
-}
-
-log('\n== Categorias de produtos: unicidade e isolamento por organização ==')
-{
-  const nome = 'Categoria RLS Única'
-  const criacao = await escreveComo(
-    ADMIN,
-    `insert into public.categorias_produtos (nome, descricao)
-     values ('${nome}', 'Categoria de validação')`,
-  )
-  if (!criacao.erro && criacao.afetados === 1) ok('admin cadastra categoria')
-  else podeFalhar('cadastro de categoria pelo admin', criacao.erro?.message ?? `afetados ${criacao.afetados}`)
-
-  await deveFalhar(
-    'categoria duplicada por caixa e espaços é recusada',
-    `insert into public.categorias_produtos (organization_id, nome)
-     values ('${ORG}', '  categoria   rls única  ')`,
-    'categorias_produtos_nome_org_idx|duplicate key',
-  )
-
-  const caixaCriaCategoria = await escreveComo(
-    CASHIER,
-    `insert into public.categorias_produtos (nome) values ('Categoria do caixa')`,
-  )
-  if (caixaCriaCategoria.erro && /row-level security/i.test(caixaCriaCategoria.erro.message)) {
-    ok('caixa não cadastra categoria sem permissão')
-  } else {
-    podeFalhar('barreira de escrita de categorias', caixaCriaCategoria.erro?.message ?? 'o insert passou')
-  }
-
-  const caixaLeCategorias = await leComo(CASHIER, 'select count(*)::int as n from public.categorias_produtos')
-  if (!caixaLeCategorias.erro && caixaLeCategorias.n > 0) ok('caixa consulta categorias no contexto autorizado')
-  else podeFalhar('consulta de categorias pelo caixa', caixaLeCategorias.erro?.message ?? JSON.stringify(caixaLeCategorias))
-
-  await db.exec(`
-    insert into public.organizations (id, nome) values ('${ORG2}', 'Segunda Loja');
-    insert into neon_auth.user (id, email) values ('${ADMIN2}', 'admin2@teste.local');
-    insert into public.profiles (id, full_name, organization_id, role)
-      values ('${ADMIN2}', 'Admin da Segunda Loja', '${ORG2}', 'admin');
-  `)
-  const categoriaLegadaOrg2 = await leComo(
-    ADMIN2,
-    `select count(*)::int as n from public.categorias_produtos c
-      where c.organization_id = '${ORG2}'
-        and exists (
-          select 1 from public.produtos p
-           where lower(regexp_replace(btrim(p.categoria), '[[:space:]]+', ' ', 'g')) =
-                 lower(regexp_replace(btrim(c.nome), '[[:space:]]+', ' ', 'g'))
-        )`,
-  )
-  if (!categoriaLegadaOrg2.erro && categoriaLegadaOrg2.n > 0) {
-    ok('nova organização recebe categorias já usadas pelos produtos')
-  } else {
-    podeFalhar('seed de categorias na nova organização', categoriaLegadaOrg2.erro?.message ?? JSON.stringify(categoriaLegadaOrg2))
-  }
-  const categoriaOrg2 = await escreveComo(
-    ADMIN2,
-    `insert into public.categorias_produtos (nome) values ('Categoria exclusiva da loja 2')`,
-  )
-  const leituraOrg1 = await leComo(
-    ADMIN,
-    `select count(*)::int as n from public.categorias_produtos
-      where nome = 'Categoria exclusiva da loja 2'`,
-  )
-  if (!categoriaOrg2.erro && categoriaOrg2.afetados === 1 && !leituraOrg1.erro && leituraOrg1.n === 0) {
-    ok('categorias de uma loja não aparecem para outra organização')
-  } else {
-    podeFalhar(
-      'isolamento entre lojas',
-      categoriaOrg2.erro?.message ?? leituraOrg1.erro?.message ?? `criação ${categoriaOrg2.afetados}, visíveis ${leituraOrg1.n}`,
-    )
-  }
 }
 
 log('\n== RLS de clientes e financeiro + perfil inativo ==')
@@ -781,82 +577,6 @@ log('\n== P2 · Compra pela RPC (o caminho do navegador) ==')
     .catch((e) => e.message)
   if (semSessao && /sess/i.test(semSessao)) ok('sem sessão, a RPC recusa (não carimba usuário falso)')
   else podeFalhar('RPC sem sessão', semSessao ?? 'passou!')
-}
-
-log('\n== P2 · Estoque geral e transferências ==')
-{
-  await db.exec('begin')
-  const produto = `(select id from public.produtos where codigo = 'P008')`
-  const lojaAntes = await saldoDe('P008')
-  const saldosAntes = await rpcComoEmSavepoint(
-    ADMIN,
-    `select * from public.listar_saldos_estoque_locais() where produto_id = ${produto}`,
-  )
-  const geralAntes = Number(saldosAntes.linhas[0]?.saldo_geral ?? 0)
-  const entrada = await rpcComoEmSavepoint(
-    ADMIN,
-    `select * from public.registrar_movimentacao_local(
-       ${produto}, 10, 'fornecedor', 'estoque_geral', 'Entrada no estoque geral')`,
-  )
-
-  if (!saldosAntes.erro && !entrada.erro &&
-      Number(entrada.linhas[0]?.saldo_geral) === geralAntes + 10 &&
-      Number(entrada.linhas[0]?.saldo_loja) === lojaAntes) {
-    ok('RPC autenticada consulta os saldos e recebe mercadoria no estoque geral')
-  } else {
-    podeFalhar(
-      'entrada no estoque geral',
-      saldosAntes.erro?.message ?? entrada.erro?.message ??
-        `geral ${entrada.linhas[0]?.saldo_geral}, loja ${entrada.linhas[0]?.saldo_loja}`,
-    )
-  }
-
-  const chave = 'teste-transferencia-estoque-geral-22'
-  const transferenciaSql = `select * from public.transferir_estoque_local(
-    ${produto}, 3, 'geral', 'loja', 'Reposição de teste', '${chave}')`
-  const transferencia = await rpcComoEmSavepoint(ADMIN, transferenciaSql)
-  const repeticao = await rpcComoEmSavepoint(ADMIN, transferenciaSql)
-  const saldosDepois = await rpcComoEmSavepoint(
-    ADMIN,
-    `select * from public.listar_saldos_estoque_locais() where produto_id = ${produto}`,
-  )
-
-  if (!transferencia.erro && !repeticao.erro &&
-      transferencia.linhas[0]?.id === repeticao.linhas[0]?.id &&
-      transferencia.linhas[0]?.movimentacao_id === repeticao.linhas[0]?.movimentacao_id &&
-      Number(saldosDepois.linhas[0]?.saldo_geral) === geralAntes + 7 &&
-      Number(saldosDepois.linhas[0]?.saldo_loja) === lojaAntes + 3) {
-    ok('transferência geral → loja altera os dois saldos uma única vez, mesmo repetida')
-  } else {
-    podeFalhar(
-      'transferência idempotente',
-      transferencia.erro?.message ?? repeticao.erro?.message ?? saldosDepois.erro?.message ??
-        `geral ${saldosDepois.linhas[0]?.saldo_geral}, loja ${saldosDepois.linhas[0]?.saldo_loja}`,
-    )
-  }
-
-  const saldoInsuficiente = await rpcComoEmSavepoint(
-    ADMIN,
-    `select * from public.transferir_estoque_local(
-       ${produto}, 999, 'geral', 'loja', 'Teste de saldo insuficiente', 'teste-saldo-insuficiente')`,
-  )
-  if (saldoInsuficiente.erro && /saldo insuficiente/i.test(saldoInsuficiente.erro.message)) {
-    ok('transferência acima do saldo geral é recusada')
-  } else {
-    podeFalhar('transferência sem saldo', saldoInsuficiente.erro?.message ?? 'a RPC deixou passar!')
-  }
-
-  const caixaTransfere = await rpcComoEmSavepoint(
-    CASHIER,
-    `select * from public.transferir_estoque_local(
-       ${produto}, 1, 'geral', 'loja', 'Tentativa do caixa', 'teste-caixa-transferencia')`,
-  )
-  if (caixaTransfere.erro && /permiss/i.test(caixaTransfere.erro.message)) {
-    ok('caixa não consegue transferir estoque')
-  } else {
-    podeFalhar('permissão do caixa para transferir', caixaTransfere.erro?.message ?? 'a RPC deixou passar!')
-  }
-  await db.exec('rollback')
 }
 
 log('\n== P2 · Saldo não se edita: só se movimenta ==')
@@ -1692,8 +1412,7 @@ for (const arquivo of readdirSync(PASTA)
   const tabelas = await um(
     `select to_regclass('public.recipientes') as a,
             to_regclass('public.recipientes_historico') as b,
-            to_regclass('public.movimentacoes_estoque') as c,
-            to_regclass('public.imagens_produtos') as d`,
+            to_regclass('public.movimentacoes_estoque') as c`,
   )
   const sobraFuncao = await contar(
     `select count(*)::int as n from pg_proc
@@ -1717,28 +1436,21 @@ for (const arquivo of readdirSync(PASTA)
     `select count(*)::int as n from pg_trigger
       where tgrelid = 'public.produtos'::regclass and not tgisinternal`,
   )
-  const imagemRpc = await contar(
-    `select count(*)::int as n from pg_proc
-      where pronamespace = 'public'::regnamespace
-        and proname = 'salvar_produto_com_imagem'`,
-  )
 
   if (
     sobrou === 0 &&
     !tabelas.a && !tabelas.b && !tabelas.c &&
-    Boolean(tabelas.d) &&
-    imagemRpc === 0 &&
     sobraFuncao === 0 &&
     gatilhos === 0 &&
     colunasVenda === 0 &&
     colunasVendaTabela === 0 &&
     !sequencia.seq
   ) {
-    ok('os reverters removeram a RPC e preservaram a tabela de imagens para evitar perda de arquivos')
+    ok('os reverters desfizeram tudo: colunas, tabelas, funções, sequência e o trigger do saldo')
   } else {
     podeFalhar(
       'reversão incompleta',
-      `colunas ${sobrou}, tabelas ${JSON.stringify(tabelas)}, RPC imagem ${imagemRpc}, funções ${sobraFuncao}, gatilhos ${gatilhos}, ` +
+      `colunas ${sobrou}, tabelas ${JSON.stringify(tabelas)}, funções ${sobraFuncao}, gatilhos ${gatilhos}, ` +
         `colunas de item ${colunasVenda}, colunas de venda ${colunasVendaTabela}, sequência ${sequencia.seq}`,
     )
   }

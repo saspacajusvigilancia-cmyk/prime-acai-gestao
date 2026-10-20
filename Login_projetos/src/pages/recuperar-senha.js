@@ -17,20 +17,10 @@ import {
   marcarErro,
   mostrarAlerta,
 } from '../auth-ui.js'
-import { config, funcionalidadeAuthHabilitada, texto } from '../config.js'
+import { config, texto } from '../config.js'
 import { emailValido, enviarLinkDeRecuperacao, mensagemDeErro } from '../services/auth.js'
 
 export function recuperarSenhaPage() {
-  if (!funcionalidadeAuthHabilitada('recuperacaoSenha')) {
-    return {
-      html: layoutAuth({
-        titulo: 'Recuperação indisponível',
-        subtitulo: 'A recuperação de senha está desativada neste aplicativo.',
-        conteudo: `<a class="btn-auth" href="#${config.rotas.login}" style="text-decoration: none">Voltar para o login</a>`,
-      }),
-    }
-  }
-
   return {
     html: layoutAuth({
       titulo: texto('recuperarTitulo'),

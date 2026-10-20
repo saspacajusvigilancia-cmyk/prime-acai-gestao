@@ -19,7 +19,7 @@ import {
   mostrarAlerta,
   regrasSenha,
 } from '../auth-ui.js'
-import { config, funcionalidadeAuthHabilitada, texto } from '../config.js'
+import { config, texto } from '../config.js'
 import {
   checarSenha,
   criarConta,
@@ -36,7 +36,7 @@ import { esc } from '../ui.js'
 export function cadastroPage() {
   // Com o cadastro público desligado a tela nem aparece (o roteador manda de
   // volta para o login); a checagem aqui é a segunda tranca.
-  if (!funcionalidadeAuthHabilitada('cadastro')) {
+  if (!config.cadastroPublico) {
     return {
       html: layoutAuth({
         titulo: 'Cadastro indisponível',
@@ -213,39 +213,13 @@ export function cadastroPage() {
             return
           }
 
+          // Já saiu logado (verificação de e-mail desligada no projeto).
+          mostrarAlerta(root, 'cadastro-alerta', 'ok', mensagemDeSucesso())
+
           // Cria o perfil (possivelmente pendente) antes de encerrar a sessão,
           // para a conta já aparecer na lista do administrador.
-          try {
-            await garantirPerfil()
-          } catch (erroPerfil) {
-            console.error('[cadastro] Não foi possível criar o perfil da conta.', erroPerfil)
-            mostrarAlerta(
-              root,
-              'cadastro-alerta',
-              'erro',
-              'A conta foi criada, mas não foi possível concluir a configuração do acesso. Tente entrar novamente ou fale com um administrador.',
-            )
-            definirCarregando(botao, false, 'Cadastrar usuário')
-            enviando = false
-            return
-          }
-
-          try {
-            await sair()
-          } catch (erroLogout) {
-            console.error('[cadastro] Não foi possível encerrar a sessão após o cadastro.', erroLogout)
-            mostrarAlerta(
-              root,
-              'cadastro-alerta',
-              'erro',
-              'A conta foi criada, mas não foi possível encerrar a sessão automaticamente. Saia e entre novamente para continuar.',
-            )
-            definirCarregando(botao, false, 'Cadastrar usuário')
-            enviando = false
-            return
-          }
-
-          mostrarAlerta(root, 'cadastro-alerta', 'ok', mensagemDeSucesso())
+          try { await garantirPerfil() } catch (e) { console.warn('[cadastro] garantirPerfil falhou:', e) }
+          await sair().catch(() => {})
 
           setTimeout(() => {
             window.location.hash = config.rotas.login

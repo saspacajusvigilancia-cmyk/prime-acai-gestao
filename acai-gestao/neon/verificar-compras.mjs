@@ -1,5 +1,5 @@
 /**
- * Confere o módulo de Compras na base real, sem deixar rastro.
+ * Confere o módulo de Compras e Entradas na base real, sem deixar rastro.
  *
  * Uso:
  *   npm run verificar:compras
@@ -341,4 +341,4 @@ if (falhas) {
   process.exit(1)
 }
 
-console.log('\n  Compras: tudo certo (nada foi gravado).\n')
+console.log('\n  Compras e Entradas: tudo certo (nada foi gravado).\n')

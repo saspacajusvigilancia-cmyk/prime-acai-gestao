@@ -116,7 +116,7 @@ export function cardHead({ titulo, descricao = '', acoes = '' }) {
   return `
     <div class="card__head">
       <div>
-        ${titulo ? `<h2 class="card__title">${esc(titulo)}</h2>` : ''}
+        <h2 class="card__title">${esc(titulo)}</h2>
         ${descricao ? `<p class="card__desc">${esc(descricao)}</p>` : ''}
       </div>
       ${acoes ? `<div class="card__actions">${acoes}</div>` : ''}

@@ -248,7 +248,7 @@ create trigger fornecedores_atualizado_em
 -- 5. Permissões do módulo
 -- ============================================================================
 insert into public.permissions (module_key, action_key, description) values
-  ('compras', 'ver',       'Ver o menu e abrir Compras'),
+  ('compras', 'ver',       'Ver o menu e abrir Compras e Entradas'),
   ('compras', 'consultar', 'Consultar compras, recebimentos e fornecedores'),
   ('compras', 'criar',     'Registrar compra e fornecedor'),
   ('compras', 'editar',    'Alterar compra e confirmar recebimento'),

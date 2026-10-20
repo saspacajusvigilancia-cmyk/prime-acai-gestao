@@ -71,14 +71,11 @@ describe('tela de Estoque — produtos', () => {
     expect(root.querySelector('#contagem-estoque').textContent).toBe('1 de 10 itens')
   })
 
-  it('o formulário de novo item traz os campos do cadastro por tipo de venda', async () => {
+  it('o formulário de novo item traz os campos do cadastro por tipo de venda', () => {
     const root = montar()
     root.querySelector('[data-acao="novo-produto"]').click()
-    await tick()
 
     const campo = (nome) => document.querySelector(`#campo-${nome}`)
-    expect(campo('categoria').tagName).toBe('SELECT')
-    expect([...campo('categoria').options].map((opcao) => opcao.textContent)).toContain('Açaí')
     for (const nome of [
       'codigo',
       'nome',
@@ -108,7 +105,7 @@ describe('tela de Estoque — produtos', () => {
 
     // Código sugerido na sequência do que já existe.
     expect(campo('codigo').value).toBe('P011')
-  }, 15000)
+  })
 })
 
 describe('tela de Estoque — livro-razão do saldo', () => {

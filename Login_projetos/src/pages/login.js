@@ -18,13 +18,12 @@ import {
   marcarErro,
   mostrarAlerta,
 } from '../auth-ui.js'
-import { config, funcionalidadeAuthHabilitada, texto } from '../config.js'
+import { config, texto } from '../config.js'
 import { emailValido, entrar, mensagemDeErro } from '../services/auth.js'
 import { avisarSessao, estadoSessao } from '../sessao.js'
 
 export function loginPage() {
-  const cadastroPublico = funcionalidadeAuthHabilitada('cadastro')
-  const recuperacaoHabilitada = funcionalidadeAuthHabilitada('recuperacaoSenha')
+  const cadastroPublico = config.cadastroPublico
 
   return {
     html: layoutAuth({
@@ -61,7 +60,7 @@ export function loginPage() {
       `,
       rodape: `
         <div class="auth__rodape-linha">
-          ${recuperacaoHabilitada ? `<a href="#${config.rotas.recuperar}">Esqueci minha senha</a>` : ''}
+          <a href="#${config.rotas.recuperar}">Esqueci minha senha</a>
           ${cadastroPublico ? `<a href="#${config.rotas.cadastro}">Criar conta</a>` : ''}
         </div>
         ${

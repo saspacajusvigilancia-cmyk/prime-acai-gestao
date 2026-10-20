@@ -21,21 +21,11 @@ import {
   mostrarAlerta,
   regrasSenha,
 } from '../auth-ui.js'
-import { config, funcionalidadeAuthHabilitada, texto } from '../config.js'
+import { config, texto } from '../config.js'
 import { renderIcons } from '../lib/icons.js'
 import { checarSenha, definirNovaSenha, mensagemDeErro, senhaForte, tokenDeRecuperacao } from '../services/auth.js'
 
 export function redefinirSenhaPage() {
-  if (!funcionalidadeAuthHabilitada('redefinicaoSenha')) {
-    return {
-      html: layoutAuth({
-        titulo: 'Redefinição indisponível',
-        subtitulo: 'A redefinição de senha está desativada neste aplicativo.',
-        conteudo: `<a class="btn-auth" href="#${config.rotas.login}" style="text-decoration: none">Voltar para o login</a>`,
-      }),
-    }
-  }
-
   return {
     html: layoutAuth({
       titulo: texto('redefinirTitulo'),

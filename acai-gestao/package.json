@@ -16,7 +16,7 @@
     "verificar:vendas": "node neon/verificar-vendas.mjs",
     "verificar:estoque:concorrencia": "node neon/verificar-estoque.mjs --concorrencia",
     "testar:estoque:api": "node neon/testar-estoque-api.mjs",
-    "deploy:cloudflare": "npm run build && wrangler pages deploy dist --project-name=prime-acai-gestao --branch=main"
+    "deploy:cloudflare": "npm run build && wrangler pages deploy dist --project-name=prime-acai-gestao"
   },
   "devDependencies": {
     "@electric-sql/pglite": "^0.5.10",

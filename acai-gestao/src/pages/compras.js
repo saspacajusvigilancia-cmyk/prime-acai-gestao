@@ -102,13 +102,14 @@ const descontosItens = (lista) =>
  * HTML
  * ========================================================================== */
 
-export function comprasPage({ fornecedoresOnly = false } = {}) {
+export function comprasPage() {
   const hojeISO = hoje()
 
   return {
     html: `
       <section class="page-head">
         <div>
+          <h1 class="page-title">Compras e Entradas</h1>
           <p class="page-subtitle">Registre a compra, receba a mercadoria e dê entrada no estoque com custo e validade.</p>
         </div>
       </section>
@@ -123,22 +124,18 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
       <div id="compras-alertas"></div>
 
       <div class="compras-tabs" role="tablist" aria-label="Seções de compras">
-        <button type="button" class="compras-tab is-active" data-tab="compra" role="tab" aria-selected="true">Compra</button>
+        <button type="button" class="compras-tab is-active" data-tab="nova" role="tab" aria-selected="true">Nova compra</button>
+        <button type="button" class="compras-tab" data-tab="historico" role="tab" aria-selected="false">Histórico</button>
         <button type="button" class="compras-tab" data-tab="fornecedores" role="tab" aria-selected="false">Fornecedores</button>
       </div>
 
       <!-- ============================== NOVA COMPRA ============================== -->
-      <section class="compras-painel" data-painel="nova" role="tabpanel" hidden>
+      <section class="compras-painel" data-painel="nova" role="tabpanel">
         <div class="card">
           ${cardHead({
             titulo: 'Nova compra',
             descricao: 'A compra só movimenta o estoque quando o recebimento é confirmado.',
-            acoes: `
-              <button class="btn btn--ghost" type="button" data-acao="voltar-compras">
-                <i data-lucide="arrow-left"></i><span>Voltar para compras</span>
-              </button>
-              <span class="badge badge--neutral" id="nova-situacao">Rascunho</span>
-            `,
+            acoes: `<span class="badge badge--neutral" id="nova-situacao">Rascunho</span>`,
           })}
 
           <div class="compras-form">
@@ -171,8 +168,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
 
             <label class="campo">
               <span class="campo__label">Número da nota</span>
-              <input class="campo__input" id="compra-nota" type="text" placeholder="Número da nota fiscal" autocomplete="off" />
-              <p class="campo__ajuda" id="compra-nota-ajuda">Obrigatório quando a compra for com nota fiscal.</p>
+              <input class="campo__input" id="compra-nota" type="text" placeholder="Opcional" autocomplete="off" />
             </label>
 
             <label class="campo">
@@ -201,7 +197,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
 
             <label class="campo">
               <span class="campo__label">Unidade de compra</span>
-              <input class="campo__input" id="item-unidade" type="text" value="UN" maxlength="12" />
+              <input class="campo__input" id="item-unidade" type="text" value="un" maxlength="12" />
             </label>
 
             <label class="campo">
@@ -276,19 +272,12 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
       </section>
 
       <!-- ============================== HISTÓRICO ============================== -->
-      <section class="compras-painel" data-painel="compra" role="tabpanel">
+      <section class="compras-painel" data-painel="historico" role="tabpanel" hidden>
         <div class="card">
           ${cardHead({
-            titulo: '',
-            descricao: 'Consulte as compras registradas, acompanhe o recebimento e veja o histórico.',
-            acoes: `
-              <button class="btn btn--ghost" type="button" id="compras-exportar">
-                <i data-lucide="clipboard-list"></i><span>Exportar CSV</span>
-              </button>
-              ${podeCriar()
-                ? botaoPrimario({ label: 'Nova compra', icon: 'plus', acao: 'nova-compra' })
-                : ''}
-            `,
+            titulo: 'Histórico de compras',
+            descricao: 'Todo recebimento fica registrado com data, responsável e movimentação de estoque.',
+            acoes: `<button class="btn btn--ghost" type="button" id="compras-exportar"><i data-lucide="clipboard-list"></i><span>Exportar CSV</span></button>`,
           })}
 
           <div class="toolbar" style="margin-bottom:12px">
@@ -345,22 +334,10 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
 
       const el = (seletor) => root.querySelector(seletor)
 
-      function atualizarAjudaNumeroNota() {
-        const semNota = el('#compra-documento').value === 'sem_nota'
-        el('#compra-nota').placeholder = semNota ? 'Opcional para compra sem nota' : 'Informe o número da nota fiscal'
-        el('#compra-nota-ajuda').textContent = semNota
-          ? 'Deixe em branco somente quando a compra for sem nota fiscal.'
-          : 'Obrigatório para compras com nota fiscal.'
-      }
-
-      el('#compra-documento').addEventListener('change', atualizarAjudaNumeroNota)
-      atualizarAjudaNumeroNota()
-
       /* ------------------------------------------------------------- abas -- */
       function mostrarAba(nome) {
-        const abaAtiva = nome === 'nova' ? 'compra' : nome
         root.querySelectorAll('.compras-tab').forEach((botao) => {
-          const ativo = botao.dataset.tab === abaAtiva
+          const ativo = botao.dataset.tab === nome
           botao.classList.toggle('is-active', ativo)
           botao.setAttribute('aria-selected', String(ativo))
         })
@@ -373,7 +350,6 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
       root.querySelectorAll('.compras-tab').forEach((botao) => {
         botao.addEventListener('click', () => mostrarAba(botao.dataset.tab))
       })
-      el('[data-acao="voltar-compras"]').addEventListener('click', () => mostrarAba('compra'))
 
       /* --------------------------------------------------------- selects -- */
       function atualizarSelectFornecedores() {
@@ -563,7 +539,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
 
       function atualizarDica() {
         const produto = produtoPorId(el('#item-produto').value)
-        const unidade = el('#item-unidade').value.trim().toUpperCase() || 'UN'
+        const unidade = el('#item-unidade').value.trim() || 'un'
         const fator = paraNumero(el('#item-fator').value) || 0
         const quantidade = paraNumero(el('#item-qtd').value) || 0
         const dica = el('#item-dica')
@@ -590,7 +566,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
 
       function limparItemFormulario() {
         el('#item-produto').value = ''
-        el('#item-unidade').value = 'UN'
+        el('#item-unidade').value = 'un'
         el('#item-fator').value = '1'
         el('#item-qtd').value = ''
         el('#item-custo').value = ''
@@ -614,7 +590,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
         }
 
         select.value = item.produtoId
-        el('#item-unidade').value = item.unidadeCompra.toUpperCase()
+        el('#item-unidade').value = item.unidadeCompra
         el('#item-fator').value = String(item.fatorConversao).replace('.', ',')
         el('#item-qtd').value = String(item.quantidadeSolicitada).replace('.', ',')
         el('#item-custo').value = String(item.custoUnitario).replace('.', ',')
@@ -637,7 +613,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
 
         if (!produto) throw new Error('Escolha o produto do item.')
 
-        const unidadeCompra = (el('#item-unidade').value.trim() || produto.unidade || 'UN').toUpperCase()
+        const unidadeCompra = el('#item-unidade').value.trim() || produto.unidade || 'un'
         const fator = paraNumero(el('#item-fator').value)
         const quantidade = paraNumero(el('#item-qtd').value)
         const custo = paraNumero(el('#item-custo').value)
@@ -698,18 +674,11 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
       el('#item-produto').addEventListener('change', () => {
         const produto = produtoPorId(el('#item-produto').value)
         if (produto) {
-          el('#item-unidade').value = (produto.unidade || 'UN').toUpperCase()
+          el('#item-unidade').value = produto.unidade || 'un'
           el('#item-fator').value = '1'
           el('#item-custo').value = produto.custo ? String(produto.custo).replace('.', ',') : ''
         }
         atualizarDica()
-      })
-
-      el('#item-unidade').addEventListener('input', () => {
-        const campo = el('#item-unidade')
-        const posicao = campo.selectionStart
-        campo.value = campo.value.toUpperCase()
-        campo.setSelectionRange(posicao, posicao)
       })
 
       ;['#item-unidade', '#item-fator', '#item-qtd'].forEach((seletor) => {
@@ -754,7 +723,6 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
           const { dados, origem } = await registrarCompra({
             dataCompra: el('#compra-data').value,
             fornecedorId: el('#compra-fornecedor').value || null,
-            fornecedorNome: el('#compra-fornecedor').selectedOptions[0]?.textContent ?? '',
             tipoDocumento: el('#compra-documento').value,
             numeroNota: el('#compra-nota').value,
             observacoes: el('#compra-observacoes').value,
@@ -779,7 +747,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
             renderHistorico()
           }
 
-          mostrarAba('compra')
+          mostrarAba('historico')
         } catch (erro) {
           console.error('[compras] Falha ao salvar compra.', erro)
           toast(mensagemErro(erro))
@@ -793,14 +761,6 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
       el('#compra-salvar').addEventListener('click', () => salvarCompra(true))
       el('#compra-salvar-rascunho').addEventListener('click', () => salvarCompra(false))
       el('#compra-limpar').addEventListener('click', limparCompra)
-      el('[data-acao="nova-compra"]').addEventListener('click', () => {
-        if (!podeCriar()) {
-          toast('Sua conta não tem permissão para registrar compras.')
-          return
-        }
-        limparCompra()
-        mostrarAba('nova')
-      })
 
       /* --------------------------------------------------- lista/histórico -- */
       const colunasHistorico = () => [
@@ -1259,20 +1219,12 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
           render: (f) =>
             `<span class="cell-main">${esc(f.nome)}</span>${f.observacoes ? `<span class="cell-sub">${esc(f.observacoes)}</span>` : ''}`,
         },
-        {
-          key: 'cnpj',
-          label: 'Documento',
-          render: (f) => {
-            if (!f.cnpj) return '—'
-            const tipo = f.cnpj.replace(/\D/g, '').length === 11 ? 'CPF' : 'CNPJ'
-            return `<span class="cell-main">${tipo}: ${esc(f.cnpj)}</span>`
-          },
-        },
+        { key: 'cnpj', label: 'CNPJ / CPF', render: (f) => esc(f.cnpj || '—') },
         {
           key: 'contato',
           label: 'Contato',
           render: (f) =>
-            `<span class="cell-main">${esc(f.telefone || '—')}</span>${f.whatsapp ? `<span class="cell-sub">WhatsApp: ${esc(f.whatsapp)}</span>` : ''}${f.email ? `<span class="cell-sub">${esc(f.email)}</span>` : ''}`,
+            `<span class="cell-main">${esc(f.telefone || '—')}</span>${f.email ? `<span class="cell-sub">${esc(f.email)}</span>` : ''}`,
         },
         {
           key: 'ativo',
@@ -1322,42 +1274,19 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
                 nome: fornecedor.nome,
                 cnpj: fornecedor.cnpj,
                 telefone: fornecedor.telefone,
-                whatsapp: fornecedor.whatsapp,
                 email: fornecedor.email,
                 observacoes: fornecedor.observacoes,
               }
             : {},
           campos: [
-            { nome: 'nome', label: 'Nome / Razão Social', obrigatorio: true, largo: true },
-            {
-              nome: 'cnpj',
-              label: 'CPF ou CNPJ',
-              placeholder: 'CPF ou CNPJ',
-              ajuda: 'Digite até 11 dígitos para CPF ou 14 para CNPJ.',
-              inputmode: 'numeric',
-              maxlength: 18,
-            },
-            {
-              nome: 'telefone',
-              label: 'Telefone',
-              placeholder: '(00) 0000-0000',
-              ajuda: 'DDD e 10 dígitos para fixo ou 11 para celular.',
-              inputmode: 'numeric',
-              maxlength: 15,
-            },
-            {
-              nome: 'whatsapp',
-              label: 'WhatsApp',
-              placeholder: '(00) 00000-0000',
-              ajuda: 'DDD e 10 ou 11 dígitos.',
-              inputmode: 'numeric',
-              maxlength: 15,
-            },
+            { nome: 'nome', label: 'Nome / razão social', obrigatorio: true, largo: true },
+            { nome: 'cnpj', label: 'CNPJ / CPF', placeholder: 'Opcional' },
+            { nome: 'telefone', label: 'Telefone', placeholder: '(00) 00000-0000' },
             { nome: 'email', label: 'E-mail', placeholder: 'Opcional' },
             { nome: 'observacoes', label: 'Observações', tipo: 'textarea', largo: true },
           ],
           aoSalvar: async (valores) => {
-            const { dados, origem } = editando
+            const { dados } = editando
               ? await atualizarFornecedor(fornecedor.id, valores)
               : await criarFornecedor(valores)
 
@@ -1369,67 +1298,9 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
             renderFornecedores()
             atualizarSelectFornecedores()
 
-            const mensagem = origem === 'neon'
-              ? editando
-                ? 'Fornecedor atualizado no banco.'
-                : 'Fornecedor cadastrado no banco.'
-              : `${editando ? 'Fornecedor atualizado' : 'Fornecedor cadastrado'} apenas nesta sessão — o Neon não está configurado.`
-            return mensagem
+            return editando ? 'Fornecedor atualizado.' : 'Fornecedor cadastrado.'
           },
         })
-
-        const formulario = document.querySelector('.modal')
-        const documento = formulario?.querySelector('[name="cnpj"]')
-        const atualizarMascara = (campo, formatar) => {
-          campo.addEventListener('input', () => {
-            campo.value = formatar(campo.value)
-          })
-          campo.value = formatar(campo.value)
-        }
-        const formatarDocumento = (valor) => {
-          const digitos = valor.replace(/\D/g, '')
-          if (digitos.length > 11) {
-            return digitos
-              .slice(0, 14)
-              .replace(/^(\d{2})(\d)/, '$1.$2')
-              .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
-              .replace(/\.(\d{3})(\d)/, '.$1/$2')
-              .replace(/(\d{4})(\d)/, '$1-$2')
-          }
-
-          return digitos
-            .slice(0, 11)
-            .replace(/^(\d{3})(\d)/, '$1.$2')
-            .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
-            .replace(/\.(\d{3})(\d{1,2})$/, '.$1-$2')
-        }
-        if (documento) {
-          const rotuloDocumento = documento.closest('.campo')?.querySelector('.campo__label')
-          documento.addEventListener('input', () => {
-            const digitos = documento.value.replace(/\D/g, '')
-            if (rotuloDocumento) {
-              rotuloDocumento.textContent = digitos.length > 11
-                ? 'CNPJ'
-                : digitos.length
-                  ? 'CPF'
-                  : 'CPF ou CNPJ'
-            }
-          })
-          atualizarMascara(documento, formatarDocumento)
-          documento.dispatchEvent(new Event('input'))
-        }
-
-        const formatarTelefone = (valor) => {
-          const digitos = valor.replace(/\D/g, '').slice(0, 11)
-          if (!digitos) return ''
-          const ddd = digitos.slice(0, 2)
-          const local = digitos.slice(2)
-          if (digitos.length <= 2) return `(${ddd}`
-          const limite = digitos.length > 10 ? 5 : 4
-          return `(${ddd}) ${local.slice(0, limite)}${local.length > limite ? `-${local.slice(limite)}` : ''}`
-        }
-        formulario?.querySelectorAll('[name="telefone"], [name="whatsapp"]')
-          .forEach((campo) => atualizarMascara(campo, formatarTelefone))
       }
 
       async function alternarFornecedor(fornecedor) {
@@ -1480,22 +1351,14 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
       }
 
       /* ------------------------------------------------------------ início -- */
-      if (fornecedoresOnly) {
-        el('.page-head').hidden = true
-        el('.grid--stats').hidden = true
-        el('#compras-alertas').hidden = true
-        el('.compras-tabs').hidden = true
-        mostrarAba('fornecedores')
-      }
-
       renderItensNovos()
       atualizarDica()
       carregarDados()
 
       const aoBuscarGlobal = (evento) => {
         const termo = evento.detail ?? ''
-        const painelCompra = root.querySelector('[data-painel="compra"]')
-        if (!painelCompra || painelCompra.hidden) return
+        const painelHistorico = root.querySelector('[data-painel="historico"]')
+        if (!painelHistorico || painelHistorico.hidden) return
         el('#filtro-busca').value = termo
         renderHistorico()
       }
@@ -1511,10 +1374,6 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
       }
     },
   }
-}
-
-export function fornecedoresPage() {
-  return comprasPage({ fornecedoresOnly: true })
 }
 
 /* ============================================================================

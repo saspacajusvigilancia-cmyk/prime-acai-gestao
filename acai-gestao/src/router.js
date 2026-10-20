@@ -33,8 +33,7 @@ export function createRouter({ routes, raiz, shells, guarda, onRender }) {
   }
 
   function match(path) {
-    const caminho = String(path).split('?')[0]
-    return routes.find((rota) => rota.path === caminho) ?? fallback
+    return routes.find((rota) => rota.path === path) ?? fallback
   }
 
   function navigate(path) {

@@ -146,7 +146,6 @@ export function financeiroPage() {
     `,
 
     mount(root) {
-      const estilo = getComputedStyle(root)
       let dados = lancamentosExemplo
       // O cartão "Entradas do mês" junta o valor da série mensal com a variação
       // do comparativo; guardo os dois para que cheguem na ordem que chegarem.
@@ -183,20 +182,8 @@ export function financeiroPage() {
         data: {
           labels: [],
           datasets: [
-            {
-              label: 'Entradas',
-              data: [],
-              backgroundColor: estilo.getPropertyValue('--marca-verde').trim(),
-              borderRadius: 6,
-              maxBarThickness: 34,
-            },
-            {
-              label: 'Saídas',
-              data: [],
-              backgroundColor: estilo.getPropertyValue('--marca-dourado').trim(),
-              borderRadius: 6,
-              maxBarThickness: 34,
-            },
+            { label: 'Entradas', data: [], backgroundColor: '#7c3aed', borderRadius: 6, maxBarThickness: 34 },
+            { label: 'Saídas', data: [], backgroundColor: '#cbd5e1', borderRadius: 6, maxBarThickness: 34 },
           ],
         },
         options: {
@@ -208,7 +195,7 @@ export function financeiroPage() {
           scales: {
             y: {
               beginAtZero: true,
-              grid: { color: estilo.getPropertyValue('--borda').trim() },
+              grid: { color: 'rgba(124, 58, 237, 0.10)' },
               ticks: { callback: (v) => `R$ ${v}` },
             },
             x: { grid: { display: false } },

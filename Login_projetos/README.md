@@ -39,7 +39,7 @@ vem de `configurarLogin({...})`.
 
 ```bash
 npm install                 # dependências do próprio módulo (só para testar)
-npm test                    # testes do módulo
+npm test                    # 29 testes
 ```
 
 Para usar num projeto novo, siga **[`docs/INTEGRACAO.md`](docs/INTEGRACAO.md)**.
@@ -58,7 +58,6 @@ E no `.env` do projeto:
 
 ```ini
 VITE_NEON_URL=https://ep-xxxxx.c-2.us-east-2.aws.neon.tech/neondb
-VITE_APP_URL=https://seu-dominio.example
 VITE_CADASTRO_PUBLICO=true
 ```
 
@@ -73,11 +72,8 @@ configurarLogin({
   marca: {
     nome, assinatura, icone, chamada, descricao, pontos
   },
-  rotas: { login, cadastro, recuperar, redefinir, depoisDoLogin, depoisDoLogout },
+  rotas: { login, cadastro, recuperar, redefinir, depoisDoLogin },
   cadastroPublico,       // liga/desliga a tela de cadastro
-  funcionalidades,       // login, cadastro, recuperacaoSenha, redefinicaoSenha
-  provedor,              // cliente/adaptador compatível (Neon é o padrão)
-  urlAplicacao,          // origem/base pública usada no link de recuperação
   senhaMinima,           // tamanho mínimo de senha
   papeis,                // { admin, manager, cashier } → rótulos
   aprovacaoManual,       // cadastro depende de aprovação?
@@ -89,13 +85,6 @@ configurarLogin({
 
 A mesclagem é em profundidade e no **mesmo objeto** — trocar `marca.nome` mantém
 todo o resto no padrão.
-
-O módulo usa Neon Auth + Data API por padrão. Outro provedor precisa ser
-fornecido como adaptador que implemente o contrato descrito em
-[`docs/INTEGRACAO.md`](docs/INTEGRACAO.md); isso não substitui nem altera o
-provedor da Prime Açaí. A URL pública do Neon e `VITE_APP_URL` podem estar no
-bundle do navegador; senhas, `DATABASE_URL`, chaves administrativas e
-`service_role` nunca podem estar no frontend.
 
 ---
 

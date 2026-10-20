@@ -20,16 +20,11 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `09_vendas_somente_rpc.sql` | Fecha a escrita direta em `vendas`/`itens_venda`: a RPC passa a ser a **única** porta |
 | `10_codigo_do_pedido.sql` | Devolve a sequência do pedido ao maior código gravado e cria `proximo_codigo_venda()` |
 | `11_estorno.sql` | Estorno: o movimento inverso com vínculo ao original, o rastro na venda e a RPC `estornar_venda()` |
-| `12_vendas_17_19_out.sql` | **Dados de estudo** (não é esquema): vendas, itens, PDV e despesas recorrentes de 17–19/10/2026 — a base só tinha movimento até 16/10. Códigos via `nextval()`, dia = dia local (UTC−3). Não é incluída na aplicação padrão; exige seleção explícita |
-| `16_compras_entradas.sql` | Compras: fornecedores, compras/itens, unidades de compra × estoque, lotes/validade, custo médio, RLS e a RPC `confirmar_recebimento_compra()` |
+| `12_vendas_17_19_out.sql` | **Dados de estudo** (não é esquema): vendas, itens, PDV e despesas recorrentes de 17–19/10/2026 — a base só tinha movimento até 16/10. Códigos via `nextval()`, dia = dia local (UTC−3) |
+| `16_compras_entradas.sql` | Compras e entradas: fornecedores, compras/itens, unidades de compra × estoque, lotes/validade, custo médio, RLS e a RPC `confirmar_recebimento_compra()` |
 | `17_clientes_lancamentos_rls_permissoes.sql` | Aplica RLS por ação em clientes/financeiro e bloqueia permissões de perfis inativos |
 | `18_canais_pagamentos_vendas.sql` | Catálogos de tipos de venda e formas de pagamento; detalhes de delivery/aplicativo; RPC transacional, RLS e faturamento com taxa de entrega |
-| `19_imagens_produtos.sql` | Fotos de produto em `bytea`, limite de 512 KiB, RLS e salvamento atômico pela RPC `salvar_produto_com_imagem()` |
-| `20_categorias_produtos.sql` | Catálogo de categorias por organização, unicidade normalizada, RLS, importação dos nomes já usados e seed para novas organizações |
-| `21_categorias_tipos_venda.sql` | Catálogo de categorias para tipos de venda, mantendo os códigos usados pelo PDV, RLS e isolamento por organização |
-| `22_locais_transferencias_estoque.sql` | Estoques geral e da loja, saldos separados, RLS e transferências idempotentes gravadas no livro-razão |
-| `23_whatsapp_fornecedores.sql` | Adiciona o telefone de WhatsApp ao cadastro de fornecedores |
-| `reverter_08_…` até `reverter_23_…` (e as anteriores) | Reversões conservadoras; a reversão 21 bloqueia categorias personalizadas em uso, a 22 bloqueia movimentos do estoque geral e a 23 impede remover WhatsApps já cadastrados |
+| `reverter_08_…`, `reverter_09_…`, `reverter_10_…`, `reverter_11_estorno.sql`, `reverter_12_vendas_17_19_out.sql`, `reverter_16_compras_entradas.sql`, `reverter_17_clientes_lancamentos_rls_permissoes.sql`, `reverter_18_canais_pagamentos_vendas.sql` (e as anteriores) | Desfazem as migrações acima; a reversão da 17 restaura políticas permissivas e não é recomendada em produção; a 18 recusa apagar cadastros comerciais ou detalhes de venda existentes |
 | `garantir_perfil_novo.sql` | Versão de `garantir_perfil()` que lê e-mail e convite — **passo manual**, não é `NN_*.sql` |
 | `testar-base.mjs` | Testa a base real de ponta a ponta (`npm run testar:base`) |
 | `testar-permissoes.mjs` | Testa o banco de permissões contra a base real |
@@ -39,48 +34,29 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `verificar-vendas.mjs` | Confere a venda transacional **na base real**, sem gravar nada (`npm run verificar:vendas`) |
 | `testar-estoque-api.mjs` | Testa as RPCs do estoque **pelo Neon Data API**, como o navegador faz (`npm run testar:estoque:api`) |
 
-Para aplicar as migrações, na ordem dos nomes:
+Para aplicar tudo, na ordem dos nomes:
 
 ```bash
 node neon/aplicar.mjs
 ```
 
-O `aplicar.mjs` aplica as migrações numeradas em ordem alfabética, cada arquivo
-na própria transação. A migração `12` contém dados de estudo não idempotentes e
-fica fora da aplicação padrão; só é executada quando selecionada explicitamente.
-Para aplicar só um (ou um prefixo):
+O `aplicar.mjs` aplica **todos** os `NN_*.sql` em ordem alfabética, cada arquivo
+na própria transação. Para aplicar só um (ou um prefixo):
 
 ```bash
 node neon/aplicar.mjs 04
 ```
 
-Para aplicar os dados de estudo, confira o banco-alvo e execute explicitamente:
-
-```bash
-node neon/aplicar.mjs 12
-```
-
-Para habilitar o WhatsApp no cadastro de fornecedores, aplique a migração 23
-ao banco-alvo antes de publicar o build conectado a ele:
-
-```bash
-node neon/aplicar.mjs 23
-```
-
 Os arquivos de reversão começam com `reverter_` de propósito: assim **não** casam
-com o filtro de migrações numeradas e nunca entram numa aplicação normal. O
-aplicador aceita esses arquivos apenas quando o prefixo `reverter_NN` é informado.
-Para desfazer:
+com o filtro `^\d+_.*\.sql$` do `aplicar.mjs` e nunca entram numa aplicação
+normal. Para desfazer:
 
 ```bash
 node neon/aplicar.mjs reverter_04
 ```
 
-Um filtro sem correspondência agora termina com erro, em vez de indicar sucesso.
-
-As migrações de estrutura usam operações re-executáveis quando possível
-(`if not exists`, `create or replace`). A `12` é exceção: insere dados de estudo
-e não deve ser reexecutada; use a reversão correspondente se precisar removê-los.
+Todos os scripts são re-executáveis (`if not exists`, `create or replace`) e
+**aditivos**: nenhum reescreve dado já existente.
 
 > A versão antiga (Supabase) foi removida do projeto junto com as dependências.
 
@@ -389,9 +365,8 @@ No **Console do Neon**, na sua branch:
 > vendas. O `raise` derruba a transação inteira do arquivo, então nem a metade
 > anterior da `00` fica aplicada pela metade.
 >
-> Isso protege o caso perigoso: o `aplicar.mjs` **sem filtro** roda as
-> migrações numeradas, exceto a geração de dados de estudo `12`, inclusive a `00`.
-> Numa base com dados reais ele agora para com a
+> Isso protege o caso perigoso: o `aplicar.mjs` **sem filtro** roda *todos* os
+> `NN_*.sql`, inclusive a `00`. Numa base com dados reais ele agora para com a
 > mensagem acima em vez de zerar a loja. Ainda assim, em produção aplique por
 > prefixo, um arquivo por vez (`node neon/aplicar.mjs 04`), e confira depois.
 > Para semear de propósito numa base que já tem dados (ambiente de estudo), rode

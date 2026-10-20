@@ -7,7 +7,6 @@ import { listarClientes } from '../services/clientes.js'
 import { pode } from '../services/permissoes.js'
 import { listarProdutos } from '../services/produtos.js'
 import { listarRecipientes } from '../services/recipientes.js'
-import { carregarImagemProduto, listarImagensProdutos } from '../services/imagens-produtos.js'
 import { listarFormasPagamento, listarTiposVenda } from '../services/config-vendas.js'
 import { carregarResumo } from '../services/resumo.js'
 import {
@@ -381,38 +380,11 @@ export function vendasPage() {
             throw new Error('Cadastre pelo menos um tipo de venda e uma forma de pagamento nas Configurações.')
           }
 
-          let fotosDisponiveis = new Map()
-          try {
-            const resultadoFotos = await listarImagensProdutos(
-              listaProdutos.map((produto) => produto.uuid).filter(Boolean),
-            )
-            if (resultadoFotos.disponivel) fotosDisponiveis = resultadoFotos.imagens
-          } catch (erro) {
-            console.error('[vendas] Não foi possível consultar as fotos dos produtos.', erro)
-          }
-          const produtosComFotos = listaProdutos.map((produto) => ({
-            ...produto,
-            imagemPath: fotosDisponiveis.get(produto.uuid) ?? null,
-          }))
-
           // Uma chave por abertura de formulário (ver `novaChave`).
           const chave = novaChave()
           const tipoInicial = tiposVenda.find((tipo) => tipo.codigo === 'balcao') ?? tiposVenda[0]
           const pagamentoInicial =
             formasPagamento.find((forma) => forma.categoria === 'pix') ?? formasPagamento[0]
-          const urlsFotos = new Map()
-          let modalVenda = null
-          let observarFechamento = null
-          const carregarFotoProduto = async (produtoId) => {
-            if (!fotosDisponiveis.has(produtoId)) return null
-            if (urlsFotos.has(produtoId)) return urlsFotos.get(produtoId)
-            const blob = await carregarImagemProduto(produtoId)
-            if (!blob) return null
-            if (!modalVenda?.isConnected) return null
-            const url = URL.createObjectURL(blob)
-            urlsFotos.set(produtoId, url)
-            return url
-          }
 
           abrirFormulario({
             titulo: 'Nova venda',
@@ -510,9 +482,8 @@ export function vendasPage() {
                 label: 'Itens do pedido',
                 tipo: 'itens',
                 obrigatorio: true,
-                produtos: produtosComFotos,
+                produtos: listaProdutos,
                 recipientes: listaRecipientes,
-                carregarImagem: carregarFotoProduto,
               },
             ],
             valores: {
@@ -574,16 +545,6 @@ export function vendasPage() {
                 : `Pedido ${criada.id} registrado — ${formatBRL(criada.total)}.`
             },
           })
-          modalVenda = document.querySelector('.modal')
-          if (modalVenda && typeof MutationObserver !== 'undefined') {
-            observarFechamento = new MutationObserver(() => {
-              if (modalVenda.isConnected) return
-              observarFechamento.disconnect()
-              urlsFotos.forEach((url) => URL.revokeObjectURL(url))
-              urlsFotos.clear()
-            })
-            observarFechamento.observe(document.body, { childList: true })
-          }
 
           const modal = document.querySelector('.modal')
           const campoTipo = modal?.querySelector('[name="tipoVendaId"]')

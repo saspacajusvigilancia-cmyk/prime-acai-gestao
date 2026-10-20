@@ -6,9 +6,29 @@ import { carregarResumo } from '../services/resumo.js'
 import { listarVendasRecentes } from '../services/vendas.js'
 import { atualizarKpi, badgeStatusVenda, cardHead, esc, formatBRL, statCard, tabela, tabelaLinhas } from '../ui.js'
 
+const cores = {
+  roxo: '#7c3aed',
+  roxoClaro: 'rgba(124, 58, 237, 0.14)',
+  grade: 'rgba(124, 58, 237, 0.10)',
+}
+
 /**
  * Cores do gráfico de rosca ("Vendas por categoria").
+ *
+ * São tons da própria paleta do app, mas ordenados para que fatias vizinhas
+ * fiquem bem diferentes entre si. Antes o 1º, o 2º e o 3º lugares eram dois
+ * roxos (marca e roxo-claro) seguidos de um azul — as três fatias quase não se
+ * distinguiam. A primeira cor continua sendo a da marca.
  */
+const coresCategorias = [
+  '#7c3aed', // roxo (marca)
+  '#d97706', // âmbar
+  '#16a34a', // verde
+  '#2563eb', // azul
+  '#dc2626', // vermelho
+  '#94a3b8', // cinza
+]
+
 const colunas = [
   { key: 'id', label: 'Pedido', render: (l) => `<span class="mono">${esc(l.id)}</span>` },
   { key: 'cliente', label: 'Cliente', render: (l) => esc(l.cliente) },
@@ -92,20 +112,6 @@ export function dashboardPage() {
     `,
 
     mount(root) {
-      const estilo = getComputedStyle(root)
-      const cores = {
-        roxo: estilo.getPropertyValue('--marca-roxo').trim(),
-        roxoClaro: estilo.getPropertyValue('--primaria-fundo').trim(),
-        grade: estilo.getPropertyValue('--borda').trim(),
-      }
-      const coresCategorias = [
-        estilo.getPropertyValue('--marca-roxo').trim(),
-        estilo.getPropertyValue('--marca-dourado').trim(),
-        estilo.getPropertyValue('--marca-verde').trim(),
-        estilo.getPropertyValue('--marca-roxo').trim(),
-        estilo.getPropertyValue('--marca-dourado').trim(),
-        estilo.getPropertyValue('--marca-verde').trim(),
-      ]
       const graficoFaturamento = new Chart(root.querySelector('#grafico-faturamento'), {
         type: 'line',
         data: {

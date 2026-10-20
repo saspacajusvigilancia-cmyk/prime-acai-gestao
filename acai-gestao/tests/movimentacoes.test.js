@@ -43,18 +43,15 @@ const {
   LOCAIS,
   LOCAIS_CONTAGEM,
   LOCAIS_MOVIMENTO,
-  LOCAIS_MOVIMENTO_LOCAL,
   OPERACOES,
   ajustarSaldo,
   listarMovimentacoes,
-  listarSaldosEstoqueLocais,
   locaisDaOperacao,
   registrarMovimentacao,
 } = await import('../src/services/movimentacoes.js')
 
 const sql06 = readFileSync(new URL('../neon/06_movimentacoes_estoque.sql', import.meta.url), 'utf8')
 const sql07 = readFileSync(new URL('../neon/07_movimentacoes_rpc.sql', import.meta.url), 'utf8')
-const sql22 = readFileSync(new URL('../neon/22_locais_transferencias_estoque.sql', import.meta.url), 'utf8')
 
 /** Lê a lista de um `check (coluna in (...))` da migração. */
 const locaisDe = (sql, coluna) => {
@@ -80,7 +77,7 @@ describe('vocabulário de locais', () => {
   it('o frontend conhece exatamente os locais do CHECK da migração 06', () => {
     const doBanco = [...new Set([...locaisDe(sql06, 'origem'), ...locaisDe(sql06, 'destino')])].sort()
 
-    expect(Object.keys(LOCAIS).sort()).toEqual([...doBanco, 'estoque_geral'].sort())
+    expect(Object.keys(LOCAIS).sort()).toEqual(doBanco)
     expect(LOCAIS_MOVIMENTO.length).toBe(6)
     expect([...LOCAIS_MOVIMENTO].sort()).toEqual(
       doBanco.filter((local) => !['abertura', 'contagem'].includes(local)),
@@ -98,28 +95,17 @@ describe('vocabulário de locais', () => {
   it('todo atalho usa locais válidos e diferentes entre si', () => {
     for (const op of OPERACOES) {
       if (op.valor === 'outro') continue
-      expect(LOCAIS_MOVIMENTO_LOCAL, `origem de ${op.valor}`).toContain(op.origem)
-      expect(LOCAIS_MOVIMENTO_LOCAL, `destino de ${op.valor}`).toContain(op.destino)
+      expect(LOCAIS_MOVIMENTO, `origem de ${op.valor}`).toContain(op.origem)
+      expect(LOCAIS_MOVIMENTO, `destino de ${op.valor}`).toContain(op.destino)
       expect(op.origem, `destino igual à origem em ${op.valor}`).not.toBe(op.destino)
     }
   })
 
   it('o atalho "compra" é fornecedor → estoque, e "outro" deixa escolher', () => {
     expect(locaisDaOperacao('compra')).toEqual({ origem: 'fornecedor', destino: 'estoque' })
-    expect(locaisDaOperacao('compra_geral')).toEqual({ origem: 'fornecedor', destino: 'estoque_geral' })
-    expect(locaisDaOperacao('geral_loja')).toEqual({ origem: 'estoque_geral', destino: 'estoque' })
-    expect(locaisDaOperacao('loja_geral')).toEqual({ origem: 'estoque', destino: 'estoque_geral' })
     expect(locaisDaOperacao('perda')).toEqual({ origem: 'estoque', destino: 'perda' })
     expect(locaisDaOperacao('outro')).toEqual({ origem: '', destino: '' })
     expect(locaisDaOperacao('inexistente')).toEqual({ origem: '', destino: '' })
-  })
-
-  it('a nova migração acrescenta estoque geral e transferências idempotentes', () => {
-    expect(sql22).toContain("'estoque_geral'")
-    expect(sql22).toContain('public.saldo_estoque_local')
-    expect(sql22).toContain('public.transferir_estoque_local')
-    expect(sql22).toContain('unique (organization_id, chave_idempotencia)')
-    expect(sql22).toContain('for update')
   })
 })
 
@@ -170,64 +156,6 @@ describe('registrarMovimentacao', () => {
     expect(dados.quantidade).toBe(10)
     expect(dados.saldo).toBe(31)
     expect(dados.quando).toBe('2026-10-19T10:00:00.000Z')
-  })
-
-  it('registra transferências entre geral e loja com chave idempotente e saldos separados', async () => {
-    estado.rpcResposta = {
-      data: [{
-        id: 'transfer-1',
-        produto_id: 'p1',
-        movimentacao_id: 'm1',
-        quantidade: '3',
-        origem: 'geral',
-        destino: 'loja',
-        motivo: 'Reposição da loja',
-        chave_idempotencia: 'transfer-key',
-        saldo_geral: '7',
-        saldo_loja: '13',
-        criado_em: '2026-10-22T10:00:00.000Z',
-      }],
-      error: null,
-    }
-
-    const { dados } = await registrarMovimentacao({
-      ...movimentoValido,
-      origem: 'estoque_geral',
-      destino: 'estoque',
-      motivo: 'Reposição da loja',
-      chaveIdempotencia: 'transfer-key',
-    })
-
-    expect(estado.rpc.at(-1)).toEqual({
-      nome: 'transferir_estoque_local',
-      params: {
-        p_produto_id: 'p1',
-        p_qtd: 10,
-        p_origem: 'geral',
-        p_destino: 'loja',
-        p_motivo: 'Reposição da loja',
-        p_chave_idempotencia: 'transfer-key',
-      },
-    })
-    expect(dados).toMatchObject({
-      origem: 'estoque_geral',
-      destino: 'estoque',
-      saldo: 13,
-      saldoGeral: 7,
-      saldoLoja: 13,
-      transferenciaId: 'transfer-1',
-    })
-  })
-
-  it('lista os saldos atuais de ambos os locais por RPC', async () => {
-    estado.rpcResposta = {
-      data: [{ produto_id: 'p1', saldo_geral: '8.5', saldo_loja: '12' }],
-      error: null,
-    }
-
-    const { dados } = await listarSaldosEstoqueLocais()
-    expect(estado.rpc.at(-1).nome).toBe('listar_saldos_estoque_locais')
-    expect(dados).toEqual([{ produtoId: 'p1', geral: 8.5, loja: 12 }])
   })
 
   it('deixa a mensagem do banco subir (é ela que o usuário lê)', async () => {

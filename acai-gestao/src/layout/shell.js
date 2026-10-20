@@ -103,7 +103,7 @@ export function renderShell(
             <div style="position:relative" id="notif-wrap">
               <button class="icon-btn" type="button" id="btn-notif" aria-label="Notificações">
                 <i data-lucide="bell"></i>
-                <span id="notif-badge" style="position:absolute;top:2px;right:2px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--marca-dourado);color:var(--texto-contraste);font-size:10px;font-weight:700;line-height:16px;text-align:center;display:none">0</span>
+                <span id="notif-badge" style="position:absolute;top:2px;right:2px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:#ef4444;color:#fff;font-size:10px;font-weight:700;line-height:16px;text-align:center;display:none">0</span>
               </button>
               <div id="notif-painel" hidden style="position:absolute;right:0;top:40px;width:min(320px,92vw);max-height:400px;overflow:auto;background:var(--superficie);border:1px solid var(--borda);border-radius:var(--raio);box-shadow:var(--sombra);z-index:200;padding:8px">
                 <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px">

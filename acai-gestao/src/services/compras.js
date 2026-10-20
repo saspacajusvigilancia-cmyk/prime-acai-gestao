@@ -91,38 +91,12 @@ const CAMPOS_FORNECEDOR = [
   'nome',
   'cnpj',
   'telefone',
-  'whatsapp',
   'email',
   'observacoes',
   'ativo',
   'criado_em',
   'atualizado_em',
 ].join(', ')
-
-const CAMPOS_FORNECEDOR_SEM_WHATSAPP = CAMPOS_FORNECEDOR
-  .split(', ')
-  .filter((campo) => campo !== 'whatsapp')
-  .join(', ')
-
-const mensagemMigracaoWhatsApp =
-  'O banco ainda não tem o campo WhatsApp dos fornecedores. Aplique a migração neon/23_whatsapp_fornecedores.sql e tente novamente.'
-
-const erroColunaWhatsAppAusente = (erro) =>
-  ['42703', 'PGRST204'].includes(erro?.code) && /whatsapp/i.test(`${erro.message ?? ''} ${erro.details ?? ''}`)
-
-const semCampoWhatsApp = ({ whatsapp, ...registro }) => registro
-
-async function gravarFornecedorCompat(escrever, whatsappInformado = false) {
-  let resposta = await escrever(CAMPOS_FORNECEDOR, true)
-
-  if (!resposta.error) return paraFornecedor(resposta.data)
-  if (!erroColunaWhatsAppAusente(resposta.error)) throw resposta.error
-  if (whatsappInformado) throw new Error(mensagemMigracaoWhatsApp)
-
-  resposta = await escrever(CAMPOS_FORNECEDOR_SEM_WHATSAPP, false)
-  if (resposta.error) throw resposta.error
-  return paraFornecedor({ ...resposta.data, whatsapp: '' })
-}
 
 /* ------------------------------------------------------------ utilidades -- */
 
@@ -153,9 +127,6 @@ const idLocal = () =>
 export function mensagemErro(erro) {
   const bruto = erro?.message ?? erro?.details ?? String(erro ?? '')
 
-  if (/whatsapp/i.test(bruto) && /column|schema cache|does not exist|not found/i.test(bruto)) {
-    return 'O banco ainda não tem o campo WhatsApp dos fornecedores. Aplique a migração neon/23_whatsapp_fornecedores.sql e tente novamente.'
-  }
   if (/fornecedores_org_nome_unico|duplicate key.*fornecedor/i.test(bruto)) {
     return 'Já existe um fornecedor com esse nome. Renomeie ou reative o cadastro existente.'
   }
@@ -190,7 +161,7 @@ export function paraItem(linha) {
     compraId: linha.compra_id,
     produtoId: linha.produto_id,
     nome: linha.nome ?? '',
-    unidadeCompra: String(linha.unidade_compra ?? 'UN').toUpperCase(),
+    unidadeCompra: linha.unidade_compra ?? 'un',
     fatorConversao: numero(linha.fator_conversao) || 1,
     quantidadeSolicitada,
     quantidadeRecebida: numero(linha.quantidade_recebida),
@@ -210,7 +181,6 @@ export function paraFornecedor(linha) {
     nome: linha.nome ?? '',
     cnpj: linha.cnpj ?? '',
     telefone: linha.telefone ?? '',
-    whatsapp: linha.whatsapp ?? '',
     email: linha.email ?? '',
     observacoes: linha.observacoes ?? '',
     ativo: linha.ativo !== false,
@@ -276,30 +246,13 @@ async function buscarItens(neon, ids) {
 }
 
 async function buscarFornecedores(neon) {
-  const consultaAtual = await neon
-    .from('fornecedores')
-    .select(CAMPOS_FORNECEDOR)
-    .order('nome')
-    .limit(1000)
-
-  if (!consultaAtual.error) return consultaAtual.data ?? []
-
-  const erroColunaWhatsAppAusente =
-    ['42703', 'PGRST204'].includes(consultaAtual.error.code) &&
-    /whatsapp/i.test(`${consultaAtual.error.message ?? ''} ${consultaAtual.error.details ?? ''}`)
-
-  if (erroColunaWhatsAppAusente) {
-    const consultaLegada = await neon
-      .from('fornecedores')
-      .select(CAMPOS_FORNECEDOR_SEM_WHATSAPP)
-      .order('nome')
-      .limit(1000)
-
-    if (consultaLegada.error) throw consultaLegada.error
-    return consultaLegada.data ?? []
+  const { data, error } = await neon.from('fornecedores').select(CAMPOS_FORNECEDOR).limit(1000)
+  if (error) {
+    // Banco antigo sem a migration 16: a tela ainda abre, só sem fornecedores.
+    console.error('[compras] Não foi possível carregar fornecedores.', error)
+    return []
   }
-
-  throw consultaAtual.error
+  return data ?? []
 }
 
 async function buscarUsuarios(neon, ids) {
@@ -387,94 +340,30 @@ export function listarFornecedores({ incluirInativos = true } = {}) {
     nome: 'fornecedores',
     exemplo: [],
     consulta: async (neon) => {
-      const dados = await buscarFornecedores(neon)
-      return dados
-        .filter((fornecedor) => incluirInativos || fornecedor.ativo)
-        .map(paraFornecedor)
+      let consulta = neon.from('fornecedores').select(CAMPOS_FORNECEDOR).order('nome')
+      if (!incluirInativos) consulta = consulta.eq('ativo', true)
+
+      const { data, error } = await consulta
+      if (error) throw error
+      return (data ?? []).map(paraFornecedor)
     },
   })
 }
 
 const normalizarFornecedor = (dados = {}) => {
   const nome = texto(dados.nome)
-  const documento = apenasDigitos(dados.cnpj)
-  const telefone = apenasDigitos(dados.telefone)
-  const whatsapp = apenasDigitos(dados.whatsapp)
 
   if (!nome) throw new Error('Informe o nome do fornecedor.')
   if (nome.length > 120) throw new Error('O nome do fornecedor pode ter no máximo 120 caracteres.')
-  if (documento && !cpfValido(documento) && !cnpjValido(documento)) {
-    throw new Error('Informe um CPF válido com 11 dígitos ou um CNPJ válido com 14 dígitos.')
-  }
-  if (telefone && telefone.length !== 10 && telefone.length !== 11) {
-    throw new Error('O telefone deve conter DDD e 10 ou 11 dígitos.')
-  }
-  if (whatsapp && whatsapp.length !== 10 && whatsapp.length !== 11) {
-    throw new Error('O WhatsApp deve conter DDD e 10 ou 11 dígitos.')
-  }
 
   return {
     nome,
-    cnpj: documento ? formatarDocumento(documento) : null,
-    telefone: telefone ? formatarTelefone(telefone) : null,
-    whatsapp: whatsapp ? formatarTelefone(whatsapp) : null,
+    cnpj: opcional(dados.cnpj),
+    telefone: opcional(dados.telefone),
     email: opcional(dados.email),
     observacoes: texto(dados.observacoes),
     ativo: dados.ativo === undefined ? true : booleano(dados.ativo),
   }
-}
-
-const apenasDigitos = (valor) => String(valor ?? '').replace(/\D/g, '')
-
-function cpfValido(digitos) {
-  if (digitos.length !== 11 || /^(\d)\1{10}$/.test(digitos)) return false
-
-  const calcularDigito = (tamanho) => {
-    const soma = digitos
-      .slice(0, tamanho)
-      .split('')
-      .reduce((total, digito, indice) => total + Number(digito) * (tamanho + 1 - indice), 0)
-    const resto = (soma * 10) % 11
-    return resto === 10 ? 0 : resto
-  }
-
-  return calcularDigito(9) === Number(digitos[9]) && calcularDigito(10) === Number(digitos[10])
-}
-
-function cnpjValido(digitos) {
-  if (digitos.length !== 14 || /^(\d)\1{13}$/.test(digitos)) return false
-
-  const calcularDigito = (base, pesos) => {
-    const soma = base
-      .split('')
-      .reduce((total, digito, indice) => total + Number(digito) * pesos[indice], 0)
-    const resto = soma % 11
-    return resto < 2 ? 0 : 11 - resto
-  }
-
-  const primeiro = calcularDigito(digitos.slice(0, 12), [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
-  const segundo = calcularDigito(digitos.slice(0, 12) + primeiro, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
-  return primeiro === Number(digitos[12]) && segundo === Number(digitos[13])
-}
-
-function formatarDocumento(digitos) {
-  if (digitos.length === 11) {
-    return digitos.replace(/^(\d{3})(\d)/, '$1.$2').replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d{1,2})$/, '.$1-$2')
-  }
-
-  return digitos
-    .replace(/^(\d{2})(\d)/, '$1.$2')
-    .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
-    .replace(/\.(\d{3})(\d)/, '.$1/$2')
-    .replace(/(\d{4})(\d)/, '$1-$2')
-}
-
-function formatarTelefone(digitos) {
-  if (digitos.length <= 2) return digitos
-  const ddd = digitos.slice(0, 2)
-  const numero = digitos.slice(2)
-  const limiteLocal = digitos.length > 10 ? 5 : 4
-  return `(${ddd}) ${numero.slice(0, limiteLocal)}${numero.length > limiteLocal ? `-${numero.slice(limiteLocal)}` : ''}`
 }
 
 export function criarFornecedor(dados) {
@@ -488,16 +377,16 @@ export function criarFornecedor(dados) {
       criadoEm: new Date().toISOString(),
       atualizadoEm: new Date().toISOString(),
     },
-    escrever: (neon) =>
-      gravarFornecedorCompat(
-        (campos, comWhatsApp) =>
-          neon
-            .from('fornecedores')
-            .insert(comWhatsApp ? registro : semCampoWhatsApp(registro))
-            .select(campos)
-            .single(),
-        Boolean(registro.whatsapp),
-      ),
+    escrever: async (neon) => {
+      const { data, error } = await neon
+        .from('fornecedores')
+        .insert(registro)
+        .select(CAMPOS_FORNECEDOR)
+        .single()
+
+      if (error) throw error
+      return paraFornecedor(data)
+    },
   })
 }
 
@@ -507,17 +396,17 @@ export function atualizarFornecedor(id, dados) {
   return gravar({
     nome: 'fornecedor',
     registro: { id, ...registro },
-    escrever: (neon) =>
-      gravarFornecedorCompat(
-        (campos, comWhatsApp) =>
-          neon
-            .from('fornecedores')
-            .update(comWhatsApp ? registro : semCampoWhatsApp(registro))
-            .eq('id', id)
-            .select(campos)
-            .single(),
-        Boolean(registro.whatsapp),
-      ),
+    escrever: async (neon) => {
+      const { data, error } = await neon
+        .from('fornecedores')
+        .update(registro)
+        .eq('id', id)
+        .select(CAMPOS_FORNECEDOR)
+        .single()
+
+      if (error) throw error
+      return paraFornecedor(data)
+    },
   })
 }
 
@@ -525,16 +414,17 @@ export function definirFornecedorAtivo(id, ativo) {
   return gravar({
     nome: 'situação do fornecedor',
     registro: { id, ativo: Boolean(ativo) },
-    escrever: (neon) =>
-      gravarFornecedorCompat(
-        (campos) =>
-          neon
-            .from('fornecedores')
-            .update({ ativo: Boolean(ativo) })
-            .eq('id', id)
-            .select(campos)
-            .single(),
-      ),
+    escrever: async (neon) => {
+      const { data, error } = await neon
+        .from('fornecedores')
+        .update({ ativo: Boolean(ativo) })
+        .eq('id', id)
+        .select(CAMPOS_FORNECEDOR)
+        .single()
+
+      if (error) throw error
+      return paraFornecedor(data)
+    },
   })
 }
 
@@ -619,7 +509,7 @@ const normalizarItem = (item) => {
   return {
     produto_id: produtoId,
     nome,
-    unidade_compra: (texto(item.unidadeCompra ?? item.unidade_compra) || 'UN').toUpperCase(),
+    unidade_compra: texto(item.unidadeCompra ?? item.unidade_compra) || 'un',
     fator_conversao: fator,
     quantidade_solicitada: quantidade,
     custo_unitario: custo,
@@ -639,7 +529,6 @@ const normalizarItem = (item) => {
 export function registrarCompra({
   dataCompra,
   fornecedorId,
-  fornecedorNome,
   tipoDocumento = 'sem_nota',
   numeroNota,
   observacoes,
@@ -705,7 +594,7 @@ export function registrarCompra({
       dataCompra: data,
       dataRecebimento: null,
       fornecedorId: fornecedorId || null,
-      fornecedorNome: fornecedorId ? texto(fornecedorNome) || 'Sem fornecedor' : 'Sem fornecedor',
+      fornecedorNome: 'Sem fornecedor',
       tipoDocumento: documento,
       numeroNota: texto(numeroNota),
       observacoes: texto(observacoes),

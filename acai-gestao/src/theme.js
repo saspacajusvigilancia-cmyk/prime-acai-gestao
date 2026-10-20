@@ -18,7 +18,8 @@ function aplica(tema) {
 /** Lê o tema salvo (ou a preferência do sistema) e liga o botão de alternância. */
 export function initTheme() {
   const salvo = localStorage.getItem(CHAVE)
-  aplica(salvo ?? 'light')
+  const prefereEscuro = window.matchMedia('(prefers-color-scheme: dark)').matches
+  aplica(salvo ?? (prefereEscuro ? 'dark' : 'light'))
 
   document.querySelector('#theme-toggle')?.addEventListener('click', () => {
     aplica(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark')

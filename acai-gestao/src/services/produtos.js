@@ -1,7 +1,6 @@
 import { produtos as exemplo } from '../data.js'
 import { METODOS_PESO, METODOS_PESO_ATIVOS } from '../peso.js'
-import { carregar, gravar, neon, neonConfigurado, paraBooleano } from './base.js'
-import { prepararImagemProduto } from './imagens-produtos.js'
+import { carregar, gravar, paraBooleano } from './base.js'
 
 /**
  * Cadastro de produtos e insumos.
@@ -265,33 +264,4 @@ export function atualizarProduto(uuid, valores) {
       return paraApp(data)
     },
   })
-}
-
-/**
- * Grava produto e imagem na mesma transação do banco.
- *
- * A RPC deixa preço, cadastro e foto atômicos; a quantidade existente nunca é
- * atualizada aqui, pois o saldo continua sendo responsabilidade do livro-razão.
- */
-export async function salvarProdutoComImagem(uuid, valores, { arquivo = null, remover = false } = {}) {
-  if (!neonConfigurado) throw new Error('Configure o Neon antes de salvar uma foto de produto.')
-  if (!arquivo && !remover) throw new Error('Selecione uma imagem ou solicite sua remoção.')
-
-  const registro = normalizarProduto(valores)
-  const imagem = arquivo ? await prepararImagemProduto(arquivo) : null
-  const produto = uuid ? { ...registro, id: uuid } : registro
-
-  const { data, error } = await neon.rpc('salvar_produto_com_imagem', {
-    p_produto: produto,
-    p_mime: imagem?.mime ?? null,
-    p_conteudo: imagem?.hexadecimal ?? null,
-    p_remover_imagem: remover,
-  })
-
-  if (error) throw error
-
-  const linha = Array.isArray(data) ? data[0] : data
-  if (!linha?.id) throw new Error('O banco não confirmou o salvamento do produto com a imagem.')
-
-  return { dados: paraApp(linha), origem: 'neon' }
 }

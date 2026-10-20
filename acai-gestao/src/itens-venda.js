@@ -82,7 +82,6 @@ export function linhaItemHtml(campo, linha = {}) {
 
   return `
     <div class="itens__linha" data-item>
-      <span class="itens__foto" data-item-foto aria-hidden="true"><i data-lucide="image"></i></span>
       <select class="campo__input" data-item-produto aria-label="Produto">
         <option value="">Selecione o produto...</option>
         ${opcoes}
@@ -308,28 +307,6 @@ function limparLinha(linha) {
   linha.querySelector('[data-item-liquido]').value = ''
   linha.querySelector('[data-item-recipiente]').value = ''
   sincronizar(linha)
-  void atualizarFoto(linha)
-}
-
-async function atualizarFoto(linha, campo) {
-  const alvo = linha.querySelector('[data-item-foto]')
-  const produtoId = linha.querySelector('[data-item-produto]').value
-  const chamada = Number(linha.dataset.fotoChamada ?? 0) + 1
-  linha.dataset.fotoChamada = String(chamada)
-  alvo.innerHTML = '<i data-lucide="image"></i>'
-  const produto = campo?.produtos?.find((item) => String(item.uuid ?? item.id) === produtoId)
-  if (!produtoId || !produto?.imagemPath || !campo.carregarImagem) {
-    renderIcons(alvo)
-    return
-  }
-
-  try {
-    const url = await campo.carregarImagem(produtoId)
-    if (!url || !linha.isConnected || linha.dataset.fotoChamada !== String(chamada)) return
-    alvo.innerHTML = `<img src="${esc(url)}" alt="" />`
-  } catch (erro) {
-    console.error('[vendas] Não foi possível carregar a foto do produto selecionado.', erro)
-  }
 }
 
 /**
@@ -393,20 +370,14 @@ export function iniciarItens({ overlay, campo }) {
     const linha = evento.target.closest('[data-item]')
     if (!linha) return
 
-    if (evento.target.matches('[data-item-produto]')) {
-      sincronizar(linha)
-      void atualizarFoto(linha, campo)
-    }
+    if (evento.target.matches('[data-item-produto]')) sincronizar(linha)
     if (evento.target.matches('[data-item-metodo]')) aplicarMetodo(linha)
     if (evento.target.matches('[data-item-recipiente]')) aplicarRecipiente(linha)
 
     recalcular()
   })
 
-  for (const linha of linhas()) {
-    sincronizar(linha)
-    void atualizarFoto(linha, campo)
-  }
+  for (const linha of linhas()) sincronizar(linha)
   recalcular()
 
   return {

@@ -47,25 +47,6 @@ describe('marca da Prime Açaí nas telas do pacote', () => {
     expect(html).toContain('<strong>Caixa</strong>')
     expect(html).toContain('href="#/login"')
   })
-
-  it('desabilita cadastro e recuperação nas telas e no mapa de rotas', () => {
-    pacote.configurarLogin({
-      funcionalidades: { cadastro: false, recuperacaoSenha: false },
-    })
-
-    const html = pacote.loginPage().html
-    const rotas = pacote.telasAuth()
-
-    expect(html).not.toContain('href="#/cadastro"')
-    expect(html).not.toContain('href="#/recuperar-senha"')
-    expect(rotas['/cadastro']).toBeUndefined()
-    expect(rotas['/recuperar-senha']).toBeUndefined()
-    expect(pacote.ehRotaAuth('/cadastro')).toBe(false)
-
-    pacote.configurarLogin({
-      funcionalidades: { cadastro: true, recuperacaoSenha: true },
-    })
-  })
 })
 
 describe('fonte única da verdade', () => {

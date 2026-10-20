@@ -77,9 +77,7 @@ export function campoHtml(campo, valor) {
     // `mascara` liga a formatação enquanto o usuário digita (CNPJ, CEP,
     // telefone). Quem aplica é a tela, escutando o `data-mascara`.
     const mascara = campo.mascara ? ` data-mascara="${esc(campo.mascara)}"` : ''
-    const inputmode = campo.inputmode ? ` inputmode="${esc(campo.inputmode)}"` : ''
-    const maxlength = campo.maxlength ? ` maxlength="${Number(campo.maxlength)}"` : ''
-    controle = `<input class="campo__input" type="text" ${attrs}${req}${lista}${mascara}${inputmode}${maxlength}
+    controle = `<input class="campo__input" type="text" ${attrs}${req}${lista}${mascara}
         value="${esc(valor ?? '')}" placeholder="${esc(campo.placeholder ?? '')}" autocomplete="off" />`
     if (campo.sugestoes) {
       controle += `<datalist id="lista-${id}">${campo.sugestoes

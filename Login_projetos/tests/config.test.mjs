@@ -2,14 +2,7 @@
 import { test, describe } from 'node:test'
 import assert from 'node:assert/strict'
 
-import {
-  config,
-  configurarLogin,
-  ehRotaAuthConfigurada,
-  funcionalidadeAuthHabilitada,
-  rotaAuthHabilitada,
-  texto,
-} from '../src/config.js'
+import { config, configurarLogin, texto } from '../src/config.js'
 
 describe('config', () => {
   test('traz padrões sensatos', () => {
@@ -21,8 +14,6 @@ describe('config', () => {
     assert.equal(config.rpcPerfil, 'garantir_perfil')
     assert.equal(config.tabelaPerfis, 'profiles')
     assert.equal(typeof config.cadastroPublico, 'boolean')
-    assert.equal(config.provedor.nome, 'neon')
-    assert.equal(config.funcionalidades.recuperacaoSenha, true)
   })
 
   test('configurarLogin troca só o que foi passado', () => {
@@ -67,34 +58,6 @@ describe('config', () => {
     assert.equal(config.cadastroPublico, false)
 
     configurarLogin({ senhaMinima: 8, cadastroPublico: true })
-  })
-
-  test('configura funcionalidades, provedor e destino de logout', () => {
-    const cliente = { auth: {} }
-    configurarLogin({
-      funcionalidades: { cadastro: false, recuperacaoSenha: false },
-      provedor: { nome: 'adaptador-teste', cliente },
-      rotas: { depoisDoLogout: '/sair' },
-      urlAplicacao: 'https://app.example.test',
-    })
-
-    assert.equal(funcionalidadeAuthHabilitada('cadastro'), false)
-    assert.equal(funcionalidadeAuthHabilitada('recuperacaoSenha'), false)
-    assert.equal(rotaAuthHabilitada('/cadastro'), false)
-    assert.equal(rotaAuthHabilitada('/recuperar-senha'), false)
-    assert.equal(rotaAuthHabilitada('/login'), true)
-    assert.equal(ehRotaAuthConfigurada('/cadastro'), true)
-    assert.equal(ehRotaAuthConfigurada('/acesso-negado'), false)
-    assert.equal(config.provedor.cliente, cliente)
-    assert.equal(config.rotas.depoisDoLogout, '/sair')
-    assert.equal(config.urlAplicacao, 'https://app.example.test')
-
-    configurarLogin({
-      funcionalidades: { cadastro: true, recuperacaoSenha: true },
-      provedor: { nome: 'neon', cliente: null, redefinirSenha: null },
-      rotas: { depoisDoLogout: '/login' },
-      urlAplicacao: '',
-    })
   })
 })
 
