@@ -9,6 +9,8 @@ on:
 jobs:
   test-and-build:
     runs-on: ubuntu-latest
+    env:
+      VITE_NEON_URL: https://ep-ci.ci.invalid/neondb
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
