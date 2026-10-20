@@ -68,6 +68,13 @@ jobs:
           token="${token//$'\n'/}"
           token="${token#"${token%%[![:space:]]*}"}"
           token="${token%"${token##*[![:space:]]}"}"
+          if [[ "$token" == "Bearer "* || "$token" == "bearer "* ]]; then
+            token="${token:7}"
+          fi
+          token="${token//[[:space:]]/}"
+          if [[ "$token" == \"*\" || "$token" == \'*\' ]]; then
+            token="${token:1:${#token}-2}"
+          fi
           if [[ -z "$token" ]]; then
             echo "::error::CLOUDFLARE_API_TOKEN is empty after removing whitespace."
             exit 1
