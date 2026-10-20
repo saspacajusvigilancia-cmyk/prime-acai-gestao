@@ -30,3 +30,40 @@ jobs:
       - name: Build production bundle
         working-directory: acai-gestao
         run: npm run build
+
+  deploy-pages:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    env:
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+      CLOUDFLARE_ACCOUNT_ID: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+      VITE_NEON_URL: ${{ vars.VITE_NEON_URL }}
+    steps:
+      - name: Explain pending Cloudflare authorization
+        if: env.CLOUDFLARE_API_TOKEN == ''
+        run: echo "::warning::Cloudflare deploy skipped. Add the CLOUDFLARE_API_TOKEN Actions secret to enable automatic Pages deployments."
+      - uses: actions/checkout@v4
+        if: env.CLOUDFLARE_API_TOKEN != ''
+      - uses: actions/setup-node@v4
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: acai-gestao/package-lock.json
+      - name: Install dependencies
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        working-directory: acai-gestao
+        run: npm ci
+      - name: Build production bundle
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        working-directory: acai-gestao
+        run: npm run build
+      - name: Deploy Cloudflare Pages
+        if: env.CLOUDFLARE_API_TOKEN != ''
+        uses: cloudflare/wrangler-action@v4
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ vars.CLOUDFLARE_ACCOUNT_ID }}
+          workingDirectory: acai-gestao
+          command: pages deploy dist --project-name=prime-acai-gestao --branch=main

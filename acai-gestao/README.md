@@ -104,6 +104,22 @@ O script faz `npm run build` e `wrangler pages deploy dist`.
 > O arquivo `public/_redirects` garante o fallback de SPA no Cloudflare Pages.
 > O guia completo está em `MIGRAR-CLOUDFLARE.md`.
 
+### Deploy automático pelo GitHub Actions
+
+O workflow `Validate` executa testes, valida as migrações e o build em cada
+push para `main`. Depois da validação, também pode publicar no Cloudflare Pages.
+Para habilitar esse deploy automático, configure no repositório GitHub:
+
+- **Actions secret** `CLOUDFLARE_API_TOKEN`, com permissão de editar Pages na
+  conta Cloudflare.
+- **Actions variable** `CLOUDFLARE_ACCOUNT_ID`, com o identificador da conta.
+- **Actions variable** `VITE_NEON_URL`, com a URL pública HTTPS do Neon usada
+  pelo frontend.
+
+Sem o secret, a validação continua normalmente e o passo de deploy é ignorado
+com um aviso; nenhum token é armazenado no código. Até esse secret ser criado,
+publique manualmente com `npm run deploy:cloudflare`.
+
 ### Autorizar o domínio no Neon Auth
 
 O login só funciona se a origem estiver autorizada (senão o Neon Auth rejeita a
