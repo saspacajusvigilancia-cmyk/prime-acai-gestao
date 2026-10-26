@@ -25,7 +25,7 @@ export const MODULOS = {
   dashboard: 'Dashboard',
   vendas: 'Vendas',
   estoque: 'Estoque',
-  compras: 'Compras e Entradas',
+  compras: 'Compras',
   clientes: 'Clientes',
   financeiro: 'Financeiro',
   configuracoes: 'Configuração da Empresa',

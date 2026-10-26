@@ -27,7 +27,7 @@
  * decimal exato — este módulo é o espelho fiel para a interface.
  */
 
-import { paraNumero } from './numeros.js'
+import { dividirCentavos, paraCentavos as lerCentavos, paraNumero } from './numeros.js'
 
 /** Métodos de entrada do peso. Estes são os valores aceitos no banco. */
 export const METODOS_PESO = {
@@ -72,8 +72,7 @@ export const TARA_MAXIMA_G = 5000
 
 /** Reais -> centavos inteiros. `69.90 -> 6990`. */
 export function paraCentavos(reais) {
-  const n = paraNumero(reais)
-  return Number.isFinite(n) ? Math.round(n * 100) : Number.NaN
+  return lerCentavos(reais)
 }
 
 /* ---------------------------------------------------------------- pesos ---- */
@@ -198,7 +197,10 @@ export function calcularTotalPeso({ liquidoGramas, precoPorKg } = {}) {
   }
 
   // Inteiros exatos -> a divisão por 1000 no fim é o único ponto fracionário.
-  const centavos = Math.round((centavosPorKg * gramas) / GRAMAS_POR_QUILO)
+  const centavos = dividirCentavos(centavosPorKg * gramas, GRAMAS_POR_QUILO)
+  if (!Number.isSafeInteger(centavos)) {
+    return { ok: false, erro: 'O total da pesagem excede o limite permitido.' }
+  }
 
   return { ok: true, centavos, total: centavos / 100 }
 }

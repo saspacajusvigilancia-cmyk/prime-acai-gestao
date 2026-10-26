@@ -44,10 +44,35 @@ export const config = {
     redefinir: '/redefinir-senha',
     /** Para onde o host leva o usuário depois de entrar. */
     depoisDoLogin: '/',
+    /** Para onde o host leva o usuário depois de sair. */
+    depoisDoLogout: '/login',
   },
 
   /** Se `false`, o link "Criar conta" some e a tela de cadastro bloqueia. */
   cadastroPublico: env.VITE_CADASTRO_PUBLICO !== 'false',
+
+  /** Telas e operações opcionais; login permanece habilitado por padrão. */
+  funcionalidades: {
+    login: true,
+    cadastro: true,
+    recuperacaoSenha: true,
+    redefinicaoSenha: true,
+  },
+
+  /**
+   * Provedor ativo. O padrão usa o Neon Auth + Data API.
+   *
+   * `cliente` permite fornecer um cliente compatível com a API documentada em
+   * docs/INTEGRACAO.md. É uma configuração em runtime, nunca uma credencial.
+   */
+  provedor: {
+    nome: 'neon',
+    cliente: null,
+    redefinirSenha: null,
+  },
+
+  /** Origem pública usada nos links de e-mail; vazia usa a origem atual. */
+  urlAplicacao: env.VITE_APP_URL ?? '',
 
   /** Tamanho mínimo de senha exigido no cliente. */
   senhaMinima: 8,
@@ -89,6 +114,36 @@ export const config = {
     redefinirTitulo: 'Criar nova senha',
     redefinirDica: 'Escolha uma senha nova para a sua conta.',
   },
+}
+
+const ROTAS_FUNCIONALIDADES = {
+  login: 'login',
+  cadastro: 'cadastro',
+  recuperar: 'recuperacaoSenha',
+  redefinir: 'redefinicaoSenha',
+}
+
+/** Identifica uma rota de autenticação configurada, mesmo se estiver desativada. */
+export function ehRotaAuthConfigurada(rota) {
+  const caminho = String(rota ?? '').split('?')[0]
+  return Object.keys(ROTAS_FUNCIONALIDADES).some((nome) => config.rotas[nome] === caminho)
+}
+
+/** Verifica se uma tela/operação de autenticação foi habilitada pelo host. */
+export function funcionalidadeAuthHabilitada(funcionalidade) {
+  if (funcionalidade === 'cadastro') {
+    return config.cadastroPublico && config.funcionalidades.cadastro !== false
+  }
+  return config.funcionalidades[funcionalidade] !== false
+}
+
+/** Verifica se a rota de autenticação está habilitada. */
+export function rotaAuthHabilitada(rota) {
+  const caminho = String(rota ?? '').split('?')[0]
+  const chave = Object.keys(ROTAS_FUNCIONALIDADES).find(
+    (nome) => config.rotas[nome] === caminho,
+  )
+  return chave ? funcionalidadeAuthHabilitada(ROTAS_FUNCIONALIDADES[chave]) : false
 }
 
 /**

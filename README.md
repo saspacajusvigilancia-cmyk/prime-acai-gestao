@@ -11,6 +11,15 @@ O nome padrão do projeto é `prime-acai-gestao` para o repositório GitHub e pa
 o projeto Cloudflare Pages. A aplicação usa Neon para PostgreSQL, Neon Data API
 e autenticação. Não armazene credenciais neste arquivo ou no Git.
 
+Repositório GitHub: <https://github.com/malbioocara-dotcom/prime-acai-gestao>.
+Para abrir o projeto no GitHub Codespaces, acesse
+<https://github.com/codespaces/new?repo=malbioocara-dotcom/prime-acai-gestao>.
+
+O módulo compartilhado ainda é privado/local e não foi publicado. Para conhecer
+seu contrato de configuração e integração, consulte
+[`Login_projetos/README.md`](./Login_projetos/README.md) e
+[`Login_projetos/docs/INTEGRACAO.md`](./Login_projetos/docs/INTEGRACAO.md).
+
 ## Desenvolvimento
 
 Consulte [`acai-gestao/README.md`](./acai-gestao/README.md) para requisitos,

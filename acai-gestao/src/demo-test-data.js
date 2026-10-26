@@ -122,8 +122,8 @@ export const produtosTeste = [
 ]
 
 export const saldosEstoqueTeste = [
-  { produtoId: 'P005', geral: 6.5, loja: 9 },
-  { produtoId: 'P008', geral: 18, loja: 21 },
+  { produtoId: 'P005', geral: 6.5, loja: 9, buffet: 0 },
+  { produtoId: 'P008', geral: 18, loja: 21, buffet: 0 },
   { produtoId: 'P009', geral: 1200, loja: 640 },
   { produtoId: 'P011', geral: 17.5, loja: 12.5 },
   { produtoId: 'P012', geral: 4, loja: 8 },

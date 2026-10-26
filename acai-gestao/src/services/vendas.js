@@ -1,5 +1,13 @@
 import { vendas as exemplo } from '../data.js'
 import { diaValido, limitesDoDia } from '../datas.js'
+import {
+  calcularPercentualCentavos,
+  centavosParaReais,
+  formatarEntradaMoeda,
+  multiplicarMoedaPorQuantidade,
+  paraCentavos,
+  somarValoresCentavos,
+} from '../numeros.js'
 import { carregar, gravar, hoje, neon, neonConfigurado } from './base.js'
 
 const hora = (iso) =>
@@ -181,29 +189,49 @@ export function registrarVenda({
   // Total só para a tela: sem banco, é o que aparece no aviso de "entrou só
   // nesta sessão". Com banco, o total que vale — e que volta para a tela — é o
   // que o próprio banco calculou (mesma conta, em `numeric`).
-  const centavos = itens.reduce((acc, item) => {
+  const centavos = somarValoresCentavos(itens.map((item) => {
     const preco = Number(item.precoUnitario ?? 0)
-    const parcela = item.metodoPeso
-      ? Math.round((preco * Number(item.pesoLiquidoGramas ?? 0)) / 10)
-      : Math.round(preco * Number(item.quantidade ?? 0) * 100)
-    return acc + parcela
-  }, 0)
-  const totalEstimado = centavos / 100
-  const entrega = Number(taxaEntrega) || 0
-  const totalCobradoEstimado = Math.round((totalEstimado + entrega) * 100) / 100
-  const recebido = Number(valorRecebido)
+    const quantidade = item.metodoPeso
+      ? Number(item.pesoLiquidoGramas ?? 0) / 1000
+      : Number(item.quantidade ?? 0)
+    const parcela = multiplicarMoedaPorQuantidade(preco, quantidade)
+    if (!Number.isSafeInteger(parcela)) throw new Error('Um item da venda tem preço ou quantidade inválidos.')
+    return parcela
+  }))
+  if (!Number.isSafeInteger(centavos)) throw new Error('O total da venda excede o limite monetário permitido.')
+  const totalEstimado = centavosParaReais(centavos)
+  const entregaCentavos = taxaEntrega === '' || taxaEntrega == null ? 0 : paraCentavos(taxaEntrega)
+  const taxaAplicativoCentavos =
+    taxaAplicativo === '' || taxaAplicativo == null ? 0 : paraCentavos(taxaAplicativo)
+  if (!Number.isSafeInteger(entregaCentavos) || entregaCentavos < 0) {
+    throw new Error('A taxa de entrega precisa ser um valor monetário válido e não negativo.')
+  }
+  if (!Number.isSafeInteger(taxaAplicativoCentavos) || taxaAplicativoCentavos < 0) {
+    throw new Error('A taxa do aplicativo precisa ser um valor monetário válido e não negativo.')
+  }
+  const totalCobradoCentavos = centavos + entregaCentavos
+  if (!Number.isSafeInteger(totalCobradoCentavos)) {
+    throw new Error('O total da venda excede o limite monetário permitido.')
+  }
+  const totalCobradoEstimado = centavosParaReais(totalCobradoCentavos)
+  const recebido = valorRecebido === '' || valorRecebido == null ? Number.NaN : paraCentavos(valorRecebido)
+  if (!Number.isNaN(recebido) && (!Number.isSafeInteger(recebido) || recebido < 0)) {
+    throw new Error('O valor recebido precisa ser monetário válido e não negativo.')
+  }
   const trocoEstimado =
-    formaPagamentoCategoria === 'dinheiro' && Number.isFinite(recebido)
-      ? Math.max(0, Math.round((recebido - totalCobradoEstimado) * 100) / 100)
+    formaPagamentoCategoria === 'dinheiro' && Number.isSafeInteger(recebido)
+      ? centavosParaReais(Math.max(0, recebido - totalCobradoCentavos))
       : 0
-  const comissaoEstimativa =
+  const comissaoCentavos =
     formaPagamentoCategoria === 'aplicativo'
-      ? Math.round((totalCobradoEstimado * Number(comissaoPercentual || 0)) / 100 * 100) / 100
+      ? calcularPercentualCentavos(totalCobradoCentavos, Number(comissaoPercentual || 0))
       : 0
-  const liquidoEstimado = Math.max(
-    0,
-    Math.round((totalCobradoEstimado - comissaoEstimativa - Number(taxaAplicativo || 0)) * 100) / 100,
+  const liquidoEstimado = centavosParaReais(
+    Math.max(0, totalCobradoCentavos - comissaoCentavos - taxaAplicativoCentavos),
   )
+  const comissaoEstimativa = centavosParaReais(comissaoCentavos)
+  const entrega = centavosParaReais(entregaCentavos)
+  const taxaAplicativoValor = centavosParaReais(taxaAplicativoCentavos)
 
   // A linha por peso manda o que foi lido na balança; a linha por unidade
   // manda a quantidade. Em nenhuma das duas o preço sai do navegador.
@@ -234,7 +262,7 @@ export function registrarVenda({
     taxaEntrega: entrega,
     plataforma: plataforma || null,
     pedidoExterno: pedidoExterno || null,
-    taxaAplicativo: Number(taxaAplicativo || 0),
+    taxaAplicativo: taxaAplicativoValor,
     troco: Number(linha.troco ?? trocoEstimado),
     comissaoEstimada: Number(linha.comissao_estimada ?? comissaoEstimativa),
     valorLiquidoEstimado: Number(linha.valor_liquido_estimado ?? liquidoEstimado),
@@ -277,8 +305,8 @@ export function registrarVenda({
         p_plataforma: plataforma || null,
         p_pedido_externo: pedidoExterno || null,
         p_comissao_percentual: Number(comissaoPercentual || 0),
-        p_taxa_aplicativo: Number(taxaAplicativo || 0),
-        p_valor_recebido: Number.isFinite(recebido) ? recebido : null,
+        p_taxa_aplicativo: taxaAplicativoValor,
+        p_valor_recebido: Number.isSafeInteger(recebido) ? centavosParaReais(recebido) : null,
       })
 
       if (error) throw error
@@ -336,4 +364,49 @@ export function estornarVenda({ vendaId, codigo, motivo }) {
       }
     },
   })
+}
+
+/**
+ * CSV compatível com Excel brasileiro (BOM + ponto e vírgula).
+ *
+ * Exporta o que a tela está mostrando — já filtrado pela busca e pelo dia — e
+ * usa o mesmo rótulo da tabela para o estorno, para o arquivo não confundir uma
+ * venda estornada com um pedido que nasceu cancelado.
+ */
+export function gerarCsvVendas(vendas = []) {
+  const cabecalho = [
+    'Pedido',
+    'Cliente',
+    'Itens',
+    'Hora',
+    'Tipo',
+    'Plataforma',
+    'Pedido no aplicativo',
+    'Pagamento',
+    'Taxa de entrega (R$)',
+    'Total (R$)',
+    'Comissão (R$)',
+    'Líquido estimado (R$)',
+    'Status',
+  ]
+
+  const escapar = (valor) => `"${String(valor ?? '').replace(/"/g, '""')}"`
+
+  const linhas = vendas.map((venda) => [
+    venda.id,
+    venda.cliente,
+    venda.itens,
+    venda.hora,
+    venda.tipoVenda ?? '—',
+    venda.plataforma ?? '',
+    venda.pedidoExterno ?? '',
+    venda.pagamento,
+    formatarEntradaMoeda(venda.taxaEntrega ?? 0),
+    formatarEntradaMoeda(venda.total ?? 0),
+    formatarEntradaMoeda(venda.comissaoEstimada ?? 0),
+    formatarEntradaMoeda(venda.valorLiquidoEstimado ?? 0),
+    venda.estornadaEm ? 'Estornada' : (venda.status ?? ''),
+  ])
+
+  return `\uFEFF${[cabecalho, ...linhas].map((linha) => linha.map(escapar).join(';')).join('\r\n')}`
 }

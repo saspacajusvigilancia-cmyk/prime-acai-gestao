@@ -1,6 +1,7 @@
 {
   "name": "login-projetos",
   "version": "1.0.0",
+  "private": true,
   "description": "Módulo de login, cadastro e recuperação de senha reutilizável (Neon Auth + Data API), em JavaScript puro. Extraído do projeto Prime Açaí - Gestão.",
   "type": "module",
   "main": "src/index.js",

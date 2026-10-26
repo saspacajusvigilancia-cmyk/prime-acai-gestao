@@ -51,6 +51,7 @@ export const rotuloPapel = (papel) => config.papeis[papel] ?? papel
 const MENSAGENS = {
   // ---- Better Auth ----
   INVALID_EMAIL_OR_PASSWORD: 'E-mail ou senha incorretos.',
+  USER_NOT_FOUND: 'E-mail ou senha incorretos.',
   USER_ALREADY_EXISTS: 'Já existe uma conta com este e-mail.',
   EMAIL_NOT_VERIFIED: 'Confirme o seu e-mail antes de entrar. O link está na sua caixa de entrada.',
   PASSWORD_TOO_SHORT: 'A senha é curta demais. Use pelo menos 8 caracteres, com letras e números.',
@@ -64,6 +65,7 @@ const MENSAGENS = {
 
   // ---- Supabase (compatibilidade do adapter) ----
   invalid_credentials: 'E-mail ou senha incorretos.',
+  user_not_found: 'E-mail ou senha incorretos.',
   email_not_confirmed: 'Confirme o seu e-mail antes de entrar. O link está na sua caixa de entrada.',
   email_exists: 'Já existe uma conta com este e-mail.',
   user_already_exists: 'Já existe uma conta com este e-mail.',

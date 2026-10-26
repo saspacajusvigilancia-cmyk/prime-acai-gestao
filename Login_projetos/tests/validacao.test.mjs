@@ -65,11 +65,13 @@ describe('rotuloPapel', () => {
 describe('mensagemDeErro', () => {
   test('traduz códigos do Better Auth (maiúsculos)', () => {
     assert.equal(mensagemDeErro({ code: 'INVALID_EMAIL_OR_PASSWORD' }), 'E-mail ou senha incorretos.')
+    assert.equal(mensagemDeErro({ code: 'USER_NOT_FOUND' }), 'E-mail ou senha incorretos.')
   })
 
   test('traduz códigos do Supabase (minúsculos) por compatibilidade', () => {
     assert.equal(mensagemDeErro({ code: 'invalid_credentials' }), 'E-mail ou senha incorretos.')
     assert.equal(mensagemDeErro({ code: 'INVALID_CREDENTIALS' }), 'E-mail ou senha incorretos.')
+    assert.equal(mensagemDeErro({ code: 'user_not_found' }), 'E-mail ou senha incorretos.')
   })
 
   test('reconhece falha de rede', () => {

@@ -1,5 +1,5 @@
 /* ============================================================================
-   Compras e Entradas — estilos específicos da tela
+   Compras — estilos específicos da tela
    ========================================================================== */
 
 .compras-tabs {
@@ -81,6 +81,16 @@
   font-size: 11px;
 }
 
+.compras-item-form > .btn {
+  width: 100%;
+  min-width: 0;
+  justify-content: center;
+  gap: 6px;
+  padding-inline: 8px;
+  white-space: normal;
+  text-align: center;
+}
+
 .compras-dica {
   grid-column: 1 / -1;
   margin: 0;
@@ -106,7 +116,7 @@
 
 .compras-resumo .compras-total strong {
   font-size: 20px;
-  color: var(--primaria);
+  color: var(--alerta);
 }
 
 .compras-acoes {

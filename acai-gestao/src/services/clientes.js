@@ -1,5 +1,5 @@
 import { clientes as exemplo } from '../data.js'
-import { carregar, gravar, hoje } from './base.js'
+import { carregar, gravar, hoje, neon, neonConfigurado } from './base.js'
 
 const CAMPOS = 'id, codigo, nome, telefone, email, desde, tier, pedidos, total, ultima_compra'
 
@@ -44,10 +44,44 @@ export function proximoCodigoCliente(lista) {
   return `C-${String(maior + 1).padStart(4, '0')}`
 }
 
-/** Grava um cliente novo. */
+/**
+ * Reserva no banco o próximo código do cliente.
+ *
+ * A sequência é global e atômica (migração 28): dois formulários abertos ao
+ * mesmo tempo recebem números diferentes. No modo demonstração o cálculo é
+ * feito pela lista local, que é a única fonte de dados disponível.
+ */
+export async function sugerirCodigoCliente(lista) {
+  if (!neonConfigurado) return proximoCodigoCliente(lista)
+
+  try {
+    const { data, error } = await neon.rpc('proximo_codigo_cliente')
+    if (error) throw error
+    if (typeof data === 'string' && /^C-\d+$/.test(data)) return data
+
+    throw new Error('resposta inesperada ao reservar código')
+  } catch (erro) {
+    console.error('[clientes] Não foi possível reservar um código.', {
+      code: erro?.code,
+    })
+
+    if (/failed to fetch|networkerror|network request failed|fetch failed|ECONN|ETIMEDOUT/i.test(
+      `${erro?.code ?? ''} ${erro?.message ?? ''}`,
+    )) {
+      throw new Error('Não foi possível conectar ao sistema para gerar o código. Verifique sua conexão e tente novamente.')
+    }
+
+    throw new Error('Não foi possível gerar um código de cliente. Atualize o sistema e tente novamente.')
+  }
+}
+
+/** Grava um cliente novo. O código vem reservado por `sugerirCodigoCliente()`. */
 export function criarCliente(valores) {
+  const codigo = String(valores.codigo ?? '').trim().toUpperCase()
+  if (!codigo) throw new Error('O código do cliente não foi gerado. Feche e abra o cadastro novamente.')
+
   const registro = {
-    codigo: valores.codigo.trim().toUpperCase(),
+    codigo,
     nome: valores.nome.trim(),
     telefone: valores.telefone.trim() || null,
     email: valores.email.trim() || null,

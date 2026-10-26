@@ -18,7 +18,14 @@
  * Nada aqui decide autorização: quem autoriza é o RLS do banco (veja `sql/`).
  */
 
-import { config, configurarLogin, texto } from './config.js'
+import {
+  config,
+  configurarLogin,
+  ehRotaAuthConfigurada,
+  funcionalidadeAuthHabilitada,
+  rotaAuthHabilitada,
+  texto,
+} from './config.js'
 import { cadastroPage } from './pages/cadastro.js'
 import { loginPage } from './pages/login.js'
 import { recuperarSenhaPage } from './pages/recuperar-senha.js'
@@ -26,11 +33,18 @@ import { redefinirSenhaPage } from './pages/redefinir-senha.js'
 
 /* ------------------------------------------------------- configuração ----- */
 
-export { config, configurarLogin, texto }
+export {
+  config,
+  configurarLogin,
+  ehRotaAuthConfigurada,
+  funcionalidadeAuthHabilitada,
+  rotaAuthHabilitada,
+  texto,
+}
 
 /* ------------------------------------------------------------ clientes ---- */
 
-export { neon, neonConfigurado } from './lib/neon.js'
+export { authConfigurado, clienteAuth, neon, neonConfigurado } from './lib/neon.js'
 export { renderIcons } from './lib/icons.js'
 export { esc } from './ui.js'
 
@@ -83,21 +97,20 @@ export { cadastroPage, loginPage, recuperarSenhaPage, redefinirSenhaPage }
 
 /** Mapa `rota -> fábrica de página`, pronto para o roteador do host. */
 export function telasAuth() {
-  return {
-    [config.rotas.login]: loginPage,
-    [config.rotas.cadastro]: cadastroPage,
-    [config.rotas.recuperar]: recuperarSenhaPage,
-    [config.rotas.redefinir]: redefinirSenhaPage,
+  const telas = {}
+  if (funcionalidadeAuthHabilitada('login')) telas[config.rotas.login] = loginPage
+  if (funcionalidadeAuthHabilitada('cadastro')) telas[config.rotas.cadastro] = cadastroPage
+  if (funcionalidadeAuthHabilitada('recuperacaoSenha')) {
+    telas[config.rotas.recuperar] = recuperarSenhaPage
   }
+  if (funcionalidadeAuthHabilitada('redefinicaoSenha')) {
+    telas[config.rotas.redefinir] = redefinirSenhaPage
+  }
+  return telas
 }
 
 /** `true` se a rota é uma das telas de autenticação (a query é ignorada). */
 export function ehRotaAuth(rota) {
   const caminho = String(rota ?? '').split('?')[0]
-  return [
-    config.rotas.login,
-    config.rotas.cadastro,
-    config.rotas.recuperar,
-    config.rotas.redefinir,
-  ].includes(caminho)
+  return rotaAuthHabilitada(caminho)
 }

@@ -2,7 +2,15 @@ import '../styles/compras.css'
 
 import { abrirFormulario, confirmar, fechar as fecharFormulario } from '../formulario.js'
 import { renderIcons } from '../icons.js'
-import { formatarNumero, paraNumero } from '../numeros.js'
+import {
+  ativarCamposMonetarios,
+  centavosParaReais,
+  formatarEntradaMoeda,
+  formatarNumero,
+  multiplicarCustoPorQuantidade,
+  paraCentavos,
+  paraNumero,
+} from '../numeros.js'
 import { hoje } from '../services/base.js'
 import {
   STATUS_ABERTOS,
@@ -29,9 +37,11 @@ import { listarProdutos } from '../services/produtos.js'
 import {
   atualizarKpi,
   badge,
+  baixarCsv,
   botaoPrimario,
   cardHead,
   esc,
+  entradaMoeda,
   formatBRL,
   statCard,
   tabela,
@@ -84,32 +94,26 @@ const rotuloDocumento = (compra) =>
     : 'Sem nota'
 
 const somaItens = (lista) =>
-  lista.reduce(
-    (acc, item) =>
-      acc +
-      Math.max(
-        0,
-        (Number(item.quantidadeSolicitada) || 0) * (Number(item.custoUnitario) || 0) -
-          (Number(item.descontoValor) || 0),
-      ),
-    0,
-  )
+  lista.reduce((acc, item) => {
+    const bruto = multiplicarCustoPorQuantidade(item.custoUnitario, item.quantidadeSolicitada)
+    const desconto = paraCentavos(item.descontoValor ?? 0)
+    return acc + Math.max(0, bruto - desconto)
+  }, 0)
 
 const descontosItens = (lista) =>
-  lista.reduce((acc, item) => acc + (Number(item.descontoValor) || 0), 0)
+  lista.reduce((acc, item) => acc + (paraCentavos(item.descontoValor ?? 0) || 0), 0)
 
 /* ============================================================================
  * HTML
  * ========================================================================== */
 
-export function comprasPage() {
+export function comprasPage({ fornecedoresOnly = false } = {}) {
   const hojeISO = hoje()
 
   return {
     html: `
       <section class="page-head">
         <div>
-          <h1 class="page-title">Compras e Entradas</h1>
           <p class="page-subtitle">Registre a compra, receba a mercadoria e dê entrada no estoque com custo e validade.</p>
         </div>
       </section>
@@ -124,18 +128,22 @@ export function comprasPage() {
       <div id="compras-alertas"></div>
 
       <div class="compras-tabs" role="tablist" aria-label="Seções de compras">
-        <button type="button" class="compras-tab is-active" data-tab="nova" role="tab" aria-selected="true">Nova compra</button>
-        <button type="button" class="compras-tab" data-tab="historico" role="tab" aria-selected="false">Histórico</button>
+        <button type="button" class="compras-tab is-active" data-tab="compra" role="tab" aria-selected="true">Compra</button>
         <button type="button" class="compras-tab" data-tab="fornecedores" role="tab" aria-selected="false">Fornecedores</button>
       </div>
 
       <!-- ============================== NOVA COMPRA ============================== -->
-      <section class="compras-painel" data-painel="nova" role="tabpanel">
+      <section class="compras-painel" data-painel="nova" role="tabpanel" hidden>
         <div class="card">
           ${cardHead({
             titulo: 'Nova compra',
             descricao: 'A compra só movimenta o estoque quando o recebimento é confirmado.',
-            acoes: `<span class="badge badge--neutral" id="nova-situacao">Rascunho</span>`,
+            acoes: `
+              <button class="btn btn--ghost" type="button" data-acao="voltar-compras">
+                <i data-lucide="arrow-left"></i><span>Voltar para compras</span>
+              </button>
+              <span class="badge badge--neutral" id="nova-situacao">Rascunho</span>
+            `,
           })}
 
           <div class="compras-form">
@@ -168,17 +176,18 @@ export function comprasPage() {
 
             <label class="campo">
               <span class="campo__label">Número da nota</span>
-              <input class="campo__input" id="compra-nota" type="text" placeholder="Opcional" autocomplete="off" />
+              <input class="campo__input" id="compra-nota" type="text" placeholder="Número da nota fiscal" autocomplete="off" />
+              <p class="campo__ajuda" id="compra-nota-ajuda">Obrigatório quando a compra for com nota fiscal.</p>
             </label>
 
             <label class="campo">
-              <span class="campo__label">Frete (R$)</span>
-              <input class="campo__input" id="compra-frete" type="text" inputmode="decimal" placeholder="0,00" />
+              <span class="campo__label">Frete</span>
+              ${entradaMoeda({ id: 'compra-frete' })}
             </label>
 
             <label class="campo">
-              <span class="campo__label">Desconto da compra (R$)</span>
-              <input class="campo__input" id="compra-desconto" type="text" inputmode="decimal" placeholder="0,00" />
+              <span class="campo__label">Desconto da compra</span>
+              ${entradaMoeda({ id: 'compra-desconto' })}
             </label>
 
             <label class="campo campo--full">
@@ -197,7 +206,7 @@ export function comprasPage() {
 
             <label class="campo">
               <span class="campo__label">Unidade de compra</span>
-              <input class="campo__input" id="item-unidade" type="text" value="un" maxlength="12" />
+              <input class="campo__input" id="item-unidade" type="text" value="UN" maxlength="12" />
             </label>
 
             <label class="campo">
@@ -211,13 +220,13 @@ export function comprasPage() {
             </label>
 
             <label class="campo">
-              <span class="campo__label">Custo unitário (R$)</span>
-              <input class="campo__input" id="item-custo" type="text" inputmode="decimal" placeholder="0,00" />
+              <span class="campo__label">Custo unitário</span>
+              ${entradaMoeda({ id: 'item-custo' })}
             </label>
 
             <label class="campo">
-              <span class="campo__label">Desconto do item (R$)</span>
-              <input class="campo__input" id="item-desconto" type="text" inputmode="decimal" placeholder="0,00" />
+              <span class="campo__label">Desconto do item</span>
+              ${entradaMoeda({ id: 'item-desconto' })}
             </label>
 
             <label class="campo">
@@ -272,12 +281,19 @@ export function comprasPage() {
       </section>
 
       <!-- ============================== HISTÓRICO ============================== -->
-      <section class="compras-painel" data-painel="historico" role="tabpanel" hidden>
+      <section class="compras-painel" data-painel="compra" role="tabpanel">
         <div class="card">
           ${cardHead({
-            titulo: 'Histórico de compras',
-            descricao: 'Todo recebimento fica registrado com data, responsável e movimentação de estoque.',
-            acoes: `<button class="btn btn--ghost" type="button" id="compras-exportar"><i data-lucide="clipboard-list"></i><span>Exportar CSV</span></button>`,
+            titulo: '',
+            descricao: 'Consulte as compras registradas, acompanhe o recebimento e veja o histórico.',
+            acoes: `
+              <button class="btn btn--ghost" type="button" id="compras-exportar">
+                <i data-lucide="clipboard-list"></i><span>Exportar CSV</span>
+              </button>
+              ${podeCriar()
+                ? botaoPrimario({ label: 'Nova compra', icon: 'plus', acao: 'nova-compra' })
+                : ''}
+            `,
           })}
 
           <div class="toolbar" style="margin-bottom:12px">
@@ -326,6 +342,7 @@ export function comprasPage() {
     `,
 
     mount(root) {
+      ativarCamposMonetarios(root)
       compras = []
       fornecedores = []
       produtos = []
@@ -333,11 +350,31 @@ export function comprasPage() {
       editandoKey = null
 
       const el = (seletor) => root.querySelector(seletor)
+      const lerMoedaOpcional = (campo, rotulo) => {
+        const texto = campo.value.trim()
+        const centavos = texto ? paraCentavos(texto) : 0
+        if (!Number.isSafeInteger(centavos) || centavos < 0) {
+          throw new Error(`${rotulo} precisa ser um valor monetário válido e não negativo.`)
+        }
+        return centavos
+      }
+
+      function atualizarAjudaNumeroNota() {
+        const semNota = el('#compra-documento').value === 'sem_nota'
+        el('#compra-nota').placeholder = semNota ? 'Opcional para compra sem nota' : 'Informe o número da nota fiscal'
+        el('#compra-nota-ajuda').textContent = semNota
+          ? 'Deixe em branco somente quando a compra for sem nota fiscal.'
+          : 'Obrigatório para compras com nota fiscal.'
+      }
+
+      el('#compra-documento').addEventListener('change', atualizarAjudaNumeroNota)
+      atualizarAjudaNumeroNota()
 
       /* ------------------------------------------------------------- abas -- */
       function mostrarAba(nome) {
+        const abaAtiva = nome === 'nova' ? 'compra' : nome
         root.querySelectorAll('.compras-tab').forEach((botao) => {
-          const ativo = botao.dataset.tab === nome
+          const ativo = botao.dataset.tab === abaAtiva
           botao.classList.toggle('is-active', ativo)
           botao.setAttribute('aria-selected', String(ativo))
         })
@@ -350,6 +387,7 @@ export function comprasPage() {
       root.querySelectorAll('.compras-tab').forEach((botao) => {
         botao.addEventListener('click', () => mostrarAba(botao.dataset.tab))
       })
+      el('[data-acao="voltar-compras"]').addEventListener('click', () => mostrarAba('compra'))
 
       /* --------------------------------------------------------- selects -- */
       function atualizarSelectFornecedores() {
@@ -479,7 +517,7 @@ export function comprasPage() {
           label: 'Total',
           align: 'right',
           render: (item) =>
-            `<strong>${formatBRL(Math.max(0, item.quantidadeSolicitada * item.custoUnitario - item.descontoValor))}</strong>`,
+            `<strong>${formatBRL(centavosParaReais(Math.max(0, multiplicarCustoPorQuantidade(item.custoUnitario, item.quantidadeSolicitada) - paraCentavos(item.descontoValor))))}</strong>`,
         },
         {
           key: 'lote',
@@ -524,22 +562,28 @@ export function comprasPage() {
       function atualizarTotais() {
         const subtotal = somaItens(itensNovos)
         const descontoItens = descontosItens(itensNovos)
-        const frete = paraNumero(el('#compra-frete')?.value) || 0
-        const desconto = paraNumero(el('#compra-desconto')?.value) || 0
-        const total = Math.max(0, subtotal - desconto + frete)
+        const textoFrete = el('#compra-frete')?.value.trim() ?? ''
+        const textoDesconto = el('#compra-desconto')?.value.trim() ?? ''
+        const frete = textoFrete ? paraCentavos(textoFrete) : 0
+        const desconto = textoDesconto ? paraCentavos(textoDesconto) : 0
+
+        if (!Number.isSafeInteger(frete) || !Number.isSafeInteger(desconto) || frete < 0 || desconto < 0) {
+          el('#novo-resumo').innerHTML = '<span class="compras-total">Confira os valores monetários informados.</span>'
+          return
+        }
 
         el('#novo-resumo').innerHTML = `
-          <span>Subtotal <strong>${formatBRL(subtotal)}</strong></span>
-          <span>Desconto itens <strong>${formatBRL(descontoItens)}</strong></span>
-          <span>Frete <strong>${formatBRL(frete)}</strong></span>
-          <span>Desconto compra <strong>${formatBRL(desconto)}</strong></span>
-          <span class="compras-total">Total <strong>${formatBRL(total)}</strong></span>
+          <span>Subtotal <strong>${formatBRL(centavosParaReais(subtotal + descontoItens))}</strong></span>
+          <span>Desconto itens <strong>${formatBRL(centavosParaReais(descontoItens))}</strong></span>
+          <span>Frete <strong>${formatBRL(centavosParaReais(frete))}</strong></span>
+          <span>Desconto compra <strong>${formatBRL(centavosParaReais(desconto))}</strong></span>
+          <span class="compras-total">Total <strong>${formatBRL(centavosParaReais(Math.max(0, subtotal + frete - desconto)))}</strong></span>
         `
       }
 
       function atualizarDica() {
         const produto = produtoPorId(el('#item-produto').value)
-        const unidade = el('#item-unidade').value.trim() || 'un'
+        const unidade = el('#item-unidade').value.trim().toUpperCase() || 'UN'
         const fator = paraNumero(el('#item-fator').value) || 0
         const quantidade = paraNumero(el('#item-qtd').value) || 0
         const dica = el('#item-dica')
@@ -566,7 +610,7 @@ export function comprasPage() {
 
       function limparItemFormulario() {
         el('#item-produto').value = ''
-        el('#item-unidade').value = 'un'
+        el('#item-unidade').value = 'UN'
         el('#item-fator').value = '1'
         el('#item-qtd').value = ''
         el('#item-custo').value = ''
@@ -590,12 +634,12 @@ export function comprasPage() {
         }
 
         select.value = item.produtoId
-        el('#item-unidade').value = item.unidadeCompra
+        el('#item-unidade').value = item.unidadeCompra.toUpperCase()
         el('#item-fator').value = String(item.fatorConversao).replace('.', ',')
         el('#item-qtd').value = String(item.quantidadeSolicitada).replace('.', ',')
-        el('#item-custo').value = String(item.custoUnitario).replace('.', ',')
+        el('#item-custo').value = formatarEntradaMoeda(item.custoUnitario)
         el('#item-desconto').value = item.descontoValor
-          ? String(item.descontoValor).replace('.', ',')
+          ? formatarEntradaMoeda(item.descontoValor)
           : ''
         el('#item-lote').value = item.lote ?? ''
         el('#item-validade').value = item.validade ?? ''
@@ -613,11 +657,15 @@ export function comprasPage() {
 
         if (!produto) throw new Error('Escolha o produto do item.')
 
-        const unidadeCompra = el('#item-unidade').value.trim() || produto.unidade || 'un'
+        const unidadeCompra = (el('#item-unidade').value.trim() || produto.unidade || 'UN').toUpperCase()
         const fator = paraNumero(el('#item-fator').value)
         const quantidade = paraNumero(el('#item-qtd').value)
-        const custo = paraNumero(el('#item-custo').value)
-        const desconto = paraNumero(el('#item-desconto').value) || 0
+        const custoCentavos = paraCentavos(el('#item-custo').value)
+        const descontoCentavos = el('#item-desconto').value.trim()
+          ? paraCentavos(el('#item-desconto').value)
+          : 0
+        const custo = centavosParaReais(custoCentavos)
+        const desconto = centavosParaReais(descontoCentavos)
 
         if (!Number.isFinite(quantidade) || quantidade <= 0) {
           throw new Error('Informe uma quantidade maior que zero.')
@@ -625,11 +673,12 @@ export function comprasPage() {
         if (!Number.isFinite(fator) || fator <= 0) {
           throw new Error('O fator de conversão precisa ser maior que zero.')
         }
-        if (!Number.isFinite(custo) || custo < 0) {
+        if (!Number.isSafeInteger(custoCentavos) || custo < 0) {
           throw new Error('Informe um custo válido (zero ou maior).')
         }
-        if (desconto < 0) throw new Error('O desconto não pode ser negativo.')
-        if (desconto > quantidade * custo + 0.001) {
+        if (!Number.isSafeInteger(descontoCentavos) || desconto < 0) throw new Error('O desconto não pode ser negativo.')
+        const totalItemCentavos = multiplicarCustoPorQuantidade(custo, quantidade)
+        if (descontoCentavos > totalItemCentavos) {
           throw new Error('O desconto do item não pode ser maior que o valor do item.')
         }
 
@@ -674,11 +723,18 @@ export function comprasPage() {
       el('#item-produto').addEventListener('change', () => {
         const produto = produtoPorId(el('#item-produto').value)
         if (produto) {
-          el('#item-unidade').value = produto.unidade || 'un'
+          el('#item-unidade').value = (produto.unidade || 'UN').toUpperCase()
           el('#item-fator').value = '1'
-          el('#item-custo').value = produto.custo ? String(produto.custo).replace('.', ',') : ''
+          el('#item-custo').value = formatarEntradaMoeda(produto.custo ?? '')
         }
         atualizarDica()
+      })
+
+      el('#item-unidade').addEventListener('input', () => {
+        const campo = el('#item-unidade')
+        const posicao = campo.selectionStart
+        campo.value = campo.value.toUpperCase()
+        campo.setSelectionRange(posicao, posicao)
       })
 
       ;['#item-unidade', '#item-fator', '#item-qtd'].forEach((seletor) => {
@@ -723,11 +779,12 @@ export function comprasPage() {
           const { dados, origem } = await registrarCompra({
             dataCompra: el('#compra-data').value,
             fornecedorId: el('#compra-fornecedor').value || null,
+            fornecedorNome: el('#compra-fornecedor').selectedOptions[0]?.textContent ?? '',
             tipoDocumento: el('#compra-documento').value,
             numeroNota: el('#compra-nota').value,
             observacoes: el('#compra-observacoes').value,
-            freteValor: paraNumero(el('#compra-frete').value) || 0,
-            descontoValor: paraNumero(el('#compra-desconto').value) || 0,
+            freteValor: centavosParaReais(lerMoedaOpcional(el('#compra-frete'), 'O frete')),
+            descontoValor: centavosParaReais(lerMoedaOpcional(el('#compra-desconto'), 'O desconto da compra')),
             itens: itensNovos,
             aguardarRecebimento,
           })
@@ -747,7 +804,7 @@ export function comprasPage() {
             renderHistorico()
           }
 
-          mostrarAba('historico')
+          mostrarAba('compra')
         } catch (erro) {
           console.error('[compras] Falha ao salvar compra.', erro)
           toast(mensagemErro(erro))
@@ -761,6 +818,14 @@ export function comprasPage() {
       el('#compra-salvar').addEventListener('click', () => salvarCompra(true))
       el('#compra-salvar-rascunho').addEventListener('click', () => salvarCompra(false))
       el('#compra-limpar').addEventListener('click', limparCompra)
+      el('[data-acao="nova-compra"]').addEventListener('click', () => {
+        if (!podeCriar()) {
+          toast('Sua conta não tem permissão para registrar compras.')
+          return
+        }
+        limparCompra()
+        mostrarAba('nova')
+      })
 
       /* --------------------------------------------------- lista/histórico -- */
       const colunasHistorico = () => [
@@ -1106,6 +1171,13 @@ export function comprasPage() {
                     data-receber-validade="${esc(item.id)}"
                     value="${esc(item.validade ?? '')}" />
                 </td>
+                <td>
+                  <select class="campo__input" data-receber-local="${esc(item.id)}">
+                    <option value="loja">Estoque Normal (loja)</option>
+                    <option value="geral">Estoque Geral</option>
+                    <option value="buffet">Estoque Buffet</option>
+                  </select>
+                </td>
               </tr>
             `,
           )
@@ -1126,6 +1198,7 @@ export function comprasPage() {
                   <th scope="col">Receber</th>
                   <th scope="col">Lote</th>
                   <th scope="col">Validade</th>
+                  <th scope="col">Destino</th>
                 </tr>
               </thead>
               <tbody>${linhas}</tbody>
@@ -1171,6 +1244,7 @@ export function comprasPage() {
             itens.push({
               itemId: item.id,
               quantidade,
+              local: overlay.querySelector(`[data-receber-local="${item.id}"]`).value,
               lote: overlay.querySelector(`[data-receber-lote="${item.id}"]`).value.trim(),
               validade: overlay.querySelector(`[data-receber-validade="${item.id}"]`).value,
             })
@@ -1219,12 +1293,20 @@ export function comprasPage() {
           render: (f) =>
             `<span class="cell-main">${esc(f.nome)}</span>${f.observacoes ? `<span class="cell-sub">${esc(f.observacoes)}</span>` : ''}`,
         },
-        { key: 'cnpj', label: 'CNPJ / CPF', render: (f) => esc(f.cnpj || '—') },
+        {
+          key: 'cnpj',
+          label: 'Documento',
+          render: (f) => {
+            if (!f.cnpj) return '—'
+            const tipo = f.cnpj.replace(/\D/g, '').length === 11 ? 'CPF' : 'CNPJ'
+            return `<span class="cell-main">${tipo}: ${esc(f.cnpj)}</span>`
+          },
+        },
         {
           key: 'contato',
           label: 'Contato',
           render: (f) =>
-            `<span class="cell-main">${esc(f.telefone || '—')}</span>${f.email ? `<span class="cell-sub">${esc(f.email)}</span>` : ''}`,
+            `<span class="cell-main">${esc(f.telefone || '—')}</span>${f.whatsapp ? `<span class="cell-sub">WhatsApp: ${esc(f.whatsapp)}</span>` : ''}${f.email ? `<span class="cell-sub">${esc(f.email)}</span>` : ''}`,
         },
         {
           key: 'ativo',
@@ -1274,19 +1356,42 @@ export function comprasPage() {
                 nome: fornecedor.nome,
                 cnpj: fornecedor.cnpj,
                 telefone: fornecedor.telefone,
+                whatsapp: fornecedor.whatsapp,
                 email: fornecedor.email,
                 observacoes: fornecedor.observacoes,
               }
             : {},
           campos: [
-            { nome: 'nome', label: 'Nome / razão social', obrigatorio: true, largo: true },
-            { nome: 'cnpj', label: 'CNPJ / CPF', placeholder: 'Opcional' },
-            { nome: 'telefone', label: 'Telefone', placeholder: '(00) 00000-0000' },
+            { nome: 'nome', label: 'Nome / Razão Social', obrigatorio: true, largo: true },
+            {
+              nome: 'cnpj',
+              label: 'CPF ou CNPJ',
+              placeholder: 'CPF ou CNPJ',
+              ajuda: 'Digite até 11 dígitos para CPF ou 14 para CNPJ.',
+              inputmode: 'numeric',
+              maxlength: 18,
+            },
+            {
+              nome: 'telefone',
+              label: 'Telefone',
+              placeholder: '(00) 0000-0000',
+              ajuda: 'DDD e 10 dígitos para fixo ou 11 para celular.',
+              inputmode: 'numeric',
+              maxlength: 15,
+            },
+            {
+              nome: 'whatsapp',
+              label: 'WhatsApp',
+              placeholder: '(00) 00000-0000',
+              ajuda: 'DDD e 10 ou 11 dígitos.',
+              inputmode: 'numeric',
+              maxlength: 15,
+            },
             { nome: 'email', label: 'E-mail', placeholder: 'Opcional' },
             { nome: 'observacoes', label: 'Observações', tipo: 'textarea', largo: true },
           ],
           aoSalvar: async (valores) => {
-            const { dados } = editando
+            const { dados, origem } = editando
               ? await atualizarFornecedor(fornecedor.id, valores)
               : await criarFornecedor(valores)
 
@@ -1298,9 +1403,67 @@ export function comprasPage() {
             renderFornecedores()
             atualizarSelectFornecedores()
 
-            return editando ? 'Fornecedor atualizado.' : 'Fornecedor cadastrado.'
+            const mensagem = origem === 'neon'
+              ? editando
+                ? 'Fornecedor atualizado no banco.'
+                : 'Fornecedor cadastrado no banco.'
+              : `${editando ? 'Fornecedor atualizado' : 'Fornecedor cadastrado'} apenas nesta sessão — o Neon não está configurado.`
+            return mensagem
           },
         })
+
+        const formulario = document.querySelector('.modal')
+        const documento = formulario?.querySelector('[name="cnpj"]')
+        const atualizarMascara = (campo, formatar) => {
+          campo.addEventListener('input', () => {
+            campo.value = formatar(campo.value)
+          })
+          campo.value = formatar(campo.value)
+        }
+        const formatarDocumento = (valor) => {
+          const digitos = valor.replace(/\D/g, '')
+          if (digitos.length > 11) {
+            return digitos
+              .slice(0, 14)
+              .replace(/^(\d{2})(\d)/, '$1.$2')
+              .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+              .replace(/\.(\d{3})(\d)/, '.$1/$2')
+              .replace(/(\d{4})(\d)/, '$1-$2')
+          }
+
+          return digitos
+            .slice(0, 11)
+            .replace(/^(\d{3})(\d)/, '$1.$2')
+            .replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3')
+            .replace(/\.(\d{3})(\d{1,2})$/, '.$1-$2')
+        }
+        if (documento) {
+          const rotuloDocumento = documento.closest('.campo')?.querySelector('.campo__label')
+          documento.addEventListener('input', () => {
+            const digitos = documento.value.replace(/\D/g, '')
+            if (rotuloDocumento) {
+              rotuloDocumento.textContent = digitos.length > 11
+                ? 'CNPJ'
+                : digitos.length
+                  ? 'CPF'
+                  : 'CPF ou CNPJ'
+            }
+          })
+          atualizarMascara(documento, formatarDocumento)
+          documento.dispatchEvent(new Event('input'))
+        }
+
+        const formatarTelefone = (valor) => {
+          const digitos = valor.replace(/\D/g, '').slice(0, 11)
+          if (!digitos) return ''
+          const ddd = digitos.slice(0, 2)
+          const local = digitos.slice(2)
+          if (digitos.length <= 2) return `(${ddd}`
+          const limite = digitos.length > 10 ? 5 : 4
+          return `(${ddd}) ${local.slice(0, limite)}${local.length > limite ? `-${local.slice(limite)}` : ''}`
+        }
+        formulario?.querySelectorAll('[name="telefone"], [name="whatsapp"]')
+          .forEach((campo) => atualizarMascara(campo, formatarTelefone))
       }
 
       async function alternarFornecedor(fornecedor) {
@@ -1351,14 +1514,22 @@ export function comprasPage() {
       }
 
       /* ------------------------------------------------------------ início -- */
+      if (fornecedoresOnly) {
+        el('.page-head').hidden = true
+        el('.grid--stats').hidden = true
+        el('#compras-alertas').hidden = true
+        el('.compras-tabs').hidden = true
+        mostrarAba('fornecedores')
+      }
+
       renderItensNovos()
       atualizarDica()
       carregarDados()
 
       const aoBuscarGlobal = (evento) => {
         const termo = evento.detail ?? ''
-        const painelHistorico = root.querySelector('[data-painel="historico"]')
-        if (!painelHistorico || painelHistorico.hidden) return
+        const painelCompra = root.querySelector('[data-painel="compra"]')
+        if (!painelCompra || painelCompra.hidden) return
         el('#filtro-busca').value = termo
         renderHistorico()
       }
@@ -1376,18 +1547,6 @@ export function comprasPage() {
   }
 }
 
-/* ============================================================================
- * Download de CSV
- * ========================================================================== */
-
-function baixarCsv(nome, conteudo) {
-  const blob = new Blob([conteudo], { type: 'text/csv;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = nome
-  document.body.appendChild(link)
-  link.click()
-  link.remove()
-  URL.revokeObjectURL(url)
+export function fornecedoresPage() {
+  return comprasPage({ fornecedoresOnly: true })
 }

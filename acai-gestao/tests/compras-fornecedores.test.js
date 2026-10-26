@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 
 const { neonMock } = vi.hoisted(() => ({
-  neonMock: { from: vi.fn() },
+  neonMock: { from: vi.fn(), rpc: vi.fn() },
 }))
 
 vi.mock('../src/services/base.js', () => ({
@@ -15,7 +15,7 @@ vi.mock('../src/services/base.js', () => ({
   }),
 }))
 
-const { criarFornecedor, listarCompras } = await import('../src/services/compras.js')
+const { criarFornecedor, listarCompras, receberCompra } = await import('../src/services/compras.js')
 
 let respostasPorTabela = {}
 const selecoes = []
@@ -58,9 +58,45 @@ afterEach(() => {
   selecoes.length = 0
   escritas.length = 0
   neonMock.from.mockClear()
+  neonMock.rpc.mockReset()
 })
 
 describe('fornecedores no histórico de compras', () => {
+  it('envia o destino escolhido por item ao RPC de recebimento', async () => {
+    neonMock.rpc.mockResolvedValue({
+      data: [{ compra_id: 'compra-1', status: 'recebimento_parcial' }],
+      error: null,
+    })
+
+    await receberCompra('compra-1', [{
+      itemId: 'item-1',
+      quantidade: 2,
+      local: 'buffet',
+      lote: 'L-1',
+      validade: '2027-01-01',
+    }])
+
+    expect(neonMock.rpc).toHaveBeenCalledWith('confirmar_recebimento_compra', {
+      p_compra_id: 'compra-1',
+      p_itens: [{
+        item_id: 'item-1',
+        quantidade: 2,
+        local: 'buffet',
+        lote: 'L-1',
+        validade: '2027-01-01',
+      }],
+    })
+  })
+
+  it('recusa destinos de recebimento que não sejam locais operacionais configurados', () => {
+    expect(() => receberCompra('compra-1', [{
+      itemId: 'item-1',
+      quantidade: 2,
+      local: 'preparacao',
+    }])).toThrow(/destino de estoque válido/i)
+    expect(neonMock.rpc).not.toHaveBeenCalled()
+  })
+
   it('grava os demais campos quando o WhatsApp ainda não existe no banco', async () => {
     respostasPorTabela = {
       fornecedores: [

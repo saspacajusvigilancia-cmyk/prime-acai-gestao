@@ -12,11 +12,17 @@
    ========================================================================== */
 
 .auth {
-  --a-roxo-escuro: #351052;
-  --a-roxo: #6c2ba5;
-  --a-roxo-claro: #8b46c9;
-  --a-lilas: #b58ae8;
-  --a-verde: #38a169;
+  --a-roxo-escuro: #350044;
+  --a-roxo: #4a025b;
+  --a-roxo-claro: #6f1d7b;
+  --a-dourado: #ffbf00;
+  --a-verde: #00b131;
+  --a-verde-texto: #006d20;
+  --a-roxo-fundo: rgba(74, 2, 91, 0.1);
+  --a-roxo-borda: rgba(74, 2, 91, 0.24);
+  --a-dourado-fundo: rgba(255, 191, 0, 0.28);
+  --a-verde-fundo: rgba(0, 177, 49, 0.1);
+  --a-verde-borda: rgba(0, 177, 49, 0.3);
   --a-fundo: #f5f2f8;
   --a-branco: #ffffff;
   --a-texto: #21172b;
@@ -65,7 +71,7 @@
   width: 420px;
   height: 420px;
   border-radius: 50%;
-  background: radial-gradient(circle, rgba(181, 138, 232, 0.5), transparent 68%);
+  background: radial-gradient(circle, var(--a-dourado-fundo), transparent 68%);
   pointer-events: none;
 }
 
@@ -143,7 +149,7 @@
 .auth__pontos svg {
   width: 16px;
   height: 16px;
-  color: var(--a-lilas);
+  color: var(--a-dourado);
 }
 
 /* --------------------------------------------------------------- formulário -- */
@@ -212,7 +218,7 @@
 
 .campo-auth__controle:focus-within {
   border-color: var(--a-roxo);
-  box-shadow: 0 0 0 3.5px rgba(108, 43, 165, 0.14);
+  box-shadow: 0 0 0 3.5px var(--a-roxo-borda);
 }
 
 .campo-auth__controle.is-erro {
@@ -260,7 +266,7 @@
 }
 
 .campo-auth__olho:hover {
-  background: rgba(108, 43, 165, 0.1);
+  background: var(--a-roxo-fundo);
   color: var(--a-roxo);
 }
 
@@ -305,7 +311,7 @@
 }
 
 .senha-regras li.is-ok {
-  color: var(--a-verde);
+  color: var(--a-verde-texto);
 }
 
 .senha-regras li.is-ok svg {
@@ -325,8 +331,8 @@
   padding: 12.5px 18px;
   border: 0;
   border-radius: 12px;
-  background: linear-gradient(135deg, var(--a-roxo), var(--a-roxo-claro));
-  color: #fff;
+  background: var(--a-dourado);
+  color: #24152a;
   font: inherit;
   font-size: 14.5px;
   font-weight: 600;
@@ -335,7 +341,7 @@
 }
 
 .btn-auth:hover:not(:disabled) {
-  filter: brightness(1.08);
+  filter: brightness(0.94);
 }
 
 .btn-auth:active:not(:disabled) {
@@ -369,7 +375,7 @@
 
 .btn-auth--secundario:hover:not(:disabled) {
   filter: none;
-  background: rgba(108, 43, 165, 0.07);
+  background: var(--a-roxo-fundo);
   border-color: var(--a-lilas);
 }
 
@@ -419,9 +425,9 @@
 }
 
 .alerta-auth--ok {
-  background: rgba(56, 161, 105, 0.1);
-  border-color: rgba(56, 161, 105, 0.3);
-  color: #276749;
+  background: var(--a-verde-fundo);
+  border-color: var(--a-verde-borda);
+  color: var(--a-verde-texto);
 }
 
 [data-theme='dark'] .alerta-auth--ok {
@@ -429,9 +435,9 @@
 }
 
 .alerta-auth--info {
-  background: rgba(108, 43, 165, 0.08);
-  border-color: rgba(108, 43, 165, 0.24);
-  color: #553c9a;
+  background: var(--a-roxo-fundo);
+  border-color: var(--a-roxo-borda);
+  color: var(--a-roxo);
 }
 
 [data-theme='dark'] .alerta-auth--info {
@@ -505,7 +511,7 @@
   width: 26px;
   height: 26px;
   border-width: 3px;
-  border-color: rgba(108, 43, 165, 0.25);
+  border-color: var(--a-roxo-borda);
   border-top-color: var(--a-roxo);
 }
 
@@ -513,7 +519,7 @@
 
 @media (max-width: 900px) {
   .auth {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 
   /* No celular o painel roxo vira um cabeçalho enxuto. */

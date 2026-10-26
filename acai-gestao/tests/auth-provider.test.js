@@ -64,6 +64,13 @@ describe('adaptador de provedor de autenticação', () => {
     expect(cliente.auth.signOut).toHaveBeenCalledOnce()
   })
 
+  it('propaga falhas do provedor ao encerrar a sessão', async () => {
+    const cliente = configurarCliente()
+    cliente.auth.signOut.mockResolvedValue({ error: new Error('Falha de rede') })
+
+    await expect(sair()).rejects.toThrow('Falha de rede')
+  })
+
   it('cria conta enviando apenas os dados de identidade (papel é definido no backend)', async () => {
     const cliente = configurarCliente()
 

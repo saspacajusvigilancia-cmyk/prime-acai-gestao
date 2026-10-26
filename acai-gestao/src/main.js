@@ -1,14 +1,20 @@
 import './style.css'
 import 'login-projetos/estilo.css'
 import './styles/config.css'
+import './styles/produtos.css'
 
 import { telaDeEspera, carregarFonteAuth } from 'login-projetos/auth-ui'
-import { configurarLogin } from 'login-projetos/config'
+import {
+  configurarLogin,
+  config,
+  ehRotaAuthConfigurada,
+  rotaAuthHabilitada,
+} from 'login-projetos/config'
 import { renderIcons } from './icons.js'
-import { esc } from './ui.js'
+import { esc, toast } from './ui.js'
 import { renderShell } from './layout/shell.js'
 import { loginProjetosConfig } from './login-config.js'
-import { neonConfigurado } from 'login-projetos/neon'
+import { authConfigurado, neonConfigurado } from 'login-projetos/neon'
 import { createRouter } from './router.js'
 import { routes } from './routes.js'
 import { observarAuth, sair, sessaoAtual } from 'login-projetos/auth'
@@ -18,6 +24,7 @@ import { EVENTOS_DADOS } from './services/base.js'
 import { contarNaoLidas, listarNotificacoes, marcarLida, marcarTodasLidas } from './services/notificacoes.js'
 import { estadoSessao, iniciais, logado } from 'login-projetos/sessao'
 import { initTheme } from './theme.js'
+import { dadosTesteHabilitados } from './demo-test-data.js'
 
 const app = document.querySelector('#app')
 
@@ -49,7 +56,11 @@ async function lerSessao() {
         ? (estadoSessao.perfil.aprovadoEm ? 'Esta conta esta desativada.' : 'Esta conta esta pendente de aprovacao pelo administrador.')
         : 'Nao encontramos o perfil desta conta.'
 
-      await sair().catch(() => {})
+      try {
+        await sair()
+      } catch (erroLogout) {
+        console.error('[auth] Nao foi possivel encerrar a sessao sem acesso.', erroLogout)
+      }
       estadoSessao.usuario = null
       estadoSessao.perfil = null
       estadoSessao.aviso = `${motivo} Fale com um administrador.`
@@ -61,6 +72,7 @@ async function lerSessao() {
     estadoSessao.usuario = null
     estadoSessao.perfil = null
     estadoSessao.permissoes = new Set()
+    estadoSessao.aviso = 'Nao foi possivel verificar a sessao. Entre novamente.'
   } finally {
     estadoSessao.carregando = false
   }
@@ -87,11 +99,17 @@ function sincronizar() {
    ========================================================================== */
 
 function guarda(rota) {
-  if (!neonConfigurado) return rota.publica ? '/' : null
+  if (!authConfigurado()) return rota.publica ? '/' : null
 
-  if (rota.publica) return logado() && !rota.permiteLogado ? '/' : null
+  if (rota.publica && ehRotaAuthConfigurada(rota.path) && !rotaAuthHabilitada(rota.path)) {
+    return rota.path === config.rotas.login ? '/acesso-negado' : config.rotas.login
+  }
 
-  if (!logado()) return '/login'
+  if (rota.publica) {
+    return logado() && !rota.permiteLogado ? config.rotas.depoisDoLogin : null
+  }
+
+  if (!logado()) return config.rotas.login
 
   if (rota.modulo && !podeAcessar(rota.modulo)) return '/acesso-negado'
 
@@ -188,8 +206,10 @@ function pintarOrigemDados() {
     pill.title = 'Lendo dados do seu banco no Neon.'
   } else {
     pill.classList.add('status-pill--exemplo')
-    texto.textContent = 'Dados de exemplo'
-    pill.title = 'Preencha VITE_NEON_URL no arquivo .env para usar dados reais.'
+    texto.textContent = dadosTesteHabilitados ? 'Teste fictício' : 'Dados de exemplo'
+    pill.title = dadosTesteHabilitados
+      ? 'Dados fictícios de demonstração; nenhuma alteração é gravada no banco.'
+      : 'Preencha VITE_NEON_URL no arquivo .env para usar dados reais.'
   }
 }
 
@@ -270,7 +290,7 @@ function montarShellApp(raiz) {
 
   raiz.querySelector('#btn-config')?.addEventListener('click', () => router.navigate('/configuracoes'))
 
-  if (!neonConfigurado) raiz.querySelector('#btn-sair')?.remove()
+  if (!authConfigurado()) raiz.querySelector('#btn-sair')?.remove()
 
   const aoTeclar = (evento) => {
     if (evento.key === 'Escape') fecharMenu()
@@ -285,15 +305,25 @@ function montarShellApp(raiz) {
 
   raiz.querySelector('#btn-sair')?.addEventListener('click', async (evento) => {
     const botao = evento.currentTarget
+    const tituloOriginal = botao.title
     botao.disabled = true
+    botao.title = 'Saindo...'
+    botao.setAttribute('aria-busy', 'true')
 
     try {
       await sair()
-      await sincronizar()
-      router?.navigate('/login')
+      estadoSessao.usuario = null
+      estadoSessao.perfil = null
+      estadoSessao.permissoes = new Set()
+      estadoSessao.aviso = null
+      estadoSessao.carregando = false
+      router?.navigate(config.rotas.depoisDoLogout)
     } catch (erro) {
       console.error('[auth] Falha ao sair:', erro)
       botao.disabled = false
+      botao.title = tituloOriginal
+      botao.removeAttribute('aria-busy')
+      toast('Não foi possível sair da conta. Verifique a conexão e tente novamente.')
     }
   })
 
@@ -331,7 +361,7 @@ function montarShellApp(raiz) {
         <div style="padding:8px;border-bottom:1px solid var(--borda);${n.lida ? 'opacity:0.6' : ''}">
           <div style="display:flex;justify-content:space-between;gap:6px">
             <strong style="font-size:12px">${esc(n.titulo)}</strong>
-            ${n.lida ? '' : '<span style="font-size:10px;color:#ef4444">nova</span>'}
+            ${n.lida ? '' : '<span style="font-size:10px;color:var(--alerta)">nova</span>'}
           </div>
           <p style="font-size:12px;margin:2px 0;color:var(--texto-suave)">${esc(n.mensagem)}</p>
           <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:6px;flex-wrap:wrap">
@@ -413,7 +443,7 @@ async function iniciar() {
     pintarOrigemDados()
   })
 
-  if (neonConfigurado) {
+  if (authConfigurado()) {
     app.innerHTML = telaDeEspera()
     renderIcons(app)
     await lerSessao()
@@ -433,10 +463,12 @@ async function iniciar() {
       if (shell === 'app') {
         const titulo = app.querySelector('#page-title')
         const subtitulo = app.querySelector('#page-subtitle')
+        const titulos = app.querySelector('.topbar__titles')
         const buscaGlobal = app.querySelector('#busca-global')
 
         if (titulo) titulo.textContent = rotulo
         if (subtitulo) subtitulo.textContent = rota.subtitle ?? ''
+        if (titulos) titulos.hidden = Boolean(rota.hideTopbarTitle)
         if (buscaGlobal) buscaGlobal.value = ''
 
         marcarMenuAtivo(path)

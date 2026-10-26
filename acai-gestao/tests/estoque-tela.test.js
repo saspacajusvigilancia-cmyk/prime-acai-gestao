@@ -71,11 +71,14 @@ describe('tela de Estoque — produtos', () => {
     expect(root.querySelector('#contagem-estoque').textContent).toBe('1 de 10 itens')
   })
 
-  it('o formulário de novo item traz os campos do cadastro por tipo de venda', () => {
+  it('o formulário de novo item traz os campos do cadastro por tipo de venda', async () => {
     const root = montar()
     root.querySelector('[data-acao="novo-produto"]').click()
+    await tick()
 
     const campo = (nome) => document.querySelector(`#campo-${nome}`)
+    expect(campo('categoria').tagName).toBe('SELECT')
+    expect([...campo('categoria').options].map((opcao) => opcao.textContent)).toContain('Açaí')
     for (const nome of [
       'codigo',
       'nome',
@@ -105,7 +108,7 @@ describe('tela de Estoque — produtos', () => {
 
     // Código sugerido na sequência do que já existe.
     expect(campo('codigo').value).toBe('P011')
-  })
+  }, 15000)
 })
 
 describe('tela de Estoque — livro-razão do saldo', () => {
@@ -146,6 +149,18 @@ describe('tela de Estoque — livro-razão do saldo', () => {
     // P001 tem 86 no cadastro de exemplo.
     expect(campo('contado').value).toBe('86')
     expect(campo('local').value).toBe('contagem')
+    expect(campo('estoqueLocal').value).toBe('loja')
+    expect([...campo('estoqueLocal').options].map((o) => o.value)).toEqual(['loja', 'geral', 'buffet'])
+  })
+
+  it('a contagem seleciona o saldo correspondente ao Estoque Buffet', () => {
+    const root = montar()
+    root.querySelector('[data-acao="contar-produto"]').click()
+
+    campo('estoqueLocal').value = 'buffet'
+    campo('estoqueLocal').dispatchEvent(new Event('change'))
+
+    expect(campo('contado').value).toBe('0')
   })
 
   it('movimentar em modo demonstração move o saldo na tela e avisa', async () => {

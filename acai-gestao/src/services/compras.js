@@ -1,3 +1,9 @@
+import {
+  centavosParaReais,
+  formatarEntradaMoeda,
+  multiplicarCustoPorQuantidade,
+  paraCentavos,
+} from '../numeros.js'
 import { carregar, gravar, hoje } from './base.js'
 
 /**
@@ -91,12 +97,38 @@ const CAMPOS_FORNECEDOR = [
   'nome',
   'cnpj',
   'telefone',
+  'whatsapp',
   'email',
   'observacoes',
   'ativo',
   'criado_em',
   'atualizado_em',
 ].join(', ')
+
+const CAMPOS_FORNECEDOR_SEM_WHATSAPP = CAMPOS_FORNECEDOR
+  .split(', ')
+  .filter((campo) => campo !== 'whatsapp')
+  .join(', ')
+
+const mensagemMigracaoWhatsApp =
+  'O banco ainda não tem o campo WhatsApp dos fornecedores. Aplique a migração neon/23_whatsapp_fornecedores.sql e tente novamente.'
+
+const erroColunaWhatsAppAusente = (erro) =>
+  ['42703', 'PGRST204'].includes(erro?.code) && /whatsapp/i.test(`${erro.message ?? ''} ${erro.details ?? ''}`)
+
+const semCampoWhatsApp = ({ whatsapp, ...registro }) => registro
+
+async function gravarFornecedorCompat(escrever, whatsappInformado = false) {
+  let resposta = await escrever(CAMPOS_FORNECEDOR, true)
+
+  if (!resposta.error) return paraFornecedor(resposta.data)
+  if (!erroColunaWhatsAppAusente(resposta.error)) throw resposta.error
+  if (whatsappInformado) throw new Error(mensagemMigracaoWhatsApp)
+
+  resposta = await escrever(CAMPOS_FORNECEDOR_SEM_WHATSAPP, false)
+  if (resposta.error) throw resposta.error
+  return paraFornecedor({ ...resposta.data, whatsapp: '' })
+}
 
 /* ------------------------------------------------------------ utilidades -- */
 
@@ -127,6 +159,9 @@ const idLocal = () =>
 export function mensagemErro(erro) {
   const bruto = erro?.message ?? erro?.details ?? String(erro ?? '')
 
+  if (/whatsapp/i.test(bruto) && /column|schema cache|does not exist|not found/i.test(bruto)) {
+    return 'O banco ainda não tem o campo WhatsApp dos fornecedores. Aplique a migração neon/23_whatsapp_fornecedores.sql e tente novamente.'
+  }
   if (/fornecedores_org_nome_unico|duplicate key.*fornecedor/i.test(bruto)) {
     return 'Já existe um fornecedor com esse nome. Renomeie ou reative o cadastro existente.'
   }
@@ -154,14 +189,22 @@ export function mensagemErro(erro) {
 export function paraItem(linha) {
   const quantidadeSolicitada = numero(linha.quantidade_solicitada)
   const custoUnitario = numero(linha.custo_unitario)
-  const descontoValor = numero(linha.desconto_valor)
+  const descontoCentavos = paraCentavos(linha.desconto_valor ?? 0)
+  if (!Number.isFinite(custoUnitario) || custoUnitario < 0 || !Number.isSafeInteger(descontoCentavos)) {
+    throw new Error(`O item "${linha.nome ?? ''}" contém um valor monetário inválido no banco.`)
+  }
+  const descontoValor = centavosParaReais(descontoCentavos)
+  const totalCentavos = Math.max(
+    0,
+    multiplicarCustoPorQuantidade(custoUnitario, quantidadeSolicitada) - descontoCentavos,
+  )
 
   return {
     id: linha.id,
     compraId: linha.compra_id,
     produtoId: linha.produto_id,
     nome: linha.nome ?? '',
-    unidadeCompra: linha.unidade_compra ?? 'un',
+    unidadeCompra: String(linha.unidade_compra ?? 'UN').toUpperCase(),
     fatorConversao: numero(linha.fator_conversao) || 1,
     quantidadeSolicitada,
     quantidadeRecebida: numero(linha.quantidade_recebida),
@@ -170,7 +213,7 @@ export function paraItem(linha) {
     lote: linha.lote ?? '',
     validade: linha.validade ?? '',
     criadoEm: linha.criado_em ?? null,
-    total: Math.max(0, quantidadeSolicitada * custoUnitario - descontoValor),
+    total: centavosParaReais(totalCentavos),
     pendente: Math.max(0, quantidadeSolicitada - numero(linha.quantidade_recebida)),
   }
 }
@@ -181,6 +224,7 @@ export function paraFornecedor(linha) {
     nome: linha.nome ?? '',
     cnpj: linha.cnpj ?? '',
     telefone: linha.telefone ?? '',
+    whatsapp: linha.whatsapp ?? '',
     email: linha.email ?? '',
     observacoes: linha.observacoes ?? '',
     ativo: linha.ativo !== false,
@@ -195,11 +239,18 @@ export function paraFornecedor(linha) {
  */
 export function paraCompra(linha, itens = [], fornecedores = new Map(), usuarios = new Map()) {
   const listaItens = itens.map(paraItem)
-  const subtotal = listaItens.reduce((acc, item) => acc + item.total, 0)
-  const descontoItens = listaItens.reduce((acc, item) => acc + item.descontoValor, 0)
-  const descontoCompra = numero(linha.desconto_valor)
-  const frete = numero(linha.frete_valor)
-  const total = Math.max(0, subtotal - descontoCompra + frete)
+  const subtotalCentavos = listaItens.reduce((acc, item) => acc + paraCentavos(item.total), 0)
+  const descontoItensCentavos = listaItens.reduce((acc, item) => acc + paraCentavos(item.descontoValor), 0)
+  const descontoCompraCentavos = paraCentavos(linha.desconto_valor ?? 0)
+  const freteCentavos = paraCentavos(linha.frete_valor ?? 0)
+  if (!Number.isSafeInteger(descontoCompraCentavos) || !Number.isSafeInteger(freteCentavos)) {
+    throw new Error('A compra contém um valor monetário inválido no banco.')
+  }
+  const subtotal = centavosParaReais(subtotalCentavos)
+  const descontoItens = centavosParaReais(descontoItensCentavos)
+  const descontoCompra = centavosParaReais(descontoCompraCentavos)
+  const frete = centavosParaReais(freteCentavos)
+  const total = centavosParaReais(Math.max(0, subtotalCentavos - descontoCompraCentavos + freteCentavos))
   const quantidadeRecebida = listaItens.reduce((acc, item) => acc + item.quantidadeRecebida, 0)
 
   const fornecedor = fornecedores.get(linha.fornecedor_id)
@@ -246,13 +297,30 @@ async function buscarItens(neon, ids) {
 }
 
 async function buscarFornecedores(neon) {
-  const { data, error } = await neon.from('fornecedores').select(CAMPOS_FORNECEDOR).limit(1000)
-  if (error) {
-    // Banco antigo sem a migration 16: a tela ainda abre, só sem fornecedores.
-    console.error('[compras] Não foi possível carregar fornecedores.', error)
-    return []
+  const consultaAtual = await neon
+    .from('fornecedores')
+    .select(CAMPOS_FORNECEDOR)
+    .order('nome')
+    .limit(1000)
+
+  if (!consultaAtual.error) return consultaAtual.data ?? []
+
+  const erroColunaWhatsAppAusente =
+    ['42703', 'PGRST204'].includes(consultaAtual.error.code) &&
+    /whatsapp/i.test(`${consultaAtual.error.message ?? ''} ${consultaAtual.error.details ?? ''}`)
+
+  if (erroColunaWhatsAppAusente) {
+    const consultaLegada = await neon
+      .from('fornecedores')
+      .select(CAMPOS_FORNECEDOR_SEM_WHATSAPP)
+      .order('nome')
+      .limit(1000)
+
+    if (consultaLegada.error) throw consultaLegada.error
+    return consultaLegada.data ?? []
   }
-  return data ?? []
+
+  throw consultaAtual.error
 }
 
 async function buscarUsuarios(neon, ids) {
@@ -340,30 +408,94 @@ export function listarFornecedores({ incluirInativos = true } = {}) {
     nome: 'fornecedores',
     exemplo: [],
     consulta: async (neon) => {
-      let consulta = neon.from('fornecedores').select(CAMPOS_FORNECEDOR).order('nome')
-      if (!incluirInativos) consulta = consulta.eq('ativo', true)
-
-      const { data, error } = await consulta
-      if (error) throw error
-      return (data ?? []).map(paraFornecedor)
+      const dados = await buscarFornecedores(neon)
+      return dados
+        .filter((fornecedor) => incluirInativos || fornecedor.ativo)
+        .map(paraFornecedor)
     },
   })
 }
 
 const normalizarFornecedor = (dados = {}) => {
   const nome = texto(dados.nome)
+  const documento = apenasDigitos(dados.cnpj)
+  const telefone = apenasDigitos(dados.telefone)
+  const whatsapp = apenasDigitos(dados.whatsapp)
 
   if (!nome) throw new Error('Informe o nome do fornecedor.')
   if (nome.length > 120) throw new Error('O nome do fornecedor pode ter no máximo 120 caracteres.')
+  if (documento && !cpfValido(documento) && !cnpjValido(documento)) {
+    throw new Error('Informe um CPF válido com 11 dígitos ou um CNPJ válido com 14 dígitos.')
+  }
+  if (telefone && telefone.length !== 10 && telefone.length !== 11) {
+    throw new Error('O telefone deve conter DDD e 10 ou 11 dígitos.')
+  }
+  if (whatsapp && whatsapp.length !== 10 && whatsapp.length !== 11) {
+    throw new Error('O WhatsApp deve conter DDD e 10 ou 11 dígitos.')
+  }
 
   return {
     nome,
-    cnpj: opcional(dados.cnpj),
-    telefone: opcional(dados.telefone),
+    cnpj: documento ? formatarDocumento(documento) : null,
+    telefone: telefone ? formatarTelefone(telefone) : null,
+    whatsapp: whatsapp ? formatarTelefone(whatsapp) : null,
     email: opcional(dados.email),
     observacoes: texto(dados.observacoes),
     ativo: dados.ativo === undefined ? true : booleano(dados.ativo),
   }
+}
+
+const apenasDigitos = (valor) => String(valor ?? '').replace(/\D/g, '')
+
+function cpfValido(digitos) {
+  if (digitos.length !== 11 || /^(\d)\1{10}$/.test(digitos)) return false
+
+  const calcularDigito = (tamanho) => {
+    const soma = digitos
+      .slice(0, tamanho)
+      .split('')
+      .reduce((total, digito, indice) => total + Number(digito) * (tamanho + 1 - indice), 0)
+    const resto = (soma * 10) % 11
+    return resto === 10 ? 0 : resto
+  }
+
+  return calcularDigito(9) === Number(digitos[9]) && calcularDigito(10) === Number(digitos[10])
+}
+
+function cnpjValido(digitos) {
+  if (digitos.length !== 14 || /^(\d)\1{13}$/.test(digitos)) return false
+
+  const calcularDigito = (base, pesos) => {
+    const soma = base
+      .split('')
+      .reduce((total, digito, indice) => total + Number(digito) * pesos[indice], 0)
+    const resto = soma % 11
+    return resto < 2 ? 0 : 11 - resto
+  }
+
+  const primeiro = calcularDigito(digitos.slice(0, 12), [5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+  const segundo = calcularDigito(digitos.slice(0, 12) + primeiro, [6, 5, 4, 3, 2, 9, 8, 7, 6, 5, 4, 3, 2])
+  return primeiro === Number(digitos[12]) && segundo === Number(digitos[13])
+}
+
+function formatarDocumento(digitos) {
+  if (digitos.length === 11) {
+    return digitos.replace(/^(\d{3})(\d)/, '$1.$2').replace(/^(\d{3})\.(\d{3})(\d)/, '$1.$2.$3').replace(/\.(\d{3})(\d{1,2})$/, '.$1-$2')
+  }
+
+  return digitos
+    .replace(/^(\d{2})(\d)/, '$1.$2')
+    .replace(/^(\d{2})\.(\d{3})(\d)/, '$1.$2.$3')
+    .replace(/\.(\d{3})(\d)/, '.$1/$2')
+    .replace(/(\d{4})(\d)/, '$1-$2')
+}
+
+function formatarTelefone(digitos) {
+  if (digitos.length <= 2) return digitos
+  const ddd = digitos.slice(0, 2)
+  const numero = digitos.slice(2)
+  const limiteLocal = digitos.length > 10 ? 5 : 4
+  return `(${ddd}) ${numero.slice(0, limiteLocal)}${numero.length > limiteLocal ? `-${numero.slice(limiteLocal)}` : ''}`
 }
 
 export function criarFornecedor(dados) {
@@ -377,16 +509,16 @@ export function criarFornecedor(dados) {
       criadoEm: new Date().toISOString(),
       atualizadoEm: new Date().toISOString(),
     },
-    escrever: async (neon) => {
-      const { data, error } = await neon
-        .from('fornecedores')
-        .insert(registro)
-        .select(CAMPOS_FORNECEDOR)
-        .single()
-
-      if (error) throw error
-      return paraFornecedor(data)
-    },
+    escrever: (neon) =>
+      gravarFornecedorCompat(
+        (campos, comWhatsApp) =>
+          neon
+            .from('fornecedores')
+            .insert(comWhatsApp ? registro : semCampoWhatsApp(registro))
+            .select(campos)
+            .single(),
+        Boolean(registro.whatsapp),
+      ),
   })
 }
 
@@ -396,17 +528,17 @@ export function atualizarFornecedor(id, dados) {
   return gravar({
     nome: 'fornecedor',
     registro: { id, ...registro },
-    escrever: async (neon) => {
-      const { data, error } = await neon
-        .from('fornecedores')
-        .update(registro)
-        .eq('id', id)
-        .select(CAMPOS_FORNECEDOR)
-        .single()
-
-      if (error) throw error
-      return paraFornecedor(data)
-    },
+    escrever: (neon) =>
+      gravarFornecedorCompat(
+        (campos, comWhatsApp) =>
+          neon
+            .from('fornecedores')
+            .update(comWhatsApp ? registro : semCampoWhatsApp(registro))
+            .eq('id', id)
+            .select(campos)
+            .single(),
+        Boolean(registro.whatsapp),
+      ),
   })
 }
 
@@ -414,17 +546,16 @@ export function definirFornecedorAtivo(id, ativo) {
   return gravar({
     nome: 'situação do fornecedor',
     registro: { id, ativo: Boolean(ativo) },
-    escrever: async (neon) => {
-      const { data, error } = await neon
-        .from('fornecedores')
-        .update({ ativo: Boolean(ativo) })
-        .eq('id', id)
-        .select(CAMPOS_FORNECEDOR)
-        .single()
-
-      if (error) throw error
-      return paraFornecedor(data)
-    },
+    escrever: (neon) =>
+      gravarFornecedorCompat(
+        (campos) =>
+          neon
+            .from('fornecedores')
+            .update({ ativo: Boolean(ativo) })
+            .eq('id', id)
+            .select(campos)
+            .single(),
+      ),
   })
 }
 
@@ -487,8 +618,9 @@ const normalizarItem = (item) => {
   const nome = texto(item.nome)
   const quantidade = numero(item.quantidadeSolicitada ?? item.quantidade_solicitada)
   const fator = numero(item.fatorConversao ?? item.fator_conversao)
-  const custo = numero(item.custoUnitario ?? item.custo_unitario)
-  const desconto = numero(item.descontoValor ?? item.desconto_valor)
+  const custo = Number(item.custoUnitario ?? item.custo_unitario)
+  const descontoCentavos = paraCentavos(item.descontoValor ?? item.desconto_valor ?? 0)
+  const desconto = centavosParaReais(descontoCentavos)
 
   if (!produtoId) throw new Error('Escolha o produto de todos os itens.')
   if (!nome) throw new Error('Informe o nome do produto em todos os itens.')
@@ -498,9 +630,9 @@ const normalizarItem = (item) => {
   if (!Number.isFinite(fator) || fator <= 0) {
     throw new Error(`O fator de conversão de "${nome}" precisa ser maior que zero.`)
   }
-  if (custo < 0) throw new Error(`O custo de "${nome}" não pode ser negativo.`)
-  if (desconto < 0) throw new Error(`O desconto de "${nome}" não pode ser negativo.`)
-  if (desconto > quantidade * custo + 0.001) {
+  if (!Number.isFinite(custo) || custo < 0) throw new Error(`O custo de "${nome}" precisa ser válido e não negativo.`)
+  if (!Number.isSafeInteger(descontoCentavos) || desconto < 0) throw new Error(`O desconto de "${nome}" não pode ser negativo.`)
+  if (descontoCentavos > multiplicarCustoPorQuantidade(custo, quantidade)) {
     throw new Error(`O desconto de "${nome}" não pode ser maior que o valor do item.`)
   }
 
@@ -509,7 +641,7 @@ const normalizarItem = (item) => {
   return {
     produto_id: produtoId,
     nome,
-    unidade_compra: texto(item.unidadeCompra ?? item.unidade_compra) || 'un',
+    unidade_compra: (texto(item.unidadeCompra ?? item.unidade_compra) || 'UN').toUpperCase(),
     fator_conversao: fator,
     quantidade_solicitada: quantidade,
     custo_unitario: custo,
@@ -529,11 +661,12 @@ const normalizarItem = (item) => {
 export function registrarCompra({
   dataCompra,
   fornecedorId,
+  fornecedorNome,
   tipoDocumento = 'sem_nota',
   numeroNota,
   observacoes,
-  freteValor,
-  descontoValor,
+  freteValor = 0,
+  descontoValor = 0,
   itens,
   aguardarRecebimento = true,
 } = {}) {
@@ -546,8 +679,13 @@ export function registrarCompra({
     throw new Error('Informe o número da nota fiscal (ou marque "sem nota").')
   }
 
-  const frete = numero(freteValor)
-  const desconto = numero(descontoValor)
+  const freteCentavos = paraCentavos(freteValor)
+  const descontoCentavos = paraCentavos(descontoValor)
+  if (!Number.isSafeInteger(freteCentavos) || !Number.isSafeInteger(descontoCentavos)) {
+    throw new Error('Frete e desconto precisam ser valores monetários válidos.')
+  }
+  const frete = centavosParaReais(freteCentavos)
+  const desconto = centavosParaReais(descontoCentavos)
 
   if (frete < 0) throw new Error('O frete não pode ser negativo.')
   if (desconto < 0) throw new Error('O desconto não pode ser negativo.')
@@ -564,11 +702,20 @@ export function registrarCompra({
 
   // Registro do modo demonstração: já no formato que a tela usa.
   const registroId = idLocal()
-  const subtotal = lista.reduce(
-    (acc, item) => acc + Math.max(0, item.quantidade_solicitada * item.custo_unitario - item.desconto_valor),
+  const subtotalCentavos = lista.reduce(
+    (acc, item) =>
+      acc +
+      Math.max(
+        0,
+        multiplicarCustoPorQuantidade(item.custo_unitario, item.quantidade_solicitada) -
+          paraCentavos(item.desconto_valor),
+      ),
     0,
   )
-  const descontoItens = lista.reduce((acc, item) => acc + item.desconto_valor, 0)
+  const subtotal = centavosParaReais(subtotalCentavos)
+  const descontoItens = centavosParaReais(
+    lista.reduce((acc, item) => acc + paraCentavos(item.desconto_valor), 0),
+  )
   const itensRegistro = lista.map((item) => ({
     id: idLocal(),
     compraId: registroId,
@@ -582,7 +729,13 @@ export function registrarCompra({
     descontoValor: item.desconto_valor,
     lote: item.lote ?? '',
     validade: item.validade ?? '',
-    total: Math.max(0, item.quantidade_solicitada * item.custo_unitario - item.desconto_valor),
+    total: centavosParaReais(
+      Math.max(
+        0,
+        multiplicarCustoPorQuantidade(item.custo_unitario, item.quantidade_solicitada) -
+          paraCentavos(item.desconto_valor),
+      ),
+    ),
     pendente: item.quantidade_solicitada,
   }))
 
@@ -594,7 +747,7 @@ export function registrarCompra({
       dataCompra: data,
       dataRecebimento: null,
       fornecedorId: fornecedorId || null,
-      fornecedorNome: 'Sem fornecedor',
+      fornecedorNome: fornecedorId ? texto(fornecedorNome) || 'Sem fornecedor' : 'Sem fornecedor',
       tipoDocumento: documento,
       numeroNota: texto(numeroNota),
       observacoes: texto(observacoes),
@@ -606,7 +759,7 @@ export function registrarCompra({
       totalItens: itensRegistro.length,
       subtotal,
       descontoItens,
-      total: Math.max(0, subtotal - desconto + frete),
+      total: centavosParaReais(Math.max(0, subtotalCentavos - descontoCentavos + freteCentavos)),
       quantidadeRecebida: 0,
       temPendencia: true,
       criadoEm: new Date().toISOString(),
@@ -742,6 +895,7 @@ export function receberCompra(compraId, itens = []) {
     .map((item) => ({
       item_id: item.itemId ?? item.id,
       quantidade: numero(item.quantidade ?? item.quantidadeRecebida),
+      local: item.local ?? item.localEstoque ?? 'loja',
       lote: opcional(item.lote),
       validade: texto(item.validade) || null,
     }))
@@ -749,6 +903,9 @@ export function receberCompra(compraId, itens = []) {
 
   if (!compraId) throw new Error('Compra não informada.')
   if (!linhas.length) throw new Error('Informe a quantidade recebida de pelo menos um item.')
+  if (linhas.some((item) => !['loja', 'geral', 'buffet'].includes(item.local))) {
+    throw new Error('Escolha um destino de estoque válido para cada item recebido.')
+  }
 
   return gravar({
     nome: 'recebimento da compra',
@@ -775,7 +932,7 @@ export function resumoCompras(compras = []) {
   const doMes = compras.filter((c) => String(c.dataCompra).startsWith(mes) && c.status !== 'cancelado')
   const recebidasMes = doMes.filter((c) => c.status === 'recebido_confirmado')
   const pendentes = compras.filter((c) => STATUS_ABERTOS.includes(c.status))
-  const valorPendente = pendentes.reduce((acc, c) => acc + c.total, 0)
+  const valorPendente = centavosParaReais(pendentes.reduce((acc, c) => acc + paraCentavos(c.total), 0))
 
   const limite = new Date(`${hojeISO}T00:00:00`)
   limite.setDate(limite.getDate() + 30)
@@ -793,9 +950,9 @@ export function resumoCompras(compras = []) {
   return {
     pendentes,
     valorPendente,
-    totalMes: doMes.reduce((acc, c) => acc + c.total, 0),
+    totalMes: centavosParaReais(doMes.reduce((acc, c) => acc + paraCentavos(c.total), 0)),
     recebidasMes: recebidasMes.length,
-    valorRecebidoMes: recebidasMes.reduce((acc, c) => acc + c.total, 0),
+    valorRecebidoMes: centavosParaReais(recebidasMes.reduce((acc, c) => acc + paraCentavos(c.total), 0)),
     validadeProxima,
   }
 }
@@ -824,7 +981,7 @@ export function gerarCsvCompras(compras = []) {
     c.numeroNota,
     rotuloStatus(c.status),
     c.totalItens,
-    c.total.toFixed(2).replace('.', ','),
+    formatarEntradaMoeda(c.total),
     c.dataRecebimento ?? '',
   ])
 

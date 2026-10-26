@@ -7,7 +7,7 @@
  *     titulo: 'Novo item',
  *     campos: [
  *       { nome: 'nome',  label: 'Nome',  tipo: 'texto',  obrigatorio: true, largo: true },
- *       { nome: 'custo', label: 'Custo', tipo: 'numero', prefixo: 'R$' },
+ *       { nome: 'custo', label: 'Custo', tipo: 'moeda' },
  *     ],
  *     aoSalvar: async (valores) => 'Item salvo.',   // a string vira um toast
  *   })
@@ -18,8 +18,14 @@
 
 import { itensHtml, iniciarItens } from './itens-venda.js'
 import { renderIcons } from './icons.js'
-import { paraNumero, paraTextoNumero } from './numeros.js'
-import { esc, toast } from './ui.js'
+import {
+  ativarCamposMonetarios,
+  centavosParaReais,
+  paraCentavos,
+  paraNumero,
+  paraTextoNumero,
+} from './numeros.js'
+import { entradaMoeda, esc, toast } from './ui.js'
 
 /* ----------------------------------------------------------- números ------ */
 
@@ -72,12 +78,27 @@ export function campoHtml(campo, valor) {
   } else if (campo.tipo === 'numero') {
     controle = `<input class="campo__input" type="text" inputmode="decimal" ${attrs}${req}
         value="${esc(paraTextoNumero(valor))}" placeholder="${esc(campo.placeholder ?? '0')}" />`
+  } else if (campo.tipo === 'moeda') {
+    controle = entradaMoeda({
+      id,
+      name: campo.nome,
+      value: valor,
+      required: Boolean(campo.obrigatorio),
+      placeholder: campo.placeholder ?? '0,00',
+      prefixo: campo.prefixo ?? 'R$',
+    })
   } else {
     const lista = campo.sugestoes ? ` list="lista-${id}"` : ''
     // `mascara` liga a formatação enquanto o usuário digita (CNPJ, CEP,
     // telefone). Quem aplica é a tela, escutando o `data-mascara`.
     const mascara = campo.mascara ? ` data-mascara="${esc(campo.mascara)}"` : ''
-    controle = `<input class="campo__input" type="text" ${attrs}${req}${lista}${mascara}
+    const inputmode = campo.inputmode ? ` inputmode="${esc(campo.inputmode)}"` : ''
+    const maxlength = campo.maxlength ? ` maxlength="${Number(campo.maxlength)}"` : ''
+    // `somenteLeitura` serve para valores gerados pelo sistema (o código do
+    // cliente, por exemplo): aparecem no formulário, mas não podem ser editados.
+    const travado = campo.somenteLeitura ? ' readonly aria-readonly="true"' : ''
+    const classe = `campo__input${campo.somenteLeitura ? ' campo__input--travado' : ''}`
+    controle = `<input class="${classe}" type="text" ${attrs}${req}${lista}${mascara}${inputmode}${maxlength}${travado}
         value="${esc(valor ?? '')}" placeholder="${esc(campo.placeholder ?? '')}" autocomplete="off" />`
     if (campo.sugestoes) {
       controle += `<datalist id="lista-${id}">${campo.sugestoes
@@ -92,8 +113,8 @@ export function campoHtml(campo, valor) {
         ${esc(campo.label)}${campo.obrigatorio ? ' <span class="campo__req">*</span>' : ''}
       </label>
       ${
-        campo.prefixo
-          ? `<div class="campo__grupo"><span class="campo__prefixo">${esc(campo.prefixo)}</span>${controle}</div>`
+        campo.tipo !== 'moeda' && campo.prefixo
+          ? `<div class="campo__grupo"><span class="campo__prefixo">${esc(campo.prefixo ?? 'R$')}</span>${controle}</div>`
           : controle
       }
       ${campo.ajuda ? `<p class="campo__ajuda">${esc(campo.ajuda)}</p>` : ''}
@@ -164,6 +185,7 @@ export function abrirFormulario({
   document.body.appendChild(overlay)
   aberto = overlay
   renderIcons(overlay)
+  ativarCamposMonetarios(overlay)
   document.body.classList.add('sem-scroll')
 
   const form = overlay.querySelector('form')
@@ -221,7 +243,16 @@ export function abrirFormulario({
 
       const el = overlay.querySelector(`[name="${campo.nome}"]`)
       const bruto = el.value.trim()
-      saida[campo.nome] = campo.tipo === 'numero' ? paraNumero(bruto) : bruto
+      if (campo.tipo === 'numero') {
+        saida[campo.nome] = paraNumero(bruto)
+      } else if (campo.tipo === 'moeda') {
+        const centavos = bruto ? paraCentavos(bruto) : ''
+        saida[campo.nome] = centavos === '' || !Number.isSafeInteger(centavos)
+          ? centavos
+          : centavosParaReais(centavos)
+      } else {
+        saida[campo.nome] = bruto
+      }
     }
 
     return saida
@@ -244,8 +275,13 @@ export function abrirFormulario({
         continue
       }
 
-      if (campo.tipo === 'numero' && v !== '' && v != null) {
-        if (!Number.isFinite(v)) erros.push([campo.nome, 'Informe um número válido.'])
+      if ((campo.tipo === 'numero' || campo.tipo === 'moeda') && v !== '' && v != null) {
+        if (!Number.isFinite(v)) {
+          erros.push([
+            campo.nome,
+            campo.tipo === 'moeda' ? 'Informe um valor monetário válido.' : 'Informe um número válido.',
+          ])
+        }
         else if (v < (campo.min ?? 0))
           erros.push([campo.nome, `O menor valor aceito é ${campo.min ?? 0}.`])
       }
@@ -286,8 +322,9 @@ export function abrirFormulario({
     }
   })
 
-  // Foco no primeiro campo livre, para já poder digitar.
-  const primeiro = overlay.querySelector('.modal__campos .campo__input')
+  // Foco no primeiro campo editável, para já poder digitar (campos somente
+  // leitura não recebem o foco inicial).
+  const primeiro = overlay.querySelector('.modal__campos .campo__input:not([readonly])')
   primeiro?.focus()
   if (primeiro && primeiro.tagName === 'INPUT' && primeiro.type === 'text') primeiro.select()
 }

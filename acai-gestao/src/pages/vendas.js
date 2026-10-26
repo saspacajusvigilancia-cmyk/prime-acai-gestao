@@ -1,16 +1,19 @@
 import { resumo as resumoExemplo, vendas as vendasExemplo } from '../data.js'
 import { diaValido, rotuloDia, somarDias } from '../datas.js'
-import { abrirFormulario, paraNumero } from '../formulario.js'
+import { abrirFormulario } from '../formulario.js'
+import { centavosParaReais, paraCentavos } from '../numeros.js'
 import { renderIcons } from '../icons.js'
 import { hoje, observar } from '../services/base.js'
 import { listarClientes } from '../services/clientes.js'
 import { pode } from '../services/permissoes.js'
 import { listarProdutos } from '../services/produtos.js'
 import { listarRecipientes } from '../services/recipientes.js'
+import { carregarImagemProduto, listarImagensProdutos } from '../services/imagens-produtos.js'
 import { listarFormasPagamento, listarTiposVenda } from '../services/config-vendas.js'
 import { carregarResumo } from '../services/resumo.js'
 import {
   estornarVenda,
+  gerarCsvVendas,
   LIMITE_DIA,
   listarVendas,
   proximoCodigoVenda,
@@ -20,6 +23,7 @@ import {
   atualizarKpi,
   atualizarTabela,
   badgeStatusVenda,
+  baixarCsv,
   botaoPrimario,
   cardHead,
   esc,
@@ -155,7 +159,13 @@ export function vendasPage() {
           descricao: podeEstornar
             ? 'Escolha o dia, acompanhe os pedidos e estorne o que precisar'
             : 'Escolha o dia e acompanhe os pedidos',
-          acoes: botaoPrimario({ label: 'Nova venda', icon: 'plus', acao: 'nova-venda' }),
+          acoes: `
+            <button class="btn btn--ghost" type="button" data-acao="exportar-vendas"
+                    title="Baixar os pedidos do dia em CSV">
+              <i data-lucide="clipboard-list"></i><span>Exportar CSV</span>
+            </button>
+            ${botaoPrimario({ label: 'Nova venda', icon: 'plus', acao: 'nova-venda' })}
+          `,
         })}
         ${toolbar({
           buscaId: 'busca-vendas',
@@ -211,6 +221,16 @@ export function vendasPage() {
       aplicar('')
 
       input.addEventListener('input', () => aplicar(input.value))
+
+      // Exporta exatamente o que a tabela mostra: o dia escolhido + a busca.
+      root.querySelector('[data-acao="exportar-vendas"]').addEventListener('click', () => {
+        const linhas = filtrar(dados, input.value)
+        if (!linhas.length) {
+          toast('Nada para exportar com os filtros atuais.')
+          return
+        }
+        baixarCsv(`vendas-${dia}.csv`, gerarCsvVendas(linhas))
+      })
 
       // A busca da barra superior também filtra esta tabela.
       const aoBuscarGlobal = (evento) => {
@@ -380,11 +400,38 @@ export function vendasPage() {
             throw new Error('Cadastre pelo menos um tipo de venda e uma forma de pagamento nas Configurações.')
           }
 
+          let fotosDisponiveis = new Map()
+          try {
+            const resultadoFotos = await listarImagensProdutos(
+              listaProdutos.map((produto) => produto.uuid).filter(Boolean),
+            )
+            if (resultadoFotos.disponivel) fotosDisponiveis = resultadoFotos.imagens
+          } catch (erro) {
+            console.error('[vendas] Não foi possível consultar as fotos dos produtos.', erro)
+          }
+          const produtosComFotos = listaProdutos.map((produto) => ({
+            ...produto,
+            imagemPath: fotosDisponiveis.get(produto.uuid) ?? null,
+          }))
+
           // Uma chave por abertura de formulário (ver `novaChave`).
           const chave = novaChave()
           const tipoInicial = tiposVenda.find((tipo) => tipo.codigo === 'balcao') ?? tiposVenda[0]
           const pagamentoInicial =
             formasPagamento.find((forma) => forma.categoria === 'pix') ?? formasPagamento[0]
+          const urlsFotos = new Map()
+          let modalVenda = null
+          let observarFechamento = null
+          const carregarFotoProduto = async (produtoId) => {
+            if (!fotosDisponiveis.has(produtoId)) return null
+            if (urlsFotos.has(produtoId)) return urlsFotos.get(produtoId)
+            const blob = await carregarImagemProduto(produtoId)
+            if (!blob) return null
+            if (!modalVenda?.isConnected) return null
+            const url = URL.createObjectURL(blob)
+            urlsFotos.set(produtoId, url)
+            return url
+          }
 
           abrirFormulario({
             titulo: 'Nova venda',
@@ -443,8 +490,7 @@ export function vendasPage() {
               {
                 nome: 'taxaEntrega',
                 label: 'Taxa de entrega',
-                tipo: 'numero',
-                prefixo: 'R$',
+                tipo: 'moeda',
               },
               {
                 nome: 'plataforma',
@@ -468,13 +514,12 @@ export function vendasPage() {
               {
                 nome: 'taxaAplicativo',
                 label: 'Outras taxas do aplicativo',
-                tipo: 'numero',
-                prefixo: 'R$',
+                tipo: 'moeda',
               },
               {
                 nome: 'valorRecebido',
                 label: 'Valor recebido em dinheiro',
-                tipo: 'texto',
+                tipo: 'moeda',
                 placeholder: 'Opcional — usado para calcular o troco',
               },
               {
@@ -482,8 +527,9 @@ export function vendasPage() {
                 label: 'Itens do pedido',
                 tipo: 'itens',
                 obrigatorio: true,
-                produtos: listaProdutos,
+                produtos: produtosComFotos,
                 recipientes: listaRecipientes,
+                carregarImagem: carregarFotoProduto,
               },
             ],
             valores: {
@@ -504,13 +550,12 @@ export function vendasPage() {
                 throw new Error('Selecione um tipo de venda e uma forma de pagamento ativos.')
               }
 
-              const textoRecebido = String(valores.valorRecebido ?? '').trim()
               const valorRecebido =
-                formaPagamento.categoria === 'dinheiro' && textoRecebido
-                  ? paraNumero(textoRecebido)
+                formaPagamento.categoria === 'dinheiro' && Number.isFinite(valores.valorRecebido)
+                  ? valores.valorRecebido
                   : undefined
-              if (textoRecebido && formaPagamento.categoria === 'dinheiro' &&
-                  (!Number.isFinite(valorRecebido) || valorRecebido < 0)) {
+              if (valores.valorRecebido !== '' && valores.valorRecebido != null &&
+                  (!Number.isFinite(valores.valorRecebido) || valores.valorRecebido < 0)) {
                 throw new Error('Informe um valor recebido válido.')
               }
 
@@ -545,6 +590,16 @@ export function vendasPage() {
                 : `Pedido ${criada.id} registrado — ${formatBRL(criada.total)}.`
             },
           })
+          modalVenda = document.querySelector('.modal')
+          if (modalVenda && typeof MutationObserver !== 'undefined') {
+            observarFechamento = new MutationObserver(() => {
+              if (modalVenda.isConnected) return
+              observarFechamento.disconnect()
+              urlsFotos.forEach((url) => URL.revokeObjectURL(url))
+              urlsFotos.clear()
+            })
+            observarFechamento.observe(document.body, { childList: true })
+          }
 
           const modal = document.querySelector('.modal')
           const campoTipo = modal?.querySelector('[name="tipoVendaId"]')
@@ -575,19 +630,26 @@ export function vendasPage() {
           const atualizarResumoCobranca = () => {
             if (!modal || !resumo) return
             const textoTotal = modal.querySelector('[data-itens-total]')?.textContent ?? ''
-            const subtotal = (Number(textoTotal.replace(/\D/g, '')) || 0) / 100
+            const subtotalCentavos = Number(textoTotal.replace(/\D/g, '')) || 0
             const taxaEl = modal.querySelector('[name="taxaEntrega"]')
-            const taxa = taxaEl && !taxaEl.closest('[data-campo]')?.hidden
-              ? (paraNumero(taxaEl.value) || 0)
-              : 0
-            const total = subtotal + taxa
+            const taxaTexto = taxaEl && !taxaEl.closest('[data-campo]')?.hidden ? taxaEl.value.trim() : ''
+            const taxaCentavos = taxaTexto ? paraCentavos(taxaTexto) : 0
+            if (!Number.isSafeInteger(taxaCentavos)) {
+              resumo.textContent = 'Informe valores monetários válidos para calcular o total.'
+              return
+            }
+            const totalCentavos = subtotalCentavos + taxaCentavos
             const recebidoTexto = modal.querySelector('[name="valorRecebido"]')?.value.trim()
             const categoriaForma = formasPagamento.find((forma) => forma.id === campoForma?.value)?.categoria
-            const recebido = categoriaForma === 'dinheiro' && recebidoTexto ? paraNumero(recebidoTexto) : total
-            const troco = categoriaForma === 'dinheiro' && Number.isFinite(recebido)
-              ? Math.max(0, recebido - total)
-              : 0
-            resumo.textContent = `Total a cobrar: ${formatBRL(total)} · Troco: ${formatBRL(troco)}`
+            const recebidoCentavos =
+              categoriaForma === 'dinheiro' && recebidoTexto ? paraCentavos(recebidoTexto) : totalCentavos
+            if (!Number.isSafeInteger(recebidoCentavos)) {
+              resumo.textContent = 'Informe valores monetários válidos para calcular o troco.'
+              return
+            }
+            const trocoCentavos =
+              categoriaForma === 'dinheiro' ? Math.max(0, recebidoCentavos - totalCentavos) : 0
+            resumo.textContent = `Total a cobrar: ${formatBRL(centavosParaReais(totalCentavos))} · Troco: ${formatBRL(centavosParaReais(trocoCentavos))}`
           }
 
           campoTipo?.addEventListener('change', atualizarCampos)

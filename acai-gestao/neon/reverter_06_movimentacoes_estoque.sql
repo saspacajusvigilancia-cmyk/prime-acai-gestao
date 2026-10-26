@@ -32,6 +32,7 @@ drop function if exists public.produtos_saldo_vem_do_livro();
 drop function if exists public.movimento_de_estoque_aplica_saldo();
 drop function if exists public.movimentacao_e_imutavel();
 drop function if exists public.saldo_estoque(uuid);
+drop function if exists public.validar_movimentacao_produto();
 
 -- ============================================================================
 -- Conferência

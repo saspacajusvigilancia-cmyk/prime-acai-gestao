@@ -8,8 +8,11 @@ vi.mock('login-projetos/neon', () => ({
 }))
 
 const {
+  LOCAIS_ESTOQUE_ORIGEM,
   TIPOS_VENDA,
   METODOS_ESTOQUE,
+  REGRAS_BAIXA_ESTOQUE,
+  TIPOS_PRODUTO,
   normalizarProduto,
   precoComUnidade,
   proximoCodigoProduto,
@@ -78,10 +81,69 @@ describe('normalizarProduto', () => {
     expect(normalizarProduto({ ...base, tipoVenda: 'inventado' }).tipo_venda).toBe('unidade')
   })
 
+  it('só autoriza retorno ao Estoque Normal para produtos Buffet ou insumos', () => {
+    const produtoBuffet = normalizarProduto({
+      ...base,
+      tipoProduto: 'buffet',
+      permiteRetornoBuffet: 'true',
+    })
+    expect(produtoBuffet.permite_retorno_buffet).toBe(true)
+    expect(normalizarProduto(base).permite_retorno_buffet).toBe(false)
+    expect(() => normalizarProduto({
+      ...base,
+      tipoProduto: 'venda_direta',
+      permiteRetornoBuffet: 'true',
+    })).toThrow(/Buffet ou insumos/i)
+  })
+
   it('sem controle de estoque o método de controle vira nenhum', () => {
     const r = normalizarProduto({ ...base, controlaEstoque: 'false', metodoEstoque: 'fechamento' })
     expect(r.controla_estoque).toBe(false)
     expect(r.metodo_estoque).toBe('nenhum')
+  })
+
+  it('configura venda direta com baixa automática no Estoque Normal', () => {
+    const r = normalizarProduto({
+      ...base,
+      nome: 'Água mineral 500 ml',
+      tipoVenda: 'unidade',
+      unidade: 'un',
+      tipoProduto: 'venda_direta',
+      controlaEstoque: 'true',
+      metodoEstoque: 'movimentacoes',
+      regraBaixaEstoque: 'venda_confirmada',
+      localEstoqueOrigem: 'estoque',
+      permitirEstoqueNegativo: 'false',
+    })
+
+    expect(r).toMatchObject({
+      tipo_produto: 'venda_direta',
+      controla_estoque: true,
+      metodo_estoque: 'movimentacoes',
+      regra_baixa_estoque: 'venda_confirmada',
+      local_estoque_origem: 'estoque',
+      unidade: 'un',
+      permitir_estoque_negativo: false,
+    })
+  })
+
+  it('recusa configuração automática incompatível e permite inativar o produto', () => {
+    const vendaDiretaAutomatica = {
+      ...base,
+      tipoProduto: 'venda_direta',
+      regraBaixaEstoque: 'venda_confirmada',
+      metodoEstoque: 'movimentacoes',
+    }
+    expect(() => normalizarProduto({ ...vendaDiretaAutomatica, controlaEstoque: 'false' })).toThrow(/controle de estoque/i)
+    expect(normalizarProduto({ ...vendaDiretaAutomatica, ativo: 'false' }).ativo).toBe(false)
+    expect(() => normalizarProduto({ ...vendaDiretaAutomatica, localEstoqueOrigem: 'buffet' })).toThrow(/Buffet/i)
+    expect(() => normalizarProduto({ ...vendaDiretaAutomatica, permitirEstoqueNegativo: 'true' })).toThrow(/saldo negativo/i)
+    expect(() => normalizarProduto({
+      ...vendaDiretaAutomatica,
+      tipoVenda: 'receita',
+      metodoPeso: '',
+      unidade: 'un',
+    })).toThrow(/unidade de venda/i)
   })
 
   it('situacao inativa chega como texto do select e vira booleano de verdade', () => {
@@ -105,6 +167,9 @@ describe('normalizarProduto', () => {
   it('as chaves de tipo e método são as mesmas que o banco aceita', () => {
     expect(Object.keys(TIPOS_VENDA).sort()).toEqual(['peso', 'receita', 'unidade'])
     expect(Object.keys(METODOS_ESTOQUE).sort()).toEqual(['fechamento', 'movimentacoes', 'nenhum'])
+    expect(Object.keys(TIPOS_PRODUTO).sort()).toEqual(['buffet', 'embalagem', 'insumo', 'outro', 'venda_direta'])
+    expect(Object.keys(REGRAS_BAIXA_ESTOQUE).sort()).toEqual(['fechamento_buffet', 'legada', 'manual', 'nenhuma', 'venda_confirmada'])
+    expect(Object.keys(LOCAIS_ESTOQUE_ORIGEM).sort()).toEqual(['buffet', 'estoque', 'estoque_geral'])
   })
 })
 

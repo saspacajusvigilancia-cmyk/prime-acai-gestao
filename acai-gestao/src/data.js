@@ -5,6 +5,7 @@
  */
 
 import { neonConfigurado } from 'login-projetos/neon'
+import { dadosTesteHabilitados, produtosTeste } from './demo-test-data.js'
 
 export const resumo = neonConfigurado ? {
   faturamentoMes: 0,
@@ -89,6 +90,7 @@ export const produtos = neonConfigurado ? [] : [
   produto({ id: 'P008', nome: 'Banana prata', categoria: 'Frutas', quantidade: 21, minimo: 10, unidade: 'kg', custo: 6.8, preco: 3.0 }),
   produto({ id: 'P009', nome: 'Copo 500ml com tampa', categoria: 'Embalagens', quantidade: 640, minimo: 300, unidade: 'un', custo: 0.42, preco: 0 }),
   produto({ id: 'P010', nome: 'Colher descartável', categoria: 'Embalagens', quantidade: 250, minimo: 400, unidade: 'un', custo: 0.08, preco: 0 }),
+  ...(dadosTesteHabilitados ? produtosTeste : []),
 ]
 
 /**

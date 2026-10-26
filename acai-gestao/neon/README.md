@@ -20,11 +20,21 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `09_vendas_somente_rpc.sql` | Fecha a escrita direta em `vendas`/`itens_venda`: a RPC passa a ser a **única** porta |
 | `10_codigo_do_pedido.sql` | Devolve a sequência do pedido ao maior código gravado e cria `proximo_codigo_venda()` |
 | `11_estorno.sql` | Estorno: o movimento inverso com vínculo ao original, o rastro na venda e a RPC `estornar_venda()` |
-| `12_vendas_17_19_out.sql` | **Dados de estudo** (não é esquema): vendas, itens, PDV e despesas recorrentes de 17–19/10/2026 — a base só tinha movimento até 16/10. Códigos via `nextval()`, dia = dia local (UTC−3) |
-| `16_compras_entradas.sql` | Compras e entradas: fornecedores, compras/itens, unidades de compra × estoque, lotes/validade, custo médio, RLS e a RPC `confirmar_recebimento_compra()` |
+| `12_vendas_17_19_out.sql` | **Dados de estudo** (não é esquema): vendas, itens, PDV e despesas recorrentes de 17–19/10/2026 — a base só tinha movimento até 16/10. Códigos via `nextval()`, dia = dia local (UTC−3). Não é incluída na aplicação padrão; exige seleção explícita |
+| `16_compras_entradas.sql` | Compras: fornecedores, compras/itens, unidades de compra × estoque, lotes/validade, custo médio, RLS e a RPC `confirmar_recebimento_compra()` |
 | `17_clientes_lancamentos_rls_permissoes.sql` | Aplica RLS por ação em clientes/financeiro e bloqueia permissões de perfis inativos |
 | `18_canais_pagamentos_vendas.sql` | Catálogos de tipos de venda e formas de pagamento; detalhes de delivery/aplicativo; RPC transacional, RLS e faturamento com taxa de entrega |
-| `reverter_08_…`, `reverter_09_…`, `reverter_10_…`, `reverter_11_estorno.sql`, `reverter_12_vendas_17_19_out.sql`, `reverter_16_compras_entradas.sql`, `reverter_17_clientes_lancamentos_rls_permissoes.sql`, `reverter_18_canais_pagamentos_vendas.sql` (e as anteriores) | Desfazem as migrações acima; a reversão da 17 restaura políticas permissivas e não é recomendada em produção; a 18 recusa apagar cadastros comerciais ou detalhes de venda existentes |
+| `19_imagens_produtos.sql` | Fotos de produto em `bytea`, limite de 512 KiB, RLS e salvamento atômico pela RPC `salvar_produto_com_imagem()` |
+| `20_categorias_produtos.sql` | Catálogo de categorias por organização, unicidade normalizada, RLS, importação dos nomes já usados e seed para novas organizações |
+| `21_categorias_tipos_venda.sql` | Catálogo de categorias para tipos de venda, mantendo os códigos usados pelo PDV, RLS e isolamento por organização |
+| `22_locais_transferencias_estoque.sql` | Estoques geral e da loja, saldos separados, RLS e transferências idempotentes gravadas no livro-razão |
+| `23_whatsapp_fornecedores.sql` | Adiciona o telefone de WhatsApp ao cadastro de fornecedores |
+| `24_baixa_automatica_venda_direta.sql` | Configuração por produto, isolamento por organização, validação transacional de saldo e baixa automática no Estoque Normal/Geral pelo fluxo de venda existente |
+| `25_estoque_buffet_locais_operacionais.sql` | Saldo por local, transferências idempotentes entre Normal/Geral/Buffet, contagem física por local e locais futuros desativados |
+| `26_codigos_sequenciais_produtos.sql` | Reserva atômica de códigos P sequenciais para novos produtos; números reservados e não utilizados podem deixar lacunas |
+| `27_operacoes_e_reconciliacao_buffet.sql` | Perdas e devoluções auditáveis/idempotentes, autorização explícita de retorno por produto, snapshot de abertura por turno, histórico filtrável e resumo de consumo/divergência |
+| `28_codigos_sequenciais_clientes.sql` | Código de cliente reservado atomicamente (C-0000), preenchido pelo banco em inserções sem código e imutável depois de criado |
+| `reverter_08_…` até `reverter_28_…` (e as anteriores) | Reversões conservadoras; a 21 bloqueia categorias personalizadas em uso, a 22 bloqueia movimentos do estoque geral, a 23 impede remover WhatsApps cadastrados, a 24 preserva os novos metadados, a 26 não remove códigos gravados, a 27 bloqueia reversão quando já há operações/snapshots/autorizações e a 28 devolve a edição manual do código do cliente |
 | `garantir_perfil_novo.sql` | Versão de `garantir_perfil()` que lê e-mail e convite — **passo manual**, não é `NN_*.sql` |
 | `testar-base.mjs` | Testa a base real de ponta a ponta (`npm run testar:base`) |
 | `testar-permissoes.mjs` | Testa o banco de permissões contra a base real |
@@ -34,29 +44,138 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `verificar-vendas.mjs` | Confere a venda transacional **na base real**, sem gravar nada (`npm run verificar:vendas`) |
 | `testar-estoque-api.mjs` | Testa as RPCs do estoque **pelo Neon Data API**, como o navegador faz (`npm run testar:estoque:api`) |
 
-Para aplicar tudo, na ordem dos nomes:
+Para aplicar as migrações, na ordem dos nomes:
 
 ```bash
 node neon/aplicar.mjs
 ```
 
-O `aplicar.mjs` aplica **todos** os `NN_*.sql` em ordem alfabética, cada arquivo
-na própria transação. Para aplicar só um (ou um prefixo):
+O `aplicar.mjs` aplica as migrações numeradas em ordem alfabética, cada arquivo
+na própria transação. A migração `12` contém dados de estudo não idempotentes e
+fica fora da aplicação padrão; só é executada quando selecionada explicitamente.
+Para aplicar só um (ou um prefixo):
 
 ```bash
 node neon/aplicar.mjs 04
 ```
 
+Para aplicar os dados de estudo, confira o banco-alvo e execute explicitamente:
+
+```bash
+node neon/aplicar.mjs 12
+```
+
+Para habilitar o WhatsApp no cadastro de fornecedores, aplique a migração 23
+ao banco-alvo antes de publicar o build conectado a ele:
+
+```bash
+node neon/aplicar.mjs 23
+```
+
+Para habilitar a regra de baixa automática por produto, aplique a migração 24
+depois de validar a cadeia completa:
+
+```bash
+npm run validar:migracoes
+node neon/aplicar.mjs 24
+```
+
+Para reservar códigos sequenciais de produto com segurança entre usuários,
+aplique a migração 26 e atualize o cache de funções da Neon Data API:
+
+```bash
+node neon/aplicar.mjs 26
+npx neon data-api refresh-schema
+```
+
+A função só pode ser chamada por contas com `estoque.criar`. Cada formulário
+novo consome uma posição global da sequência, mesmo se for cancelado; isso
+evita que duas sessões recebam a mesma sugestão. A constraint única existente
+continua sendo a proteção definitiva, inclusive para códigos digitados
+manualmente.
+
+Para habilitar as operações e a reconciliação do Buffet, valide toda a cadeia,
+confira a filial e os produtos, faça um backup restaurável e aplique a migração
+27 somente ao banco confirmado. Depois, atualize o cache da Neon Data API:
+
+```bash
+npm run validar:migracoes
+node neon/aplicar.mjs 27
+npx neon data-api refresh-schema
+```
+
+A migração não classifica nem autoriza produtos automaticamente. `permite_retorno_buffet`
+começa como falso e só deve ser habilitado em produtos de Buffet ou insumos
+aprovados para retorno. Os relatórios usam o ledger e os snapshots feitos ao
+abrir o turno; para fechamentos anteriores, o consumo não pode ser reconstruído
+com segurança. A reversão 27 é deliberadamente bloqueada após o primeiro uso
+de operações, snapshots ou autorizações, para não apagar dados de auditoria.
+Esta migração ainda não foi aplicada a uma base real.
+
+A migração **não** classifica todos os produtos como venda direta: os registros
+existentes mantêm a política legada. Ela atribui a filial por meio dos
+movimentos já existentes e só usa a única organização cadastrada quando não há
+movimentos nem filial explícita. Se encontrar várias organizações e produtos
+sem movimentos/filial definida, ou movimentos de um produto em organizações
+diferentes, interrompe sem concluir. Para produtos sem movimento, a equipe
+responsável pode adicionar `produtos.organization_id`, consultar os produtos
+sem filial e preencher cada um com a organização confirmada antes de repetir a
+migração:
+
+```sql
+ALTER TABLE public.produtos ADD COLUMN IF NOT EXISTS organization_id uuid;
+SELECT id, codigo, nome FROM public.produtos WHERE organization_id IS NULL;
+-- Preencha cada produto com a filial confirmada antes de aplicar a migração.
+```
+
+Movimentos em mais de uma organização exigem uma estratégia de separação
+auditável definida com o responsável pelos dados. **Não altere nem apague o
+ledger imutável para forçar a migração.**
+
+No cadastro, configure venda direta, controle por movimentações, a regra
+“Automática na venda confirmada” e o local “Estoque Normal”. Para produtos por
+unidade, a unidade de estoque deve ser `un`; para itens por peso, `kg`. Não há
+conversão configurada neste projeto, portanto unidades incompatíveis são
+recusadas. A regra não aceita o Estoque Buffet nem saldo negativo. O movimento
+continua no ledger existente, com unicidade por item da venda; cancelamentos
+usam o estorno imutável já existente. Movimentos anteriores à migração mantêm
+a unidade histórica como `NULL`, pois o ledger não pode ser reescrito.
+
+`reverter_24_baixa_automatica_venda_direta.sql` desativa a regra automática sem
+remover as novas colunas nem apagar o histórico. A reversão interrompe se houver
+produto automático configurado fora do Estoque Normal ou saldo negativo; corrija
+essas condições antes de reverter.
+
+A migração 25 integra o Estoque Buffet ao catálogo de locais e às consultas de
+saldo. Transferências entre locais usam o mesmo ledger, uma referência
+idempotente e validação transacional do saldo. A contagem registra apenas a
+diferença no local escolhido, mantendo o histórico original. Preparação e
+Produção são cadastrados como locais futuros inativos; não recebem movimentos
+nem aparecem como opções operacionais até serem habilitados e configurados.
+O Buffet não é atualizado pela baixa de venda direta, que continua restrita ao
+local configurado para cada produto.
+
+Valide antes de aplicar em qualquer base. Para reverter a migração 25, use
+`node neon/aplicar.mjs reverter_25`. A reversão bloqueia se as operações novas
+já tiverem criado movimentos, transferências com Buffet ou configuração de
+produto em local futuro; preserve o ledger e migre os saldos antes de tentar
+novamente. Não aplique em produção sem backup com restauração verificada e
+confirmação explícita da organização/destino.
+
 Os arquivos de reversão começam com `reverter_` de propósito: assim **não** casam
-com o filtro `^\d+_.*\.sql$` do `aplicar.mjs` e nunca entram numa aplicação
-normal. Para desfazer:
+com o filtro de migrações numeradas e nunca entram numa aplicação normal. O
+aplicador aceita esses arquivos apenas quando o prefixo `reverter_NN` é informado.
+Para desfazer:
 
 ```bash
 node neon/aplicar.mjs reverter_04
 ```
 
-Todos os scripts são re-executáveis (`if not exists`, `create or replace`) e
-**aditivos**: nenhum reescreve dado já existente.
+Um filtro sem correspondência agora termina com erro, em vez de indicar sucesso.
+
+As migrações de estrutura usam operações re-executáveis quando possível
+(`if not exists`, `create or replace`). A `12` é exceção: insere dados de estudo
+e não deve ser reexecutada; use a reversão correspondente se precisar removê-los.
 
 > A versão antiga (Supabase) foi removida do projeto junto com as dependências.
 
@@ -80,7 +199,7 @@ botão. No fim ele roda as `reverter_*` e confere que desfizeram tudo.
 
 Ele verifica também os canais e pagamentos iniciais, a taxa de entrega, o
 cálculo de troco, a comissão estimada do aplicativo, a idempotência da venda
-completa e as permissões dos cadastros. Ele foi o que pegou o defeito da `02`:
+completa, a política por produto e as permissões dos cadastros. Ele foi o que pegou o defeito da `02`:
 as colunas `profiles.email`,
 `username`, `aprovado_em` e `last_login_at` não nasciam em migração nenhuma, e
 um banco novo quebrava na `03` com `record "new" has no field "aprovado_em"`.
@@ -365,8 +484,9 @@ No **Console do Neon**, na sua branch:
 > vendas. O `raise` derruba a transação inteira do arquivo, então nem a metade
 > anterior da `00` fica aplicada pela metade.
 >
-> Isso protege o caso perigoso: o `aplicar.mjs` **sem filtro** roda *todos* os
-> `NN_*.sql`, inclusive a `00`. Numa base com dados reais ele agora para com a
+> Isso protege o caso perigoso: o `aplicar.mjs` **sem filtro** roda as
+> migrações numeradas, exceto a geração de dados de estudo `12`, inclusive a `00`.
+> Numa base com dados reais ele agora para com a
 > mensagem acima em vez de zerar a loja. Ainda assim, em produção aplique por
 > prefixo, um arquivo por vez (`node neon/aplicar.mjs 04`), e confira depois.
 > Para semear de propósito numa base que já tem dados (ambiente de estudo), rode
@@ -614,13 +734,15 @@ Neon Auth, não do app, e dá poder administrativo sobre todas as contas.
 
 ### O primeiro administrador
 
-O cadastro pelo app **sempre** cria `cashier`. Para o primeiro admin, use o SQL
-Editor (a conta precisa já existir em `neon_auth.user`):
+O cadastro pelo app cria um perfil sem privilégios administrativos. Para
+configurar `saspacajusvigilancia@gmail.com` como administrador inicial:
 
-```sql
-update public.profiles set role = 'admin'
- where id = (select id from neon_auth.user where email = 'voce@exemplo.com');
-```
+1. Crie a conta com esse e-mail e entre no app ao menos uma vez, para gerar o
+   perfil.
+2. No SQL Editor do Neon, execute `neon/promover-administrador-inicial.sql`.
+   O script confere que existe uma única conta e ativa o perfil.
+
+Esse arquivo é uma ação manual e não é executado pelo aplicador de migrations.
 
 ## Cliente no navegador
 

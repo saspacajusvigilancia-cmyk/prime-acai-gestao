@@ -1,14 +1,17 @@
 import { produtos as produtosExemplo, recipientes as recipientesExemplo } from '../data.js'
 import { abrirFormulario } from '../formulario.js'
 import { renderIcons } from '../icons.js'
+import { centavosParaReais, multiplicarMoedaPorQuantidade, somarValoresCentavos } from '../numeros.js'
 import { METODO_PESO_ROTULO, METODOS_PESO_ATIVOS, formatPeso } from '../peso.js'
 import { observar } from '../services/base.js'
+import { listarCategorias } from '../services/categorias.js'
 import {
   LOCAIS,
   LOCAIS_CONTAGEM,
-  LOCAIS_MOVIMENTO,
+  LOCAIS_MOVIMENTO_LOCAL,
   OPERACOES,
   ajustarSaldo,
+  listarSaldosEstoqueLocais,
   listarMovimentacoes,
   locaisDaOperacao,
   registrarMovimentacao,
@@ -66,7 +69,7 @@ const OPCOES_CONTROLE = [
 /* Locais do livro-razão: o rótulo é o que o operador lê, o valor é o que o
    banco grava (o CHECK da migração 06 só aceita estes). */
 const rotuloLocal = (local) => LOCAIS[local] ?? local
-const OPCOES_LOCAL = LOCAIS_MOVIMENTO.map((valor) => ({ valor, rotulo: LOCAIS[valor] }))
+const OPCOES_LOCAL = LOCAIS_MOVIMENTO_LOCAL.map((valor) => ({ valor, rotulo: LOCAIS[valor] }))
 const OPCOES_OPERACAO = OPERACOES.map(({ valor, rotulo }) => ({ valor, rotulo }))
 const OPCOES_CONTAGEM = LOCAIS_CONTAGEM.map((valor) => ({ valor, rotulo: LOCAIS[valor] }))
 
@@ -150,7 +153,7 @@ const colunasProdutos = ({ podeEditar = false, podeMovimentar = false } = {}) =>
   { key: 'categoria', label: 'Categoria', render: (p) => esc(p.categoria) },
   {
     key: 'quantidade',
-    label: 'Disponível',
+    label: 'Loja',
     align: 'right',
     render: (p) =>
       p.controlaEstoque
@@ -159,6 +162,22 @@ const colunasProdutos = ({ podeEditar = false, podeMovimentar = false } = {}) =>
       <span class="cell-sub">mínimo ${formatNumero(p.minimo)}</span>
     `
         : '<span class="muted">—</span>',
+  },
+  {
+    key: 'quantidadeBuffet',
+    label: 'Buffet',
+    align: 'right',
+    render: (p) => p.controlaEstoque
+        ? `<span class="cell-main">${formatNumero(p.quantidadeBuffet ?? 0)} ${esc(p.unidade)}</span>`
+        : '<span class="muted">—</span>',
+  },
+  {
+    key: 'quantidadeGeral',
+    label: 'Geral',
+    align: 'right',
+    render: (p) => p.controlaEstoque
+      ? `<span class="cell-main">${formatNumero(p.quantidadeGeral ?? 0)} ${esc(p.unidade)}</span>`
+      : '<span class="muted">—</span>',
   },
   {
     key: 'nivel',
@@ -317,8 +336,12 @@ function indicadores(listaDeItens) {
 
   return {
     total: ativos.length,
-    valorEstoque: ativos.reduce((acc, p) => acc + p.quantidade * p.custo, 0),
-    potencial: ativos.reduce((acc, p) => acc + p.quantidade * p.preco, 0),
+    valorEstoque: centavosParaReais(
+      somarValoresCentavos(ativos.map((p) => multiplicarMoedaPorQuantidade(p.custo, p.quantidade))),
+    ),
+    potencial: centavosParaReais(
+      somarValoresCentavos(ativos.map((p) => multiplicarMoedaPorQuantidade(p.preco, p.quantidade))),
+    ),
     criticos: controlados.filter((p) => p.minimo > 0 && p.quantidade < p.minimo),
   }
 }
@@ -386,11 +409,14 @@ export function estoquePage() {
       </section>
 
       <div id="alerta-estoque">${htmlAlerta(inicial.criticos)}</div>
+      <div id="aviso-saldos-locais" class="alert alert--perigo" role="alert" hidden>
+        Não foi possível consultar os saldos por local. Atualize a página ou tente novamente mais tarde.
+      </div>
 
       <section class="card">
         ${cardHead({
           titulo: 'Produtos e insumos',
-          descricao: 'Tipo de venda, preço, controle de estoque e ponto de reposição',
+          descricao: 'Saldos separados para o estoque geral e o estoque da loja. Transferências são registradas no histórico.',
           acoes: podeCriar
             ? botaoPrimario({ label: 'Novo item', icon: 'plus', acao: 'novo-produto' })
             : '',
@@ -420,7 +446,20 @@ export function estoquePage() {
 
     mount(root) {
       let itens = produtosExemplo
+      let saldosLocais = new Map()
       let taras = recipientesExemplo
+      let categoriasAtivas = []
+      let categoriasDisponiveis = false
+
+      async function anexarSaldosLocais(lista) {
+        const resultado = await listarSaldosEstoqueLocais()
+        saldosLocais = new Map(resultado.dados.map((saldo) => [saldo.produtoId, saldo]))
+        itens = lista.map((produto) => ({
+          ...produto,
+          quantidadeGeral: saldosLocais.get(produto.uuid ?? produto.id)?.geral ?? 0,
+          quantidadeBuffet: saldosLocais.get(produto.uuid ?? produto.id)?.buffet ?? 0,
+        }))
+      }
 
       const contagem = root.querySelector('#contagem-estoque')
       const contagemRec = root.querySelector('#contagem-recipientes')
@@ -436,7 +475,14 @@ export function estoquePage() {
       const unidadesDisponiveis = () =>
         [...new Set(['un', 'kg', 'L', ...itens.map((p) => p.unidade)])].filter(Boolean)
 
-      const categorias = () => [...new Set(itens.map((p) => p.categoria))].filter(Boolean).sort()
+      const categoriasLegadas = () => [...new Set(itens.map((p) => p.categoria))].filter(Boolean).sort()
+      const opcoesCategoria = (categoriaAtual = '') => {
+        const opcoes = categoriasAtivas.map(({ nome }) => ({ valor: nome, rotulo: nome }))
+        if (categoriaAtual && !opcoes.some(({ valor }) => valor === categoriaAtual)) {
+          opcoes.push({ valor: categoriaAtual, rotulo: `${categoriaAtual} (inativa)` })
+        }
+        return opcoes
+      }
 
       /* ------------------------------------------------------- desenho --- */
 
@@ -484,9 +530,29 @@ export function estoquePage() {
       window.addEventListener('busca-global', aoBuscarGlobal)
 
       const pararProdutos = observar(listarProdutos({ incluirInativos: true }), (r) => {
-        itens = r.dados
-        aplicar()
+        void anexarSaldosLocais(r.dados)
+          .then(aplicar)
+          .catch((erro) => {
+            console.error('[estoque] Não foi possível carregar saldos por local.', erro)
+            itens = r.dados.map((produto) => ({
+              ...produto,
+              quantidadeGeral: null,
+              quantidadeBuffet: null,
+            }))
+            aplicar()
+            root.querySelector('#aviso-saldos-locais').hidden = false
+          })
       })
+      const categoriasCarregadas = listarCategorias({ somenteAtivas: true })
+        .then((resultado) => {
+          categoriasAtivas = resultado.dados
+          categoriasDisponiveis = true
+        })
+        .catch((erro) => {
+          categoriasAtivas = []
+          categoriasDisponiveis = false
+          console.error('[estoque] Não foi possível carregar categorias ativas.', erro)
+        })
       const pararRecipientes = observar(listarRecipientes(), (r) => {
         taras = r.dados
         renderRecipientes()
@@ -495,7 +561,7 @@ export function estoquePage() {
       /** Busca de novo no banco e redesenha — usado depois de gravar. */
       async function recarregarProdutos() {
         const { dados } = await listarProdutos({ incluirInativos: true })
-        itens = dados
+        await anexarSaldosLocais(dados)
         aplicar()
       }
 
@@ -527,7 +593,7 @@ export function estoquePage() {
        * é digitado, ele nasce de uma movimentação — por isso a edição não mexe
        * nele.
        */
-      function camposProduto({ comSaldo }) {
+      function camposProduto({ comSaldo, categoriaAtual = '' }) {
         return [
           { nome: 'codigo', label: 'Código', tipo: 'texto', obrigatorio: true },
           { nome: 'nome', label: 'Nome do item', tipo: 'texto', obrigatorio: true, largo: true },
@@ -541,9 +607,19 @@ export function estoquePage() {
           {
             nome: 'categoria',
             label: 'Categoria',
-            tipo: 'texto',
             obrigatorio: true,
-            sugestoes: categorias(),
+            ...(categoriasDisponiveis
+              ? {
+                  tipo: 'select',
+                  vazio: false,
+                  opcoes: opcoesCategoria(categoriaAtual),
+                  ajuda: 'Somente categorias ativas estão disponíveis para novos itens.',
+                }
+              : {
+                  tipo: 'texto',
+                  sugestoes: categoriasLegadas(),
+                  ajuda: 'O catálogo de categorias não está disponível; informe o nome para manter o cadastro.',
+                }),
           },
           {
             nome: 'tipoVenda',
@@ -565,7 +641,7 @@ export function estoquePage() {
           {
             nome: 'preco',
             label: 'Preço de venda',
-            tipo: 'numero',
+            tipo: 'moeda',
             prefixo: 'R$',
             obrigatorio: true,
             ajuda: 'No produto por peso, este é o preço do QUILO.',
@@ -607,7 +683,7 @@ export function estoquePage() {
               ]
             : []),
           { nome: 'minimo', label: 'Ponto de reposição', tipo: 'numero', min: 0 },
-          { nome: 'custo', label: 'Custo', tipo: 'numero', prefixo: 'R$', min: 0 },
+          { nome: 'custo', label: 'Custo', tipo: 'moeda', min: 0 },
           {
             nome: 'ativo',
             label: 'Situação',
@@ -637,7 +713,8 @@ export function estoquePage() {
         }
       }
 
-      function novoProduto() {
+      async function novoProduto() {
+        await categoriasCarregadas
         abrirFormulario({
           titulo: 'Novo item de estoque',
           descricao: 'O item passa a contar no controle de quantidade e de reposição.',
@@ -689,15 +766,16 @@ export function estoquePage() {
         })
       }
 
-      function editarProduto(id) {
+      async function editarProduto(id) {
         const p = achar(id)
         if (!p) return
+        await categoriasCarregadas
 
         abrirFormulario({
           titulo: `Editar ${p.id}`,
           descricao:
             'O saldo não é editado aqui: mudar saldo é movimentação de estoque, com motivo e responsável.',
-          campos: camposProduto({ comSaldo: false }),
+          campos: camposProduto({ comSaldo: false, categoriaAtual: p.categoria }),
           valores: valoresDoProduto(p),
           aoSalvar: async (valores) => {
             const { dados: salvo, origem } = await atualizarProduto(p.uuid ?? p.id, {
@@ -728,14 +806,24 @@ export function estoquePage() {
         p.quantidade +
         (destino === 'estoque' ? quantidade : 0) -
         (origem === 'estoque' ? quantidade : 0)
+      const saldoGeralAposMovimento = (p, { quantidade, origem, destino }) =>
+        (p.quantidadeGeral ?? 0) +
+        (destino === 'estoque_geral' ? quantidade : 0) -
+        (origem === 'estoque_geral' ? quantidade : 0)
+      const saldoBuffetAposMovimento = (p, { quantidade, origem, destino }) =>
+        (p.quantidadeBuffet ?? 0) +
+        (destino === 'buffet' ? quantidade : 0) -
+        (origem === 'buffet' ? quantidade : 0)
 
       function movimentarProduto(id) {
         const p = achar(id)
         if (!p) return
+        const chaveIdempotencia = globalThis.crypto?.randomUUID?.()
+          ?? `transfer-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
         abrirFormulario({
           titulo: `Movimentar ${p.nome}`,
-          descricao: `Saldo atual: ${formatNumero(p.quantidade)} ${p.unidade}. O saldo só muda por movimentação registrada.`,
+          descricao: `Loja: ${formatNumero(p.quantidade)} ${p.unidade}. Geral: ${formatNumero(p.quantidadeGeral ?? 0)} ${p.unidade}. Buffet: ${formatNumero(p.quantidadeBuffet ?? 0)} ${p.unidade}.`,
           campos: [
             {
               nome: 'operacao',
@@ -762,7 +850,7 @@ export function estoquePage() {
               vazio: false,
               obrigatorio: true,
               opcoes: OPCOES_LOCAL,
-              ajuda: 'Só o estoque da loja muda o saldo.',
+              ajuda: 'Transferências entre estoque geral e loja são registradas em uma única operação.',
             },
             {
               nome: 'quantidade',
@@ -793,10 +881,13 @@ export function estoquePage() {
               origem,
               destino,
               motivo: valores.motivo,
+              chaveIdempotencia,
             })
 
             if (deOnde === 'exemplo') {
               p.quantidade = saldoAposMovimento(p, { quantidade, origem, destino })
+              p.quantidadeGeral = saldoGeralAposMovimento(p, { quantidade, origem, destino })
+              p.quantidadeBuffet = saldoBuffetAposMovimento(p, { quantidade, origem, destino })
               aplicar()
               return `${formatNumero(quantidade)} ${p.unidade} movimentado só nesta sessão — o Neon não está configurado.`
             }
@@ -813,6 +904,12 @@ export function estoquePage() {
         const p = achar(id)
         if (!p) return
 
+        const saldoPorLocal = {
+          loja: p.quantidade,
+          geral: p.quantidadeGeral ?? 0,
+          buffet: p.quantidadeBuffet ?? 0,
+        }
+
         abrirFormulario({
           titulo: `Contagem de ${p.nome}`,
           descricao: `O sistema diz ${formatNumero(p.quantidade)} ${p.unidade}. Informe o que foi contado: o banco registra só a diferença.`,
@@ -826,12 +923,24 @@ export function estoquePage() {
             },
             {
               nome: 'local',
-              label: 'Tipo de contagem',
+              label: 'Tipo de registro',
               tipo: 'select',
               vazio: false,
               obrigatorio: true,
               opcoes: OPCOES_CONTAGEM,
               ajuda: 'Saldo inicial é a primeira contagem do item.',
+            },
+            {
+              nome: 'estoqueLocal',
+              label: 'Estoque contado',
+              tipo: 'select',
+              vazio: false,
+              obrigatorio: true,
+              opcoes: [
+                { valor: 'loja', rotulo: 'Estoque Normal (loja)' },
+                { valor: 'geral', rotulo: 'Estoque Geral' },
+                { valor: 'buffet', rotulo: 'Estoque Buffet' },
+              ],
             },
             {
               nome: 'motivo',
@@ -842,17 +951,23 @@ export function estoquePage() {
               placeholder: 'Contagem de fechamento do dia',
             },
           ],
-          valores: { contado: p.quantidade, local: 'contagem' },
+          valores: { contado: saldoPorLocal.loja, local: 'contagem', estoqueLocal: 'loja' },
           aoSalvar: async (valores) => {
             const { dados: ajuste, origem } = await ajustarSaldo({
               produtoId: p.uuid ?? p.id,
               contado: valores.contado,
               motivo: valores.motivo,
               local: valores.local,
+              estoqueLocal: valores.estoqueLocal,
             })
 
             if (origem === 'exemplo') {
-              p.quantidade = Number(valores.contado)
+              const chaveSaldo = {
+                loja: 'quantidade',
+                geral: 'quantidadeGeral',
+                buffet: 'quantidadeBuffet',
+              }[valores.estoqueLocal]
+              p[chaveSaldo] = Number(valores.contado)
               aplicar()
               return `${p.nome}: saldo ajustado só nesta sessão — o Neon não está configurado.`
             }
@@ -865,6 +980,11 @@ export function estoquePage() {
             }
             return `Contagem: ${formatNumero(ajuste.saldoAnterior)} → ${formatNumero(ajuste.saldo)} ${p.unidade}.`
           },
+        })
+
+        document.querySelector('#campo-estoqueLocal')?.addEventListener('change', (evento) => {
+          const campoContado = document.querySelector('#campo-contado')
+          if (campoContado) campoContado.value = String(saldoPorLocal[evento.target.value] ?? 0)
         })
       }
 

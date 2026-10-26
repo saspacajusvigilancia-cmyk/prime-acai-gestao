@@ -43,15 +43,19 @@ const {
   LOCAIS,
   LOCAIS_CONTAGEM,
   LOCAIS_MOVIMENTO,
+  LOCAIS_MOVIMENTO_LOCAL,
   OPERACOES,
   ajustarSaldo,
   listarMovimentacoes,
+  listarSaldosEstoqueLocais,
   locaisDaOperacao,
   registrarMovimentacao,
 } = await import('../src/services/movimentacoes.js')
 
 const sql06 = readFileSync(new URL('../neon/06_movimentacoes_estoque.sql', import.meta.url), 'utf8')
 const sql07 = readFileSync(new URL('../neon/07_movimentacoes_rpc.sql', import.meta.url), 'utf8')
+const sql22 = readFileSync(new URL('../neon/22_locais_transferencias_estoque.sql', import.meta.url), 'utf8')
+const sql25 = readFileSync(new URL('../neon/25_estoque_buffet_locais_operacionais.sql', import.meta.url), 'utf8')
 
 /** Lê a lista de um `check (coluna in (...))` da migração. */
 const locaisDe = (sql, coluna) => {
@@ -74,10 +78,10 @@ beforeEach(() => {
 })
 
 describe('vocabulário de locais', () => {
-  it('o frontend conhece exatamente os locais do CHECK da migração 06', () => {
+  it('o frontend conhece os locais legados e os novos locais operacionais', () => {
     const doBanco = [...new Set([...locaisDe(sql06, 'origem'), ...locaisDe(sql06, 'destino')])].sort()
 
-    expect(Object.keys(LOCAIS).sort()).toEqual(doBanco)
+    expect(Object.keys(LOCAIS).sort()).toEqual([...doBanco, 'estoque_geral', 'preparacao', 'producao'].sort())
     expect(LOCAIS_MOVIMENTO.length).toBe(6)
     expect([...LOCAIS_MOVIMENTO].sort()).toEqual(
       doBanco.filter((local) => !['abertura', 'contagem'].includes(local)),
@@ -85,27 +89,43 @@ describe('vocabulário de locais', () => {
     expect([...LOCAIS_CONTAGEM].sort()).toEqual(['abertura', 'contagem'])
   })
 
-  it('a RPC aceita os mesmos locais que a tela oferece', () => {
-    const trecho = /p_origem not in \(([^)]*)\)/.exec(sql07)
+  it('a RPC local aceita os locais disponíveis para movimentação', () => {
+    const trecho = /p_origem not in \(([^)]*)\)/.exec(sql25)
     const daRpc = [...trecho[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]).sort()
 
-    expect([...LOCAIS_MOVIMENTO].sort()).toEqual(daRpc)
+    expect([...LOCAIS_MOVIMENTO_LOCAL, 'preparacao', 'producao'].sort()).toEqual(daRpc)
   })
 
   it('todo atalho usa locais válidos e diferentes entre si', () => {
     for (const op of OPERACOES) {
       if (op.valor === 'outro') continue
-      expect(LOCAIS_MOVIMENTO, `origem de ${op.valor}`).toContain(op.origem)
-      expect(LOCAIS_MOVIMENTO, `destino de ${op.valor}`).toContain(op.destino)
+      expect(LOCAIS_MOVIMENTO_LOCAL, `origem de ${op.valor}`).toContain(op.origem)
+      expect(LOCAIS_MOVIMENTO_LOCAL, `destino de ${op.valor}`).toContain(op.destino)
       expect(op.origem, `destino igual à origem em ${op.valor}`).not.toBe(op.destino)
     }
   })
 
   it('o atalho "compra" é fornecedor → estoque, e "outro" deixa escolher', () => {
     expect(locaisDaOperacao('compra')).toEqual({ origem: 'fornecedor', destino: 'estoque' })
+    expect(locaisDaOperacao('compra_geral')).toEqual({ origem: 'fornecedor', destino: 'estoque_geral' })
+    expect(locaisDaOperacao('geral_loja')).toEqual({ origem: 'estoque_geral', destino: 'estoque' })
+    expect(locaisDaOperacao('loja_geral')).toEqual({ origem: 'estoque', destino: 'estoque_geral' })
     expect(locaisDaOperacao('perda')).toEqual({ origem: 'estoque', destino: 'perda' })
     expect(locaisDaOperacao('outro')).toEqual({ origem: '', destino: '' })
     expect(locaisDaOperacao('inexistente')).toEqual({ origem: '', destino: '' })
+  })
+
+  it('as migrações mantêm transferências rastreáveis e preparam locais futuros inativos', () => {
+    expect(sql22).toContain("'estoque_geral'")
+    expect(sql22).toContain('public.saldo_estoque_local')
+    expect(sql22).toContain('public.transferir_estoque_local')
+    expect(sql22).toContain('unique (organization_id, chave_idempotencia)')
+    expect(sql22).toContain('for update')
+    expect(sql25).toContain("'buffet', 'Estoque Buffet', true")
+    expect(sql25).toContain("'preparacao', 'Preparação', false")
+    expect(sql25).toContain("'producao', 'Produção', false")
+    expect(sql25).toContain('public.transferir_estoque_local_v2')
+    expect(sql25).toContain('public.ajustar_saldo_estoque_local')
   })
 })
 
@@ -144,7 +164,7 @@ describe('registrarMovimentacao', () => {
 
     expect(origem).toBe('neon')
     expect(estado.rpc.at(-1)).toEqual({
-      nome: 'registrar_movimentacao',
+      nome: 'registrar_movimentacao_local_v2',
       params: {
         p_produto_id: 'p1',
         p_qtd: 10,
@@ -158,6 +178,119 @@ describe('registrarMovimentacao', () => {
     expect(dados.quando).toBe('2026-10-19T10:00:00.000Z')
   })
 
+  it('registra transferências entre locais com chave idempotente e saldos separados', async () => {
+    estado.rpcResposta = {
+      data: [{
+        id: 'transfer-1',
+        produto_id: 'p1',
+        movimentacao_id: 'm1',
+        quantidade: '3',
+        origem: 'geral',
+        destino: 'loja',
+        motivo: 'Reposição da loja',
+        chave_idempotencia: 'transfer-key',
+        saldo_geral: '7',
+        saldo_loja: '13',
+        saldo_buffet: '0',
+        criado_em: '2026-10-22T10:00:00.000Z',
+      }],
+      error: null,
+    }
+
+    const { dados } = await registrarMovimentacao({
+      ...movimentoValido,
+      origem: 'estoque_geral',
+      destino: 'estoque',
+      motivo: 'Reposição da loja',
+      chaveIdempotencia: 'transfer-key',
+    })
+
+    expect(estado.rpc.at(-1)).toEqual({
+      nome: 'transferir_estoque_local_v2',
+      params: {
+        p_produto_id: 'p1',
+        p_qtd: 10,
+        p_origem: 'geral',
+        p_destino: 'loja',
+        p_motivo: 'Reposição da loja',
+        p_chave_idempotencia: 'transfer-key',
+      },
+    })
+    expect(dados).toMatchObject({
+      origem: 'estoque_geral',
+      destino: 'estoque',
+      saldo: 13,
+      saldoGeral: 7,
+      saldoLoja: 13,
+      transferenciaId: 'transfer-1',
+    })
+  })
+
+  it('transfere para Buffet sem alterar o saldo reportado da loja como destino', async () => {
+    estado.rpcResposta = {
+      data: [{
+        id: 'transfer-buffet',
+        produto_id: 'p1',
+        movimentacao_id: 'm-buffet',
+        quantidade: '2',
+        origem: 'loja',
+        destino: 'buffet',
+        motivo: 'Reposição do Buffet',
+        chave_idempotencia: 'buffet-key',
+        saldo_geral: '0',
+        saldo_loja: '8',
+        saldo_buffet: '2',
+        criado_em: '2026-10-22T10:00:00.000Z',
+      }],
+      error: null,
+    }
+
+    const { dados } = await registrarMovimentacao({
+      ...movimentoValido,
+      origem: 'estoque',
+      destino: 'buffet',
+      motivo: 'Reposição do Buffet',
+      chaveIdempotencia: 'buffet-key',
+    })
+
+    expect(estado.rpc.at(-1)).toMatchObject({
+      nome: 'transferir_estoque_local_v2',
+      params: {
+        p_origem: 'loja',
+        p_destino: 'buffet',
+        p_chave_idempotencia: 'buffet-key',
+      },
+    })
+    expect(dados).toMatchObject({
+      origem: 'estoque',
+      destino: 'buffet',
+      saldo: 2,
+      saldoLoja: 8,
+      saldoBuffet: 2,
+    })
+  })
+
+  it('lista os saldos ativos por local com o formato retornado pela RPC', async () => {
+    estado.rpcResposta = {
+      data: [
+        { produto_id: 'p1', local: 'geral', saldo: '8.5' },
+        { produto_id: 'p1', local: 'loja', saldo: '12' },
+        { produto_id: 'p1', local: 'buffet', saldo: '2' },
+      ],
+      error: null,
+    }
+
+    const { dados } = await listarSaldosEstoqueLocais()
+    expect(estado.rpc.at(-1).nome).toBe('listar_saldos_estoque_por_local')
+    expect(dados).toEqual([{
+      produtoId: 'p1',
+      geral: 8.5,
+      loja: 12,
+      buffet: 2,
+      locais: { geral: 8.5, loja: 12, buffet: 2 },
+    }])
+  })
+
   it('deixa a mensagem do banco subir (é ela que o usuário lê)', async () => {
     estado.rpcResposta = {
       data: null,
@@ -169,7 +302,7 @@ describe('registrarMovimentacao', () => {
 })
 
 describe('ajustarSaldo', () => {
-  it('manda o local escolhido e devolve o antes e o depois', async () => {
+  it('manda local e tipo de contagem e devolve o antes e o depois', async () => {
     estado.rpcResposta = {
       data: [{ saldo_anterior: '21', saldo: '31', movimentacao_id: 'm9' }],
       error: null,
@@ -180,15 +313,17 @@ describe('ajustarSaldo', () => {
       contado: 31,
       motivo: 'Contagem de fechamento',
       local: 'contagem',
+      estoqueLocal: 'buffet',
     })
 
     expect(estado.rpc.at(-1)).toEqual({
-      nome: 'ajustar_saldo',
+      nome: 'ajustar_saldo_estoque_local',
       params: {
         p_produto_id: 'p1',
         p_contado: 31,
         p_motivo: 'Contagem de fechamento',
-        p_local: 'contagem',
+        p_local: 'buffet',
+        p_tipo: 'contagem',
       },
     })
     expect(dados).toEqual({ saldoAnterior: 21, saldo: 31, movimentacaoId: 'm9' })
@@ -197,7 +332,8 @@ describe('ajustarSaldo', () => {
   it('assume "contagem" por padrão e recusa contagem inválida', async () => {
     estado.rpcResposta = { data: [{ saldo_anterior: '0', saldo: '10', movimentacao_id: 'm1' }], error: null }
     await ajustarSaldo({ produtoId: 'p1', contado: 10, motivo: 'Saldo inicial' })
-    expect(estado.rpc.at(-1).params.p_local).toBe('contagem')
+    expect(estado.rpc.at(-1).params.p_tipo).toBe('contagem')
+    expect(estado.rpc.at(-1).params.p_local).toBe('loja')
 
     expect(() => ajustarSaldo({ produtoId: 'p1', contado: -1, motivo: 'x' })).toThrow(/negativo/i)
     expect(() => ajustarSaldo({ produtoId: 'p1', contado: 1, motivo: 'x', local: 'deposito' })).toThrow(/contagem/i)

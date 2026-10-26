@@ -1,7 +1,7 @@
 import { clientes as clientesExemplo, resumo as resumoExemplo } from '../data.js'
 import { abrirFormulario } from '../formulario.js'
 import { observar, hoje } from '../services/base.js'
-import { criarCliente, listarClientes, proximoCodigoCliente } from '../services/clientes.js'
+import { criarCliente, listarClientes, sugerirCodigoCliente } from '../services/clientes.js'
 import { carregarResumo } from '../services/resumo.js'
 import {
   atualizarKpi,
@@ -14,6 +14,7 @@ import {
   formatData,
   statCard,
   tabela,
+  toast,
   toolbar,
 } from '../ui.js'
 
@@ -193,12 +194,29 @@ export function clientesPage() {
         aplicarResumo(r)
       }
 
-      root.querySelector('[data-acao="novo-cliente"]').addEventListener('click', () => {
+      root.querySelector('[data-acao="novo-cliente"]').addEventListener('click', async () => {
+        let codigo
+
+        try {
+          codigo = await sugerirCodigoCliente(dados)
+        } catch (erro) {
+          console.error('[clientes] Falha ao gerar o código do cliente:', erro)
+          toast(erro?.message ?? 'Não foi possível gerar o código do cliente.')
+          return
+        }
+
         abrirFormulario({
           titulo: 'Novo cliente',
-          descricao: 'O cliente entra na base e já pode ser vinculado aos pedidos.',
+          descricao: 'O código é gerado automaticamente e o cliente já pode ser vinculado aos pedidos.',
           campos: [
-            { nome: 'codigo', label: 'Código', tipo: 'texto', obrigatorio: true },
+            {
+              nome: 'codigo',
+              label: 'Código',
+              tipo: 'texto',
+              obrigatorio: true,
+              somenteLeitura: true,
+              ajuda: 'Gerado automaticamente. Não pode ser alterado.',
+            },
             { nome: 'nome', label: 'Nome completo', tipo: 'texto', obrigatorio: true, largo: true },
             { nome: 'telefone', label: 'Telefone', tipo: 'texto', placeholder: '(11) 90000-0000' },
             { nome: 'email', label: 'E-mail', tipo: 'texto', placeholder: 'cliente@email.com' },
@@ -212,7 +230,7 @@ export function clientesPage() {
             },
             { nome: 'observacoes', label: 'Observações', tipo: 'textarea', largo: true },
           ],
-          valores: { codigo: proximoCodigoCliente(dados), desde: hoje(), tier: 'Novo' },
+          valores: { codigo, desde: hoje(), tier: 'Novo' },
           aoSalvar: async (valores) => {
             const { dados: criado, origem } = await criarCliente(valores)
 
@@ -220,11 +238,11 @@ export function clientesPage() {
               dados = [criado, ...dados]
               aplicar(input.value)
               aplicarIndicadores()
-              return `${criado.nome} entrou só nesta sessão — o Neon não está configurado.`
+              return `${criado.nome} (${criado.id}) entrou só nesta sessão — o Neon não está configurado.`
             }
 
             await recarregar()
-            return `${criado.nome} salvo na base de clientes.`
+            return `${criado.nome} salvo na base de clientes com o código ${criado.id}.`
           },
         })
       })

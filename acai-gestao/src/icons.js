@@ -2,6 +2,7 @@ import {
   createIcons,
   LayoutDashboard,
   ShoppingCart,
+  ShoppingBag,
   Package,
   Users,
   Wallet,
@@ -62,6 +63,11 @@ import {
   ChevronLeft,
   ChevronRight,
   Truck,
+  Pause,
+  Play,
+  AlignLeft,
+  Tags,
+  CircleCheck,
 } from 'lucide'
 
 /**
@@ -72,6 +78,7 @@ import {
 export const iconSet = {
   LayoutDashboard,
   ShoppingCart,
+  ShoppingBag,
   Package,
   Users,
   Wallet,
@@ -132,6 +139,11 @@ export const iconSet = {
   ChevronLeft,
   ChevronRight,
   Truck,
+  Pause,
+  Play,
+  AlignLeft,
+  Tags,
+  CircleCheck,
 }
 
 /**

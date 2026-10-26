@@ -1,13 +1,16 @@
 import { acessoNegadoPage } from './pages/acesso-negado.js'
 import { cadastroPage } from 'login-projetos/pages/cadastro'
+import { loginProjetosConfig } from './login-config.js'
 import { clientesPage } from './pages/clientes.js'
 import { configuracoesPage } from './pages/configuracoes.js'
 import { dashboardPage } from './pages/dashboard.js'
 import { estoquePage } from './pages/estoque.js'
+import { buffetPage } from './pages/buffet.js'
 import { financeiroPage } from './pages/financeiro.js'
 import { loginPage } from 'login-projetos/pages/login'
 import { naoEncontradoPage } from './pages/nao-encontrado.js'
-import { comprasPage } from './pages/compras.js'
+import { comprasPage, fornecedoresPage } from './pages/compras.js'
+import { produtosPage } from './pages/produtos.js'
 import { recuperarSenhaPage } from 'login-projetos/pages/recuperar-senha'
 import { redefinirSenhaPage } from 'login-projetos/pages/redefinir-senha'
 import { vendasPage } from './pages/vendas.js'
@@ -61,10 +64,21 @@ export const routes = [
     page: estoquePage,
   },
   {
+    path: '/buffet',
+    label: 'Estoque Buffet',
+    title: 'Estoque Buffet',
+    subtitle: 'Fechamento, contagem e histórico do buffet',
+    icon: 'clipboard-check',
+    group: 'Operação',
+    modulo: 'estoque',
+    page: buffetPage,
+  },
+  {
     path: '/compras',
-    label: 'Compras e Entradas',
-    title: 'Compras e Entradas',
+    label: 'Compras',
+    title: 'Compras',
     subtitle: 'Fornecedores, compras, recebimento e custo médio',
+    hideTopbarTitle: true,
     icon: 'truck',
     group: 'Operação',
     modulo: 'compras',
@@ -76,9 +90,29 @@ export const routes = [
     title: 'Clientes',
     subtitle: 'Cadastro e histórico de compras',
     icon: 'users',
-    group: 'Operação',
+    group: 'Cadastros',
     modulo: 'clientes',
     page: clientesPage,
+  },
+  {
+    path: '/fornecedores',
+    label: 'Fornecedores',
+    title: 'Fornecedores',
+    subtitle: 'Cadastro e contatos dos fornecedores',
+    icon: 'truck',
+    group: 'Cadastros',
+    modulo: 'compras',
+    page: fornecedoresPage,
+  },
+  {
+    path: '/produtos',
+    label: 'Produtos',
+    title: 'Produtos',
+    subtitle: 'Catálogo, preços e imagens dos produtos',
+    icon: 'package',
+    group: 'Cadastros',
+    modulo: 'estoque',
+    page: produtosPage,
   },
   {
     path: '/financeiro',
@@ -109,7 +143,7 @@ export const routes = [
   /* ------------------------------------------------------- autenticação ---- */
 
   {
-    path: '/login',
+    path: loginProjetosConfig.rotas.login,
     label: 'Entrar',
     title: 'Entrar',
     subtitle: 'Acesso ao sistema',
@@ -118,7 +152,7 @@ export const routes = [
     page: loginPage,
   },
   {
-    path: '/cadastro',
+    path: loginProjetosConfig.rotas.cadastro,
     label: 'Criar conta',
     title: 'Criar conta',
     subtitle: 'Cadastro de usuário',
@@ -127,7 +161,7 @@ export const routes = [
     page: cadastroPage,
   },
   {
-    path: '/recuperar-senha',
+    path: loginProjetosConfig.rotas.recuperar,
     label: 'Recuperar senha',
     title: 'Recuperar senha',
     subtitle: 'Envio do link de redefinição',
@@ -136,7 +170,7 @@ export const routes = [
     page: recuperarSenhaPage,
   },
   {
-    path: '/redefinir-senha',
+    path: loginProjetosConfig.rotas.redefinir,
     label: 'Nova senha',
     title: 'Criar nova senha',
     subtitle: 'Definição de nova senha',

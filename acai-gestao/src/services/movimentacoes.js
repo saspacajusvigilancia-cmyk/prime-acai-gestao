@@ -1,4 +1,9 @@
 import { carregar, gravar } from './base.js'
+import {
+  dadosTesteHabilitados,
+  movimentacoesEstoqueTeste,
+  saldosEstoqueTeste,
+} from '../demo-test-data.js'
 
 /**
  * Livro-razão do estoque.
@@ -23,8 +28,11 @@ export const LOCAIS = {
   abertura: 'Abertura (saldo inicial)',
   contagem: 'Contagem física',
   fornecedor: 'Fornecedor (fora da loja)',
+  estoque_geral: 'Estoque geral',
   estoque: 'Estoque da loja',
   buffet: 'Buffet (preparo em uso)',
+  preparacao: 'Preparação',
+  producao: 'Produção',
   sobra: 'Sobra reaproveitável',
   perda: 'Perda / descarte',
   cliente: 'Cliente (venda)',
@@ -35,6 +43,16 @@ export const LOCAIS = {
  * fora de propósito: elas são contagem física, e entram por `ajustarSaldo`.
  */
 export const LOCAIS_MOVIMENTO = ['fornecedor', 'estoque', 'buffet', 'sobra', 'perda', 'cliente']
+export const LOCAIS_MOVIMENTO_LOCAL = [...LOCAIS_MOVIMENTO, 'estoque_geral']
+const LOCAIS_MOVIMENTO_PERMITIDOS = [...LOCAIS_MOVIMENTO_LOCAL, 'preparacao', 'producao']
+
+const LOCAL_ESTOQUE = {
+  estoque: 'loja',
+  estoque_geral: 'geral',
+  buffet: 'buffet',
+  preparacao: 'preparacao',
+  producao: 'producao',
+}
 
 /**
  * Atalhos do dia a dia. `origem`/`destino` são o que vai para o banco; o rótulo
@@ -42,6 +60,13 @@ export const LOCAIS_MOVIMENTO = ['fornecedor', 'estoque', 'buffet', 'sobra', 'pe
  */
 export const OPERACOES = [
   { valor: 'compra', rotulo: 'Compra — entra no estoque', origem: 'fornecedor', destino: 'estoque' },
+  { valor: 'compra_geral', rotulo: 'Entrada — estoque geral', origem: 'fornecedor', destino: 'estoque_geral' },
+  { valor: 'geral_loja', rotulo: 'Transferência — geral para loja', origem: 'estoque_geral', destino: 'estoque' },
+  { valor: 'loja_geral', rotulo: 'Transferência — loja para geral', origem: 'estoque', destino: 'estoque_geral' },
+  { valor: 'loja_buffet', rotulo: 'Transferência — loja para Buffet', origem: 'estoque', destino: 'buffet' },
+  { valor: 'buffet_loja', rotulo: 'Transferência — Buffet para loja', origem: 'buffet', destino: 'estoque' },
+  { valor: 'geral_buffet', rotulo: 'Transferência — geral para Buffet', origem: 'estoque_geral', destino: 'buffet' },
+  { valor: 'buffet_geral', rotulo: 'Transferência — Buffet para geral', origem: 'buffet', destino: 'estoque_geral' },
   { valor: 'buffet', rotulo: 'Preparo — do estoque para o buffet', origem: 'estoque', destino: 'buffet' },
   { valor: 'sobra', rotulo: 'Sobra — do buffet de volta ao estoque', origem: 'buffet', destino: 'estoque' },
   { valor: 'perda', rotulo: 'Perda — descarte', origem: 'estoque', destino: 'perda' },
@@ -60,6 +85,7 @@ export function locaisDaOperacao(valorOperacao) {
 }
 
 const optionalNumber = (valor) => (valor == null ? null : Number(valor))
+const novaChave = () => globalThis.crypto?.randomUUID?.() ?? `mov-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
 const paraMovimentacao = (linha) => ({
   uuid: linha.id,
@@ -81,12 +107,19 @@ const paraMovimentacao = (linha) => ({
  * branco, origem igual ao destino e saída maior que o saldo). Aqui só se evita
  * a viagem inútil e a mensagem técnica.
  */
-export function registrarMovimentacao({ produtoId, quantidade, origem, destino, motivo } = {}) {
+export function registrarMovimentacao({
+  produtoId,
+  quantidade,
+  origem,
+  destino,
+  motivo,
+  chaveIdempotencia,
+} = {}) {
   const texto = String(motivo ?? '').trim()
   const qtd = Number(quantidade)
 
   if (!produtoId) throw new Error('Escolha o item que vai ser movimentado.')
-  if (!LOCAIS_MOVIMENTO.includes(origem) || !LOCAIS_MOVIMENTO.includes(destino)) {
+  if (!LOCAIS_MOVIMENTO_PERMITIDOS.includes(origem) || !LOCAIS_MOVIMENTO_PERMITIDOS.includes(destino)) {
     throw new Error('Escolha a origem e o destino da movimentação.')
   }
   if (origem === destino) throw new Error('A origem e o destino precisam ser diferentes.')
@@ -97,7 +130,39 @@ export function registrarMovimentacao({ produtoId, quantidade, origem, destino, 
     nome: 'movimentação de estoque',
     registro: { produtoId, quantidade: qtd, origem, destino, motivo: texto },
     escrever: async (neon) => {
-      const { data, error } = await neon.rpc('registrar_movimentacao', {
+      if (LOCAL_ESTOQUE[origem] && LOCAL_ESTOQUE[destino]) {
+        const { data, error } = await neon.rpc('transferir_estoque_local_v2', {
+          p_produto_id: produtoId,
+          p_qtd: qtd,
+          p_origem: LOCAL_ESTOQUE[origem],
+          p_destino: LOCAL_ESTOQUE[destino],
+          p_motivo: texto,
+          p_chave_idempotencia: chaveIdempotencia || novaChave(),
+        })
+        if (error) throw error
+        const transferencia = Array.isArray(data) ? data[0] : data
+        if (!transferencia) throw new Error('O banco não confirmou a transferência. Tente novamente.')
+        const saldoDestino = LOCAL_ESTOQUE[destino] === 'geral'
+          ? transferencia.saldo_geral
+          : LOCAL_ESTOQUE[destino] === 'buffet'
+            ? transferencia.saldo_buffet
+            : transferencia.saldo_loja
+        return {
+          ...paraMovimentacao({
+            ...transferencia,
+            id: transferencia.movimentacao_id,
+            origem,
+            destino,
+            saldo: saldoDestino,
+          }),
+          saldoGeral: Number(transferencia.saldo_geral),
+          saldoLoja: Number(transferencia.saldo_loja),
+          saldoBuffet: Number(transferencia.saldo_buffet),
+          transferenciaId: transferencia.id,
+        }
+      }
+
+      const { data, error } = await neon.rpc('registrar_movimentacao_local_v2', {
         p_produto_id: produtoId,
         p_qtd: qtd,
         p_origem: origem,
@@ -109,7 +174,37 @@ export function registrarMovimentacao({ produtoId, quantidade, origem, destino, 
 
       const linha = Array.isArray(data) ? data[0] : data
       if (!linha) throw new Error('O banco não confirmou a movimentação. Tente de novo.')
-      return paraMovimentacao(linha)
+      return {
+        ...paraMovimentacao({ ...linha, saldo: linha.saldo_loja ?? linha.saldo }),
+        saldoGeral: optionalNumber(linha.saldo_geral),
+        saldoLoja: optionalNumber(linha.saldo_loja ?? linha.saldo),
+        saldoBuffet: optionalNumber(linha.saldo_buffet),
+      }
+    },
+  })
+}
+
+export function listarSaldosEstoqueLocais() {
+  return carregar({
+    nome: 'saldos por local de estoque',
+    exemplo: dadosTesteHabilitados ? saldosEstoqueTeste : [],
+    consulta: async (neon) => {
+      const { data, error } = await neon.rpc('listar_saldos_estoque_por_local')
+      if (error) throw error
+      const porProduto = new Map()
+      for (const linha of data ?? []) {
+        const saldo = porProduto.get(linha.produto_id) ?? {
+          produtoId: linha.produto_id,
+          geral: 0,
+          loja: 0,
+          buffet: 0,
+          locais: {},
+        }
+        saldo.locais[linha.local] = Number(linha.saldo)
+        if (linha.local in saldo) saldo[linha.local] = Number(linha.saldo)
+        porProduto.set(linha.produto_id, saldo)
+      }
+      return [...porProduto.values()]
     },
   })
 }
@@ -121,7 +216,13 @@ export function registrarMovimentacao({ produtoId, quantidade, origem, destino, 
  * conferido depois ("contagem"). Contar de novo o mesmo número não cria
  * movimento nenhum.
  */
-export function ajustarSaldo({ produtoId, contado, motivo, local = 'contagem' } = {}) {
+export function ajustarSaldo({
+  produtoId,
+  contado,
+  motivo,
+  local = 'contagem',
+  estoqueLocal = 'loja',
+} = {}) {
   const texto = String(motivo ?? '').trim()
   const numero = Number(contado)
 
@@ -134,13 +235,14 @@ export function ajustarSaldo({ produtoId, contado, motivo, local = 'contagem' } 
 
   return gravar({
     nome: 'ajuste de saldo',
-    registro: { produtoId, contado: numero, motivo: texto, local, saldo: numero },
+    registro: { produtoId, contado: numero, motivo: texto, local, estoqueLocal, saldo: numero },
     escrever: async (neon) => {
-      const { data, error } = await neon.rpc('ajustar_saldo', {
+      const { data, error } = await neon.rpc('ajustar_saldo_estoque_local', {
         p_produto_id: produtoId,
         p_contado: numero,
         p_motivo: texto,
-        p_local: local,
+        p_local: estoqueLocal,
+        p_tipo: local,
       })
 
       if (error) throw error
@@ -172,7 +274,11 @@ export function listarMovimentacoes(produtoId, { limite = 40 } = {}) {
 
   return carregar({
     nome: 'movimentações de estoque',
-    exemplo: [],
+    exemplo: dadosTesteHabilitados
+      ? movimentacoesEstoqueTeste
+          .filter((movimento) => !produtoId || movimento.produtoId === produtoId)
+          .slice(0, limite)
+      : [],
     consulta: async (neon) => {
       const montar = (campos) => {
         let consulta = neon.from('movimentacoes_estoque').select(campos)

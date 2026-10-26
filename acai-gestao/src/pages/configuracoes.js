@@ -44,7 +44,7 @@ import {
 import { esc, toast } from '../ui.js'
 import { permissoesPage } from './permissoes.js'
 import { usuariosPage } from './usuarios.js'
-import { configVendasPage } from './config-vendas.js'
+import { configProdutosPage, configVendasPage } from './config-vendas.js'
 
 /* ==========================================================================
    Declaração dos grupos
@@ -243,55 +243,72 @@ export function configuracoesPage() {
   return {
     html: `
       <div class="config">
-        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px">
-          <div id="btn-empresa" data-painel="empresa" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--superficie);border:1px solid var(--borda);border-radius:var(--raio);flex:1;min-width:160px">
-            <i data-lucide="building-2"></i>
-            <strong>Configuração da Empresa</strong>
-            <span style="margin-left:auto">&#9656;</span>
+        <aside class="config__secoes">
+          <p class="config__secoes-titulo">Preferências do sistema</p>
+          <nav aria-label="Seções de configurações">
+            <ul class="config__lista">
+              <li>
+                <button class="config__secao is-active" id="btn-empresa" type="button" data-painel="empresa" aria-controls="painel-empresa" aria-pressed="true">
+                  <i data-lucide="building-2"></i><span>Configuração da Empresa</span>
+                </button>
+              </li>
+              <li>
+                <button class="config__secao" id="btn-usuarios" type="button" data-painel="usuarios" aria-controls="painel-usuarios" aria-pressed="false">
+                  <i data-lucide="users"></i><span>Usuários</span>
+                </button>
+              </li>
+              <li>
+                <button class="config__secao" id="btn-permissoes" type="button" data-painel="permissoes" aria-controls="painel-permissoes" aria-pressed="false">
+                  <i data-lucide="shield-check"></i><span>Permissões</span>
+                </button>
+              </li>
+              <li>
+                <button class="config__secao" id="btn-produtos" type="button" data-painel="produtos" aria-controls="painel-produtos" aria-pressed="false">
+                  <i data-lucide="package"></i><span>Produtos</span>
+                </button>
+              </li>
+              <li>
+                <button class="config__secao" id="btn-vendas" type="button" data-painel="vendas" aria-controls="painel-vendas" aria-pressed="false">
+                  <i data-lucide="shopping-bag"></i><span>Vendas</span>
+                </button>
+              </li>
+            </ul>
+          </nav>
+          <div class="config__secoes-rodape">
+            <i data-lucide="sliders-horizontal"></i>
+            <span>Ajuste o sistema às necessidades da sua operação.</span>
           </div>
-          <div id="btn-usuarios" data-painel="usuarios" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--superficie);border:1px solid var(--borda);border-radius:var(--raio);flex:1;min-width:160px">
-            <i data-lucide="users"></i>
-            <strong>Usuários</strong>
-            <span style="margin-left:auto">&#9656;</span>
-          </div>
-          <div id="btn-permissoes" data-painel="permissoes" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--superficie);border:1px solid var(--borda);border-radius:var(--raio);flex:1;min-width:160px">
-            <i data-lucide="shield"></i>
-            <strong>Permissões</strong>
-            <span style="margin-left:auto">&#9656;</span>
-          </div>
-          <div id="btn-vendas" data-painel="vendas" style="cursor:pointer;display:flex;align-items:center;gap:8px;padding:12px 16px;background:var(--superficie);border:1px solid var(--borda);border-radius:var(--raio);flex:1;min-width:160px">
-            <i data-lucide="shopping-bag"></i>
-            <strong>Vendas</strong>
-            <span style="margin-left:auto">&#9656;</span>
-          </div>
+        </aside>
+
+        <div class="config__conteudo">
+          <section class="config__painel" id="painel-empresa" aria-labelledby="btn-empresa">
+            <form id="form-empresa" novalidate>
+              <div id="config-avisos"></div>
+
+              ${GRUPOS.map(grupoHtml).join('')}
+              ${LOGOMARCA_HTML}
+              ${grupoHtml(PREFERENCIAS)}
+
+              <p class="config__erro" id="config-erro" role="alert" hidden></p>
+
+              <div class="config__acoes" id="config-acoes">
+                <p class="config__acoes-texto" id="config-estado"></p>
+                <div class="config__botoes">
+                  <button class="btn btn--ghost" type="button" id="btn-cancelar">
+                    <i data-lucide="rotate-ccw"></i><span>Cancelar</span>
+                  </button>
+                  <button class="btn btn--primary" type="submit" id="btn-salvar">
+                    <i data-lucide="save"></i><span>Salvar alterações</span>
+                  </button>
+                </div>
+              </div>
+            </form>
+          </section>
+          <section class="config__painel" id="painel-usuarios" aria-labelledby="btn-usuarios" hidden></section>
+          <section class="config__painel" id="painel-permissoes" aria-labelledby="btn-permissoes" hidden></section>
+          <section class="config__painel" id="painel-produtos" aria-labelledby="btn-produtos" hidden></section>
+          <section class="config__painel" id="painel-vendas" aria-labelledby="btn-vendas" hidden></section>
         </div>
-
-        <div id="painel-empresa" hidden>
-        <form class="config__painel" id="form-empresa" novalidate>
-          <div id="config-avisos"></div>
-
-          ${GRUPOS.map(grupoHtml).join('')}
-          ${LOGOMARCA_HTML}
-          ${grupoHtml(PREFERENCIAS)}
-
-          <p class="config__erro" id="config-erro" role="alert" hidden></p>
-
-          <div class="config__acoes" id="config-acoes">
-            <p class="config__acoes-texto" id="config-estado"></p>
-            <div class="config__botoes">
-              <button class="btn btn--ghost" type="button" id="btn-cancelar">
-                <i data-lucide="rotate-ccw"></i><span>Cancelar</span>
-              </button>
-              <button class="btn btn--primary" type="submit" id="btn-salvar">
-                <i data-lucide="save"></i><span>Salvar alterações</span>
-              </button>
-            </div>
-          </div>
-        </form>
-        </div>
-        <div id="painel-usuarios" hidden></div>
-        <div id="painel-permissoes" hidden></div>
-        <div id="painel-vendas" hidden></div>
       </div>
     `,
 
@@ -307,11 +324,12 @@ export function configuracoesPage() {
       // Painéis (lazy: monta Usuarios/Permissoes na primeira abertura).
       const painelUsuarios = root.querySelector('#painel-usuarios')
       const painelPermissoes = root.querySelector('#painel-permissoes')
+      const painelProdutos = root.querySelector('#painel-produtos')
       const painelVendas = root.querySelector('#painel-vendas')
       const painelEmpresa = root.querySelector('#painel-empresa')
-      let pgUsuarios = null, pgPermissoes = null, pgVendas = null
-      let limparUsuarios = () => {}, limparPermissoes = () => {}, limparVendas = () => {}
-      let montadoUsuarios = false, montadoPermissoes = false, montadoVendas = false
+      let pgUsuarios = null, pgPermissoes = null, pgProdutos = null, pgVendas = null
+      let limparUsuarios = () => {}, limparPermissoes = () => {}, limparProdutos = () => {}, limparVendas = () => {}
+      let montadoUsuarios = false, montadoPermissoes = false, montadoProdutos = false, montadoVendas = false
 
       function montarUsuarios() {
         if (montadoUsuarios || !painelUsuarios) return
@@ -337,6 +355,14 @@ export function configuracoesPage() {
         renderIcons(painelVendas)
         limparVendas = pgVendas.mount(painelVendas) || (() => {})
       }
+      function montarProdutos() {
+        if (montadoProdutos || !painelProdutos) return
+        montadoProdutos = true
+        pgProdutos = configProdutosPage()
+        painelProdutos.innerHTML = pgProdutos.html
+        renderIcons(painelProdutos)
+        limparProdutos = pgProdutos.mount(painelProdutos) || (() => {})
+      }
 
       // Alterna entre os 3 paineis: so um visivel por vez.
       // Ao reabrir, recarrega os dados (senao o painel fica com dados velhos).
@@ -353,21 +379,30 @@ export function configuracoesPage() {
       function abrirVendas() {
         montarVendas()
       }
+      function abrirProdutos() {
+        montarProdutos()
+      }
       function mostrarPainel(nome) {
+        root.querySelectorAll('[data-painel]').forEach((botao) => {
+          const ativo = botao.dataset.painel === nome
+          botao.classList.toggle('is-active', ativo)
+          botao.setAttribute('aria-pressed', String(ativo))
+        })
         if (nome === 'usuarios') abrirUsuarios()
         if (nome === 'permissoes') abrirPermissoes()
+        if (nome === 'produtos') abrirProdutos()
         if (nome === 'vendas') abrirVendas()
         if (painelEmpresa) painelEmpresa.hidden = (nome !== 'empresa')
         if (painelUsuarios) painelUsuarios.hidden = (nome !== 'usuarios')
         if (painelPermissoes) painelPermissoes.hidden = (nome !== 'permissoes')
+        if (painelProdutos) painelProdutos.hidden = (nome !== 'produtos')
         if (painelVendas) painelVendas.hidden = (nome !== 'vendas')
       }
-      ;['empresa', 'usuarios', 'permissoes', 'vendas'].forEach((nome) => {
+      ;['empresa', 'usuarios', 'permissoes', 'produtos', 'vendas'].forEach((nome) => {
         const btn = root.querySelector(`#btn-${nome}`)
         if (btn) btn.addEventListener('click', () => mostrarPainel(nome))
       })
-      // Todos fechados inicialmente.
-      mostrarPainel(null)
+      mostrarPainel('empresa')
 
       // Veio de uma notificacao? Abre Usuarios ja no registro indicado.
       const alvoNotif = window.__notifAlvo
@@ -846,6 +881,7 @@ export function configuracoesPage() {
         limparPrevia()
         limparUsuarios()
         limparPermissoes()
+        limparProdutos()
         limparVendas()
       }
     },

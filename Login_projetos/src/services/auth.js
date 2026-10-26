@@ -21,8 +21,8 @@
  * botão aqui não protege nada; o que protege é a política no banco.
  */
 
-import { config } from '../config.js'
-import { neon, neonConfigurado } from '../lib/neon.js'
+import { config, funcionalidadeAuthHabilitada } from '../config.js'
+import { authConfigurado, clienteAuth } from '../lib/neon.js'
 import { checarSenha, emailValido, mensagemDeErro, rotuloPapel, senhaForte } from '../validacao.js'
 
 // As regras puras são reexportadas para o host ter um só ponto de importação.
@@ -30,10 +30,17 @@ export { checarSenha, emailValido, mensagemDeErro, rotuloPapel, senhaForte }
 
 /** Erro amigável quando o projeto ainda não configurou a conexão. */
 function exigirCliente() {
-  if (!neonConfigurado) {
+  if (!authConfigurado()) {
     throw new Error(
-      'Login indisponível: defina VITE_NEON_URL no .env do projeto (veja .env.example).',
+      'Login indisponível: configure o backend e o cliente do provedor de autenticação.',
     )
+  }
+  return clienteAuth()
+}
+
+function exigirFuncionalidade(nome) {
+  if (!funcionalidadeAuthHabilitada(nome)) {
+    throw new Error('Esta funcionalidade de autenticação está desativada.')
   }
 }
 
@@ -55,9 +62,9 @@ const perfilParaApp = (linha) => ({
  * para ler o próprio — mesmo que alguém troque o id na chamada.
  */
 export async function carregarPerfil(id) {
-  exigirCliente()
+  const cliente = exigirCliente()
 
-  const { data, error } = await neon
+  const { data, error } = await cliente
     .from(config.tabelaPerfis)
     .select('id, full_name, email, role, organization_id, is_active, aprovado_em')
     .eq('id', id)
@@ -82,17 +89,20 @@ export async function carregarPerfil(id) {
  * o cadastro de terminar com sessão mas sem perfil.
  */
 export async function garantirPerfil(tentativas = 4) {
-  exigirCliente()
+  const cliente = exigirCliente()
+  const totalTentativas = Math.max(1, Math.floor(Number(tentativas) || 1))
   let ultimoErro = null
 
-  for (let i = 0; i < tentativas; i++) {
-    try { await neon.auth.getSession() } catch { /* ignora */ }
-    const { data, error } = await neon.rpc(config.rpcPerfil)
+  for (let i = 0; i < totalTentativas; i++) {
+    const { error: erroSessao } = await cliente.auth.getSession()
+    if (erroSessao) throw erroSessao
+
+    const { data, error } = await cliente.rpc(config.rpcPerfil)
     if (!error) return data ? perfilParaApp(data) : null
 
     ultimoErro = error
     if (!erroPareceDeToken(error)) break
-    if (i < tentativas - 1) await esperar(200 + 250 * i)
+    if (i < totalTentativas - 1) await esperar(200 + 250 * i)
   }
 
   throw ultimoErro
@@ -122,9 +132,10 @@ const esperar = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
  * `authenticated`, e a tela de login recusa conta inativa).
  */
 export async function sessaoAtual() {
-  if (!neonConfigurado) return null
+  if (!authConfigurado()) return null
+  const cliente = clienteAuth()
 
-  const { data, error } = await neon.auth.getSession()
+  const { data, error } = await cliente.auth.getSession()
   if (error) throw error
 
   const usuario = data.session?.user
@@ -147,9 +158,10 @@ export async function sessaoAtual() {
 /* ------------------------------------------------------------------ ações -- */
 
 export async function entrar({ email, senha }) {
-  exigirCliente()
+  exigirFuncionalidade('login')
+  const cliente = exigirCliente()
 
-  const { data, error } = await neon.auth.signInWithPassword({
+  const { data, error } = await cliente.auth.signInWithPassword({
     email: String(email).trim(),
     password: senha,
   })
@@ -170,9 +182,10 @@ export async function entrar({ email, senha }) {
  * e a pessoa precisa confirmar o e-mail antes de entrar.
  */
 export async function criarConta({ nome, email, senha }) {
-  exigirCliente()
+  exigirFuncionalidade('cadastro')
+  const cliente = exigirCliente()
 
-  const { data, error } = await neon.auth.signUp({
+  const { data, error } = await cliente.auth.signUp({
     email: String(email).trim(),
     password: senha,
     options: {
@@ -187,16 +200,17 @@ export async function criarConta({ nome, email, senha }) {
 
 export async function sair() {
   // Sem cliente configurado não há sessão para encerrar.
-  if (!neonConfigurado) return
+  if (!authConfigurado()) return
 
-  const { error } = await neon.auth.signOut()
+  const { error } = await clienteAuth().auth.signOut()
   if (error) throw error
 }
 
 export async function enviarLinkDeRecuperacao(email) {
-  exigirCliente()
+  exigirFuncionalidade('recuperacaoSenha')
+  const cliente = exigirCliente()
 
-  const { error } = await neon.auth.resetPasswordForEmail(String(email).trim(), {
+  const { error } = await cliente.auth.resetPasswordForEmail(String(email).trim(), {
     redirectTo: urlDeRetorno(config.rotas.redefinir),
   })
 
@@ -212,9 +226,16 @@ export async function enviarLinkDeRecuperacao(email) {
  * `tokenDeRecuperacao()`.
  */
 export async function definirNovaSenha(senha, token) {
-  exigirCliente()
+  exigirFuncionalidade('redefinicaoSenha')
+  const cliente = exigirCliente()
 
-  const betterAuth = neon.auth.getBetterAuthInstance()
+  if (typeof config.provedor.redefinirSenha === 'function') {
+    const resultado = await config.provedor.redefinirSenha({ senha, token, cliente })
+    if (resultado?.error) throw resultado.error
+    return
+  }
+
+  const betterAuth = cliente.auth.getBetterAuthInstance()
   const { error } = await betterAuth.resetPassword({ newPassword: senha, token })
   if (error) throw error
 }
@@ -237,12 +258,12 @@ export function tokenDeRecuperacao() {
 
 /** Atualiza o nome do próprio perfil (a única coluna que o RLS deixa mudar). */
 export async function atualizarNome(nome) {
-  exigirCliente()
+  const cliente = exigirCliente()
 
-  const { data, error } = await neon.auth.getUser()
+  const { data, error } = await cliente.auth.getUser()
   if (error) throw error
 
-  const { data: linha, error: erroPerfil } = await neon
+  const { data: linha, error: erroPerfil } = await cliente
     .from(config.tabelaPerfis)
     .update({ full_name: String(nome).trim() })
     .eq('id', data.user.id)
@@ -258,9 +279,9 @@ export async function atualizarNome(nome) {
  * expirado). O host usa isso para redirecionar sozinho.
  */
 export function observarAuth(callback) {
-  if (!neonConfigurado) return () => {}
+  if (!authConfigurado()) return () => {}
 
-  const { data } = neon.auth.onAuthStateChange((evento, sessao) => callback(evento, sessao))
+  const { data } = clienteAuth().auth.onAuthStateChange((evento, sessao) => callback(evento, sessao))
   return () => data.subscription.unsubscribe()
 }
 
@@ -274,6 +295,11 @@ export function observarAuth(callback) {
  * `?token=...` no fim, e `tokenDeRecuperacao()` o encontra.
  */
 function urlDeRetorno(rota) {
-  const { origin, pathname } = window.location
-  return `${origin}${pathname}#${rota}`
+  const base = new URL(config.urlAplicacao || window.location.href, window.location.origin)
+  if (!['http:', 'https:'].includes(base.protocol)) {
+    throw new Error('A URL pública do aplicativo precisa usar HTTP ou HTTPS.')
+  }
+  base.search = ''
+  base.hash = rota
+  return base.toString()
 }

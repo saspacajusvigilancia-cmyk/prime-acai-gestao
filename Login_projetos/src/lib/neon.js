@@ -1,4 +1,5 @@
 import { createClient, SupabaseAuthAdapter } from '@neondatabase/neon-js'
+import { config } from '../config.js'
 
 /**
  * Cliente do Neon no navegador.
@@ -45,6 +46,16 @@ export const neon = neonConfigurado
       },
     })
   : null
+
+/** Retorna o cliente configurado pelo host ou o cliente Neon padrão. */
+export function clienteAuth() {
+  return config.provedor.cliente ?? neon
+}
+
+/** Informa se há um cliente disponível para operações de autenticação. */
+export function authConfigurado() {
+  return Boolean(clienteAuth())
+}
 
 if (!neonConfigurado) {
   console.info(

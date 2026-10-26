@@ -11,7 +11,9 @@ import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
 
 import { configurarLogin } from 'login-projetos'
 import { loginProjetosConfig } from '../src/login-config.js'
+import { createRouter } from '../src/router.js'
 import { routes } from '../src/routes.js'
+import { renderShell } from '../src/layout/shell.js'
 
 beforeAll(() => {
   // É exatamente o que o `main.js` faz no boot do app.
@@ -35,6 +37,27 @@ beforeEach(() => {
 })
 
 describe('o app registra as telas do pacote', () => {
+  it('separa Cadastros no menu e mantém Clientes, Fornecedores e Produtos nessa ordem', () => {
+    const html = renderShell(routes)
+    const caminhos = [...html.matchAll(/data-route="([^"]+)"/g)].map(([, caminho]) => caminho)
+    const rotulos = caminhos.map((caminho) => rota(caminho).label)
+
+    expect(rotulos).toEqual([
+      'Dashboard',
+      'Vendas',
+      'Estoque',
+      'Estoque Buffet',
+      'Compras',
+      'Clientes',
+      'Fornecedores',
+      'Produtos',
+      'Financeiro',
+    ])
+    expect(routes.find((r) => r.path === '/clientes').group).toBe('Cadastros')
+    expect(routes.find((r) => r.path === '/fornecedores').group).toBe('Cadastros')
+    expect(routes.find((r) => r.path === '/produtos').group).toBe('Cadastros')
+  })
+
   it('as quatro telas de autenticação estão registradas como públicas', () => {
     for (const caminho of ['/login', '/cadastro', '/recuperar-senha', '/redefinir-senha']) {
       const r = rota(caminho)
@@ -47,6 +70,12 @@ describe('o app registra as telas do pacote', () => {
   it('a redefinição de senha continua permitida COM sessão (link do e-mail)', () => {
     // Sem esta exceção o guarda expulsaria quem chega logado pelo link.
     expect(rota('/redefinir-senha').permiteLogado).toBe(true)
+  })
+
+  it('reconhece a rota de redefinição quando o link contém o token na query', () => {
+    const router = createRouter({ routes, raiz: document.body, shells: {} })
+
+    expect(router.match('/redefinir-senha?token=token-de-teste')).toBe(rota('/redefinir-senha'))
   })
 })
 

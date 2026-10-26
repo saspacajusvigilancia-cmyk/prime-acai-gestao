@@ -29,6 +29,18 @@ export const loginProjetosConfig = {
     recuperar: '/recuperar-senha',
     redefinir: '/redefinir-senha',
     depoisDoLogin: '/',
+    depoisDoLogout: '/login',
+  },
+
+  funcionalidades: {
+    login: true,
+    cadastro: true,
+    recuperacaoSenha: true,
+    redefinicaoSenha: true,
+  },
+
+  provedor: {
+    nome: 'neon',
   },
 
   textos: {

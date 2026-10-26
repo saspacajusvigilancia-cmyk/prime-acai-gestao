@@ -1,6 +1,12 @@
 import { produtos as produtosExemplo } from '../data.js'
 import { confirmar, paraNumero } from '../formulario.js'
 import { renderIcons } from '../icons.js'
+import {
+  ativarCamposMonetarios,
+  centavosParaReais,
+  formatarEntradaMoeda,
+  paraCentavos,
+} from '../numeros.js'
 import { ajustarSaldo } from '../services/movimentacoes.js'
 import { listarCategorias } from '../services/categorias.js'
 import { pode } from '../services/permissoes.js'
@@ -11,17 +17,21 @@ import {
   validarImagemProduto,
 } from '../services/imagens-produtos.js'
 import {
+  LOCAIS_ESTOQUE_ORIGEM,
   METODOS_ESTOQUE,
+  REGRAS_BAIXA_ESTOQUE,
+  TIPOS_PRODUTO,
   TIPOS_VENDA,
+  CODIGO_PRODUTO_DUPLICADO,
   atualizarProduto,
   criarProduto,
   listarProdutos,
   normalizarProduto,
-  proximoCodigoProduto,
   salvarProdutoComImagem,
+  sugerirCodigoProduto,
   unidadeDeVenda,
 } from '../services/produtos.js'
-import { badge, esc, formatBRL, formatNumero, tabela, toast } from '../ui.js'
+import { badge, entradaMoeda, esc, formatBRL, formatNumero, tabela, toast } from '../ui.js'
 
 const METODOS_PESO = [
   { valor: 'bruto_tara', rotulo: 'Peso bruto (descontar a tara)' },
@@ -45,6 +55,11 @@ const formatarProduto = (produto) => ({
   unidade: produto.unidade,
   controlaEstoque: produto.controlaEstoque ? 'true' : 'false',
   metodoEstoque: produto.metodoEstoque,
+  tipoProduto: produto.tipoProduto ?? 'outro',
+  regraBaixaEstoque: produto.regraBaixaEstoque ?? (produto.controlaEstoque ? 'legada' : 'nenhuma'),
+  localEstoqueOrigem: produto.localEstoqueOrigem ?? 'estoque',
+  permitirEstoqueNegativo: produto.permitirEstoqueNegativo ? 'true' : 'false',
+  permiteRetornoBuffet: produto.permiteRetornoBuffet ? 'true' : 'false',
   minimo: produto.minimo,
   custo: produto.custo,
   ativo: produto.ativo ? 'true' : 'false',
@@ -63,17 +78,30 @@ function opcoesHtml(opcoes, selecionado) {
     .join('')
 }
 
-function campo({ nome, label, valor = '', tipo = 'text', opcoes, ajuda = '', obrigatorio = false, largo = false }) {
+function campo({
+  nome,
+  label,
+  valor = '',
+  tipo = 'text',
+  opcoes,
+  ajuda = '',
+  obrigatorio = false,
+  largo = false,
+  erroId = '',
+}) {
   const id = `produto-${nome}`
   const control = opcoes
     ? `<select id="${id}" name="${nome}" class="campo__input"${obrigatorio ? ' required' : ''}><option value="">Selecione...</option>${opcoesHtml(opcoes, valor)}</select>`
     : tipo === 'textarea'
       ? `<textarea id="${id}" name="${nome}" class="campo__input" rows="3"${obrigatorio ? ' required' : ''}>${esc(valor)}</textarea>`
-      : `<input id="${id}" name="${nome}" class="campo__input" type="${tipo}" value="${esc(valor)}"${tipo === 'number' ? ' min="0" step="0.01" inputmode="decimal"' : ''}${obrigatorio ? ' required' : ''} />`
+      : tipo === 'moeda'
+        ? entradaMoeda({ id, name: nome, value: valor, required: obrigatorio })
+        : `<input id="${id}" name="${nome}" class="campo__input" type="${tipo}" value="${esc(valor)}"${tipo === 'number' ? ' min="0" step="0.01" inputmode="decimal"' : ''}${obrigatorio ? ' required' : ''} />`
   return `<div class="campo${largo ? ' campo--largo' : ''}">
     <label class="campo__label" for="${id}">${esc(label)}${obrigatorio ? ' <span class="campo__req">*</span>' : ''}</label>
     ${control}
     ${ajuda ? `<p class="campo__ajuda">${esc(ajuda)}</p>` : ''}
+    ${erroId ? `<p class="campo__erro" id="${esc(erroId)}" role="alert" hidden></p>` : ''}
   </div>`
 }
 
@@ -170,7 +198,7 @@ export function produtosPage() {
             <section class="produtos__secao" aria-labelledby="produto-geral-titulo">
               <div class="produtos__secao-head"><span class="produtos__secao-icone"><i data-lucide="align-left"></i></span><div><h3 id="produto-geral-titulo">Informações gerais</h3><p>Identificação e descrição do item.</p></div></div>
               <div class="produtos__campos">
-                ${campo({ nome: 'codigo', label: 'Código / SKU', obrigatorio: true })}
+                ${campo({ nome: 'codigo', label: 'Código / SKU', obrigatorio: true, erroId: 'produto-codigo-erro' })}
                 ${campo({ nome: 'nome', label: 'Nome do produto', obrigatorio: true })}
                 ${campo({ nome: 'descricao', label: 'Descrição', tipo: 'textarea', largo: true })}
               </div>
@@ -190,19 +218,20 @@ export function produtosPage() {
               </div>
             </section>
             <section class="produtos__secao" aria-labelledby="produto-classificacao-titulo">
-              <div class="produtos__secao-head"><span class="produtos__secao-icone"><i data-lucide="tags"></i></span><div><h3 id="produto-classificacao-titulo">Categoria e classificação</h3><p>Defina como o item será vendido no PDV.</p></div></div>
+              <div class="produtos__secao-head"><span class="produtos__secao-icone"><i data-lucide="tags"></i></span><div><h3 id="produto-classificacao-titulo">Categoria e classificação</h3><p>Defina como o item será vendido no PDV e sua função no estoque.</p></div></div>
               <div class="produtos__campos">
                 ${campo({ nome: 'categoria', label: 'Categoria', opcoes: [], obrigatorio: true, ajuda: 'Selecione uma categoria ativa. Gerencie categorias em Configurações → Produtos.' })}
                 ${campo({ nome: 'tipoVenda', label: 'Tipo de venda', opcoes: Object.entries(TIPOS_VENDA).map(([valor, rotulo]) => ({ valor, rotulo })) })}
                 ${campo({ nome: 'metodoPeso', label: 'Entrada do peso', opcoes: METODOS_PESO, ajuda: 'Produtos por peso usam o preço por kg e preservam o cálculo de tara.' })}
+                ${campo({ nome: 'tipoProduto', label: 'Tipo de produto', opcoes: Object.entries(TIPOS_PRODUTO).map(([valor, rotulo]) => ({ valor, rotulo })) })}
               </div>
             </section>
             <section class="produtos__secao" aria-labelledby="produto-preco-titulo">
               <div class="produtos__secao-head"><span class="produtos__secao-icone"><i data-lucide="circle-dollar-sign"></i></span><div><h3 id="produto-preco-titulo">Preços e unidades</h3><p>O preço por kg não é confundido com o total calculado da venda.</p></div></div>
               <div class="produtos__campos">
-                ${campo({ nome: 'preco', label: 'Preço de venda', tipo: 'number', obrigatorio: true })}
+                ${campo({ nome: 'preco', label: 'Preço de venda', tipo: 'moeda', obrigatorio: true, ajuda: 'Digite o valor normalmente; use vírgula para os centavos.' })}
                 ${campo({ nome: 'unidade', label: 'Unidade de estoque', opcoes: ['un', 'kg', 'g', 'L', 'ml', 'porção'].map((valor) => ({ valor, rotulo: valor.toLocaleUpperCase('pt-BR') })) })}
-                ${campo({ nome: 'custo', label: 'Custo', tipo: 'number' })}
+                ${campo({ nome: 'custo', label: 'Preço de custo', tipo: 'moeda', ajuda: 'Digite o valor normalmente; use vírgula para os centavos.' })}
               </div>
             </section>
             <section class="produtos__secao" aria-labelledby="produto-estoque-titulo">
@@ -211,6 +240,10 @@ export function produtosPage() {
                 ${campo({ nome: 'controlaEstoque', label: 'Controlar estoque', opcoes: [{ valor: 'true', rotulo: 'Sim' }, { valor: 'false', rotulo: 'Não' }] })}
                 ${campo({ nome: 'metodoEstoque', label: 'Método de controle', opcoes: Object.entries(METODOS_ESTOQUE).map(([valor, rotulo]) => ({ valor, rotulo })) })}
                 ${campo({ nome: 'minimo', label: 'Estoque mínimo', tipo: 'number' })}
+                ${campo({ nome: 'regraBaixaEstoque', label: 'Regra de baixa', opcoes: Object.entries(REGRAS_BAIXA_ESTOQUE).map(([valor, rotulo]) => ({ valor, rotulo })), ajuda: 'A baixa automática acontece somente após a confirmação da venda.' })}
+                ${campo({ nome: 'localEstoqueOrigem', label: 'Local de origem', opcoes: Object.entries(LOCAIS_ESTOQUE_ORIGEM).map(([valor, rotulo]) => ({ valor, rotulo })) })}
+                ${campo({ nome: 'permitirEstoqueNegativo', label: 'Permitir saldo negativo', opcoes: [{ valor: 'false', rotulo: 'Não' }, { valor: 'true', rotulo: 'Sim' }], ajuda: 'Para venda direta automática, o saldo negativo é sempre bloqueado.' })}
+                ${campo({ nome: 'permiteRetornoBuffet', label: 'Autorizar retorno do Buffet', opcoes: [{ valor: 'false', rotulo: 'Não' }, { valor: 'true', rotulo: 'Sim' }], ajuda: 'Somente produtos de Buffet ou insumos podem retornar ao Estoque Normal.' })}
                 ${campo({ nome: 'quantidade', label: 'Saldo inicial', tipo: 'number', ajuda: 'Em novo cadastro, o saldo inicial é lançado como contagem de abertura.' })}
               </div>
             </section>
@@ -228,6 +261,7 @@ export function produtosPage() {
     `,
 
     mount(root) {
+      ativarCamposMonetarios(root)
       let itens = produtosExemplo
       let categoriasAtivas = []
       let categoriasDisponiveis = false
@@ -258,6 +292,8 @@ export function produtosPage() {
       const erroLista = root.querySelector('#produtos-erro')
       const formErro = root.querySelector('#produto-form-erro')
       const form = root.querySelector('#produto-form')
+      const codigoInput = form.elements.namedItem('codigo')
+      const codigoErro = root.querySelector('#produto-codigo-erro')
       const fileInput = root.querySelector('#produto-imagem-arquivo')
       const imagePreview = root.querySelector('#produto-imagem-preview')
       const imageError = root.querySelector('#produto-imagem-erro')
@@ -279,6 +315,31 @@ export function produtosPage() {
           ? `<img src="${esc(url)}" alt="${esc(alt)}" />`
           : `${ICONE_PADRAO}<span>Sem imagem cadastrada</span>`
         renderIcons(imagePreview)
+      }
+
+      function limparErroCodigo() {
+        codigoInput.classList.remove('is-erro')
+        codigoInput.removeAttribute('aria-invalid')
+        codigoInput.removeAttribute('aria-describedby')
+        codigoErro.hidden = true
+        codigoErro.textContent = ''
+      }
+
+      async function mostrarCodigoDuplicado() {
+        codigoInput.classList.add('is-erro')
+        codigoInput.setAttribute('aria-invalid', 'true')
+        codigoInput.setAttribute('aria-describedby', codigoErro.id)
+        codigoErro.textContent = 'Este código já está cadastrado. Escolha outro código.'
+        codigoErro.hidden = false
+
+        const corrigir = await confirmar({
+          titulo: 'Código de produto já cadastrado',
+          descricao: 'Este código já está sendo utilizado por outro produto. Informe um código diferente para continuar.',
+          textoBotao: 'Corrigir código',
+        })
+
+        codigoInput.focus()
+        if (corrigir && typeof codigoInput.select === 'function') codigoInput.select()
       }
 
       function avisoImagem(mensagem = '') {
@@ -456,7 +517,7 @@ export function produtosPage() {
 
       function campoValor(nome, valor) {
         const alvo = form.elements.namedItem(nome)
-        if (alvo) alvo.value = valor ?? ''
+        if (alvo) alvo.value = alvo.hasAttribute('data-moeda') ? formatarEntradaMoeda(valor) : valor ?? ''
       }
 
       function definirTipoVenda() {
@@ -476,17 +537,23 @@ export function produtosPage() {
         avisoImagem()
         formErro.hidden = true
         form.reset()
+        limparErroCodigo()
         root.querySelector('#produto-editor-titulo').textContent = produto ? `Editar ${produto.nome}` : 'Novo produto'
         root.querySelector('#produto-editor-desc').textContent = produto
           ? 'Atualize o cadastro comercial. O saldo continua sendo controlado pelas movimentações.'
           : 'Preencha os dados comerciais e de estoque do novo item.'
         const valores = produto ? formatarProduto(produto) : {
-          codigo: proximoCodigoProduto(itens),
+          codigo: await sugerirCodigoProduto(itens),
           nome: '',
           descricao: '',
           categoria: '',
           tipoVenda: 'unidade',
           metodoPeso: 'bruto_tara',
+          tipoProduto: 'outro',
+          regraBaixaEstoque: 'legada',
+          localEstoqueOrigem: 'estoque',
+          permitirEstoqueNegativo: 'false',
+          permiteRetornoBuffet: 'false',
           preco: '0',
           unidade: 'un',
           controlaEstoque: 'true',
@@ -570,12 +637,17 @@ export function produtosPage() {
           categoria: get('categoria'),
           tipoVenda: get('tipoVenda'),
           metodoPeso: get('metodoPeso'),
-          preco: paraNumero(get('preco')),
+          preco: centavosParaReais(paraCentavos(get('preco'))),
           unidade: get('unidade'),
           controlaEstoque: get('controlaEstoque'),
           metodoEstoque: get('metodoEstoque'),
+          tipoProduto: get('tipoProduto'),
+          regraBaixaEstoque: get('regraBaixaEstoque'),
+          localEstoqueOrigem: get('localEstoqueOrigem'),
+          permitirEstoqueNegativo: get('permitirEstoqueNegativo'),
+          permiteRetornoBuffet: get('permiteRetornoBuffet'),
           minimo: paraNumero(get('minimo')),
-          custo: paraNumero(get('custo')),
+          custo: centavosParaReais(paraCentavos(get('custo') || '0')),
           ativo: get('ativo'),
           quantidade: paraNumero(get('quantidade')),
         }
@@ -636,8 +708,12 @@ export function produtosPage() {
           toast(mensagem)
         } catch (erro) {
           console.error('[produtos] Não foi possível salvar o cadastro.', erro)
-          formErro.textContent = erro?.message ?? 'Não foi possível salvar o produto.'
-          formErro.hidden = false
+          if (erro?.code === CODIGO_PRODUTO_DUPLICADO) {
+            await mostrarCodigoDuplicado()
+          } else {
+            formErro.textContent = erro?.message ?? 'Não foi possível salvar o produto.'
+            formErro.hidden = false
+          }
         } finally {
           botaoSalvar.disabled = false
           botaoSalvar.innerHTML = textoBotao
@@ -715,9 +791,14 @@ export function produtosPage() {
       })
 
       form.elements.namedItem('tipoVenda').addEventListener('change', definirTipoVenda)
+      codigoInput.addEventListener('input', limparErroCodigo)
       form.addEventListener('submit', salvar)
       root.addEventListener('error', imagemQuebrou, true)
-      root.querySelector('#produto-novo')?.addEventListener('click', () => abrirEditor())
+      root.querySelector('#produto-novo')?.addEventListener('click', () => {
+        abrirEditor().catch((erro) => {
+          toast(erro?.message ?? 'Não foi possível abrir o cadastro de produto.')
+        })
+      })
       root.querySelectorAll('[data-voltar-lista]').forEach((botao) => botao.addEventListener('click', voltarLista))
       busca.addEventListener('input', () => { pagina = 0; renderProdutos() })
       ;[filtroCategoria, filtroTipo, filtroStatus].forEach((filtro) =>

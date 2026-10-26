@@ -1,6 +1,7 @@
 import { produtos as exemplo } from '../data.js'
 import { METODOS_PESO, METODOS_PESO_ATIVOS } from '../peso.js'
-import { carregar, gravar, paraBooleano } from './base.js'
+import { carregar, gravar, neon, neonConfigurado, paraBooleano } from './base.js'
+import { prepararImagemProduto } from './imagens-produtos.js'
 
 /**
  * Cadastro de produtos e insumos.
@@ -52,6 +53,28 @@ export const METODOS_ESTOQUE = {
   nenhum: 'Sem controle de estoque',
 }
 
+export const TIPOS_PRODUTO = {
+  venda_direta: 'Venda direta ao cliente',
+  buffet: 'Buffet',
+  insumo: 'Insumo',
+  embalagem: 'Embalagem',
+  outro: 'Outro',
+}
+
+export const REGRAS_BAIXA_ESTOQUE = {
+  venda_confirmada: 'Automática na venda confirmada',
+  manual: 'Manual',
+  fechamento_buffet: 'No fechamento do buffet',
+  nenhuma: 'Sem baixa automática',
+  legada: 'Manter comportamento atual',
+}
+
+export const LOCAIS_ESTOQUE_ORIGEM = {
+  estoque: 'Estoque Normal',
+  estoque_geral: 'Estoque Geral',
+  buffet: 'Estoque Buffet',
+}
+
 /** Rótulo curto da unidade de venda, para a tabela do Estoque. */
 export const precoComUnidade = (produto) =>
   produto.tipoVenda === 'unidade' ? null : unidadeDeVenda(produto.tipoVenda)
@@ -72,6 +95,11 @@ const CAMPOS = [
   'controla_estoque',
   'metodo_estoque',
   'metodo_peso',
+  'tipo_produto',
+  'regra_baixa_estoque',
+  'local_estoque_origem',
+  'permitir_estoque_negativo',
+  'permite_retorno_buffet',
 ].join(', ')
 
 /**
@@ -94,6 +122,11 @@ const paraApp = (linha) => ({
   metodoPeso: linha.metodo_peso,
   controlaEstoque: linha.controla_estoque,
   metodoEstoque: linha.metodo_estoque,
+  tipoProduto: linha.tipo_produto ?? 'outro',
+  regraBaixaEstoque: linha.regra_baixa_estoque ?? 'legada',
+  localEstoqueOrigem: linha.local_estoque_origem ?? 'estoque',
+  permitirEstoqueNegativo: linha.permitir_estoque_negativo ?? false,
+  permiteRetornoBuffet: linha.permite_retorno_buffet ?? false,
   ativo: linha.ativo,
 })
 
@@ -129,6 +162,31 @@ export function proximoCodigoProduto(lista) {
   return `P${String(maior + 1).padStart(3, '0')}`
 }
 
+/** Reserva no banco uma sugestão global, sem colisões entre formulários simultâneos. */
+export async function sugerirCodigoProduto(lista) {
+  if (!neonConfigurado) return proximoCodigoProduto(lista)
+
+  try {
+    const { data, error } = await neon.rpc('proximo_codigo_produto')
+    if (error) throw error
+    if (typeof data === 'string' && /^P\d+$/.test(data)) return data
+
+    throw new Error('resposta inesperada ao reservar código')
+  } catch (erro) {
+    console.error('[produtos] Não foi possível reservar um código.', {
+      code: erro?.code,
+    })
+
+    if (/failed to fetch|networkerror|network request failed|fetch failed|ECONN|ETIMEDOUT/i.test(
+      `${erro?.code ?? ''} ${erro?.message ?? ''}`,
+    )) {
+      throw new Error('Não foi possível conectar ao sistema para gerar o código. Verifique sua conexão e tente novamente.')
+    }
+
+    throw new Error('Não foi possível gerar um código de produto. Atualize o sistema e tente novamente.')
+  }
+}
+
 /* ------------------------------------------------------------ normalizar -- */
 
 const numero = (valor) => {
@@ -159,6 +217,17 @@ export function normalizarProduto(valores = {}) {
       : null
 
   const controlaEstoque = paraBooleano(valores.controlaEstoque, true)
+  const tipoProduto = TIPOS_PRODUTO[valores.tipoProduto] ? valores.tipoProduto : 'outro'
+  const regraBaixaEstoque = REGRAS_BAIXA_ESTOQUE[valores.regraBaixaEstoque]
+    ? valores.regraBaixaEstoque
+    : controlaEstoque
+      ? 'legada'
+      : 'nenhuma'
+  const localEstoqueOrigem = LOCAIS_ESTOQUE_ORIGEM[valores.localEstoqueOrigem]
+    ? valores.localEstoqueOrigem
+    : 'estoque'
+  const permitirEstoqueNegativo = paraBooleano(valores.permitirEstoqueNegativo, false)
+  const permiteRetornoBuffet = paraBooleano(valores.permiteRetornoBuffet, false)
 
   const registro = {
     codigo: String(valores.codigo ?? '').trim().toUpperCase(),
@@ -176,6 +245,11 @@ export function normalizarProduto(valores = {}) {
       : METODOS_ESTOQUE[valores.metodoEstoque]
         ? valores.metodoEstoque
         : 'movimentacoes',
+    tipo_produto: tipoProduto,
+    regra_baixa_estoque: regraBaixaEstoque,
+    local_estoque_origem: localEstoqueOrigem,
+    permitir_estoque_negativo: permitirEstoqueNegativo,
+    permite_retorno_buffet: permiteRetornoBuffet,
     minimo: numero(valores.minimo),
     custo: numero(valores.custo),
     preco: numero(valores.preco),
@@ -188,6 +262,30 @@ export function normalizarProduto(valores = {}) {
   if (registro.preco < 0) throw new Error('O preço de venda não pode ser negativo.')
   if (registro.custo < 0) throw new Error('O custo não pode ser negativo.')
   if (registro.minimo < 0) throw new Error('O ponto de reposição não pode ser negativo.')
+  if (permiteRetornoBuffet && !['buffet', 'insumo'].includes(tipoProduto)) {
+    throw new Error('Somente produtos de Buffet ou insumos podem ser autorizados para retorno.')
+  }
+  if (regraBaixaEstoque === 'venda_confirmada') {
+    if (tipoProduto !== 'venda_direta') {
+      throw new Error('A baixa automática na venda só pode ser configurada para venda direta.')
+    }
+    if (!controlaEstoque || registro.metodo_estoque !== 'movimentacoes') {
+      throw new Error('A baixa automática exige controle de estoque por movimentações.')
+    }
+    if (!['estoque', 'estoque_geral'].includes(localEstoqueOrigem)) {
+      throw new Error('A venda direta não pode baixar o Estoque Buffet.')
+    }
+    if (permitirEstoqueNegativo) {
+      throw new Error('A baixa automática de venda direta não permite saldo negativo.')
+    }
+    if (
+      (tipoVenda === 'unidade' && registro.unidade !== 'un') ||
+      (tipoVenda === 'peso' && registro.unidade !== 'kg') ||
+      tipoVenda === 'receita'
+    ) {
+      throw new Error('A unidade de venda não é compatível com a unidade de estoque.')
+    }
+  }
 
   return registro
 }
@@ -209,8 +307,68 @@ const comoApp = (registro, quantidade) => ({
   metodoPeso: registro.metodo_peso,
   controlaEstoque: registro.controla_estoque,
   metodoEstoque: registro.metodo_estoque,
+  tipoProduto: registro.tipo_produto,
+  regraBaixaEstoque: registro.regra_baixa_estoque,
+  localEstoqueOrigem: registro.local_estoque_origem,
+  permitirEstoqueNegativo: registro.permitir_estoque_negativo,
+  permiteRetornoBuffet: registro.permite_retorno_buffet,
   ativo: registro.ativo,
 })
+
+export const CODIGO_PRODUTO_DUPLICADO = 'PRODUCT_CODE_DUPLICATE'
+
+function erroCodigoDuplicado() {
+  const erro = new Error('Este código já está sendo utilizado por outro produto.')
+  erro.code = CODIGO_PRODUTO_DUPLICADO
+  return erro
+}
+
+function erroGravacaoProduto(erro) {
+  const constraint = erro?.constraint ?? erro?.constraint_name
+  const contexto = [erro?.code, erro?.message, erro?.details, erro?.hint].filter(Boolean).join(' ')
+  const violacaoCodigo =
+    constraint === 'produtos_codigo_key' ||
+    (!constraint && /unique constraint ["']produtos_codigo_key["']/i.test(contexto))
+
+  console.error('[produtos] Erro ao salvar no banco.', {
+    code: erro?.code,
+    constraint: constraint ?? null,
+  })
+
+  if (erro?.code === '23505' && violacaoCodigo) {
+    return erroCodigoDuplicado()
+  }
+
+  if (
+    ['42703', 'PGRST204'].includes(erro?.code) &&
+    /local_estoque_origem/i.test(contexto)
+  ) {
+    return new Error('O sistema precisa de uma atualização para salvar este produto. Fale com o suporte.')
+  }
+
+  if (erro?.code === '42501' || /permission denied|row-level security/i.test(contexto)) {
+    return new Error('Você não tem permissão para salvar este produto.')
+  }
+
+  if (/failed to fetch|networkerror|network request failed|fetch failed|ECONN|ETIMEDOUT/i.test(contexto)) {
+    return new Error('Não foi possível conectar ao sistema. Verifique sua conexão e tente novamente.')
+  }
+
+  return new Error('Não foi possível salvar o produto. Tente novamente. Se o problema continuar, fale com o suporte.')
+}
+
+async function verificarCodigoDisponivel(neon, codigo, uuid = null) {
+  let consulta = neon
+    .from('produtos')
+    .select('id')
+    .eq('codigo', codigo)
+
+  if (uuid) consulta = consulta.neq('id', uuid)
+
+  const { data, error } = await consulta.limit(1)
+  if (error) throw erroGravacaoProduto(error)
+  if (data?.length) throw erroCodigoDuplicado()
+}
 
 /* --------------------------------------------------------------- escrever -- */
 
@@ -227,13 +385,14 @@ export function criarProduto(valores) {
     // Sem Neon a linha vive só em memória: já precisa no formato da tela.
     registro: comoApp(registro, 0),
     escrever: async (neon) => {
+      await verificarCodigoDisponivel(neon, registro.codigo)
       const { data, error } = await neon
         .from('produtos')
         .insert({ ...registro, quantidade: 0 })
         .select(CAMPOS)
         .single()
 
-      if (error) throw error
+      if (error) throw erroGravacaoProduto(error)
       return paraApp(data)
     },
   })
@@ -253,6 +412,7 @@ export function atualizarProduto(uuid, valores) {
     nome: 'produto',
     registro: { ...comoApp(registro, Math.max(0, numero(valores.quantidade))), uuid },
     escrever: async (neon) => {
+      await verificarCodigoDisponivel(neon, registro.codigo, uuid)
       const { data, error } = await neon
         .from('produtos')
         .update(registro)
@@ -260,8 +420,39 @@ export function atualizarProduto(uuid, valores) {
         .select(CAMPOS)
         .single()
 
-      if (error) throw error
+      if (error) throw erroGravacaoProduto(error)
       return paraApp(data)
     },
   })
+}
+
+/**
+ * Grava produto e imagem na mesma transação do banco.
+ *
+ * A RPC deixa preço, cadastro e foto atômicos; a quantidade existente nunca é
+ * atualizada aqui, pois o saldo continua sendo responsabilidade do livro-razão.
+ */
+export async function salvarProdutoComImagem(uuid, valores, { arquivo = null, remover = false } = {}) {
+  if (!neonConfigurado) throw new Error('Configure o Neon antes de salvar uma foto de produto.')
+  if (!arquivo && !remover) throw new Error('Selecione uma imagem ou solicite sua remoção.')
+
+  const registro = normalizarProduto(valores)
+  const imagem = arquivo ? await prepararImagemProduto(arquivo) : null
+  const produto = uuid ? { ...registro, id: uuid } : registro
+
+  await verificarCodigoDisponivel(neon, registro.codigo, uuid)
+
+  const { data, error } = await neon.rpc('salvar_produto_com_imagem', {
+    p_produto: produto,
+    p_mime: imagem?.mime ?? null,
+    p_conteudo: imagem?.hexadecimal ?? null,
+    p_remover_imagem: remover,
+  })
+
+  if (error) throw erroGravacaoProduto(error)
+
+  const linha = Array.isArray(data) ? data[0] : data
+  if (!linha?.id) throw new Error('O banco não confirmou o salvamento do produto com a imagem.')
+
+  return { dados: paraApp(linha), origem: 'neon' }
 }

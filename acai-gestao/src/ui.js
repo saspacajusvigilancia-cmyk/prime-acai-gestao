@@ -4,6 +4,7 @@
  */
 
 import { renderIcons } from './icons.js'
+import { formatarEntradaMoeda } from './numeros.js'
 
 const brl = new Intl.NumberFormat('pt-BR', {
   style: 'currency',
@@ -20,6 +21,17 @@ const dateShort = new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-d
 export const formatBRL = (valor) => brl.format(valor)
 
 export const formatNumero = (valor) => new Intl.NumberFormat('pt-BR').format(valor)
+
+export function entradaMoeda({
+  id,
+  name = id,
+  value = '',
+  required = false,
+  placeholder = '0,00',
+  prefixo = 'R$',
+}) {
+  return `<div class="campo__grupo"><span class="campo__prefixo">${esc(prefixo)}</span><input id="${esc(id)}" name="${esc(name)}" class="campo__input" type="text" inputmode="decimal" data-moeda value="${esc(formatarEntradaMoeda(value))}" placeholder="${esc(placeholder)}" autocomplete="off"${required ? ' required' : ''} /></div>`
+}
 
 /** Aceita 'AAAA-MM-DD' e devolve 'DD/MM' sem sofrer com fuso horário. */
 export const formatData = (iso) => dateShort.format(new Date(`${iso}T00:00:00`))
@@ -116,7 +128,7 @@ export function cardHead({ titulo, descricao = '', acoes = '' }) {
   return `
     <div class="card__head">
       <div>
-        <h2 class="card__title">${esc(titulo)}</h2>
+        ${titulo ? `<h2 class="card__title">${esc(titulo)}</h2>` : ''}
         ${descricao ? `<p class="card__desc">${esc(descricao)}</p>` : ''}
       </div>
       ${acoes ? `<div class="card__actions">${acoes}</div>` : ''}
@@ -167,6 +179,24 @@ export function toast(mensagem) {
 
   setTimeout(() => el.classList.add('is-out'), 2400)
   setTimeout(() => el.remove(), 2900)
+}
+
+/**
+ * Baixa um arquivo de texto (CSV) no navegador.
+ *
+ * O conteúdo já vem pronto — com BOM e ponto e vírgula — para o Excel
+ * brasileiro abrir as colunas e os acentos corretamente.
+ */
+export function baixarCsv(nome, conteudo) {
+  const blob = new Blob([conteudo], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = nome
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  URL.revokeObjectURL(url)
 }
 
 /**
