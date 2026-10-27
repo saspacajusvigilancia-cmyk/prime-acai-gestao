@@ -5,9 +5,10 @@
 -- que as políticas voltam ao formato anterior (permissão apenas), que é
 -- exatamente o estado deixado pelas migrações 08 e 17.
 --
--- As permissões de execução revogadas pela 29 não são devolvidas: os caminhos
--- antigos de escrita (`registrar_movimentacao`, `ajustar_saldo`,
--- `registrar_movimentacao_local`) continuam sem uso pelo app atual.
+-- As funções de permissão voltam ao formato sem checagem de organização. A 29
+-- não revogou nenhuma permissão de execução (a revogação das RPCs antigas ficou
+-- registrada como pendência separada e não foi aplicada), então não há GRANT a
+-- devolver aqui.
 
 -- ------------------------------------------------------------ políticas -----
 drop policy if exists vendas_leitura on public.vendas;

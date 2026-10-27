@@ -545,12 +545,14 @@ declare
                + public.saldo_estoque_local_v2(v_item.produto_id, 'geral')
                + public.saldo_estoque_local_v2(v_item.produto_id, 'buffet');
 $replace$;
-  v_entrada_antiga text :=
-    'values' || E'\n      (v_org, v_item.produto_id, v_qtd_base, ''fornecedor'', ''estoque'', v_motivo, v_usuario);';
   v_entrada_nova text :=
     'values' || E'\n      (v_org, v_item.produto_id, v_qtd_base, ''fornecedor'', ' ||
     'case v_local when ''loja'' then ''estoque'' when ''geral'' then ''estoque_geral'' else ''buffet'' end, ' ||
     'v_motivo, v_usuario);';
+  v_entrada_padrao text :=
+    'values[[:space:]]*[(][[:space:]]*v_org,[[:space:]]*v_item[.]produto_id,' ||
+    '[[:space:]]*v_qtd_base,[[:space:]]*''fornecedor'',[[:space:]]*''estoque'',' ||
+    '[[:space:]]*v_motivo,[[:space:]]*v_usuario[[:space:]]*[)];';
   v_produto_sem_lock text := 'where p.id = v_item.produto_id;';
   v_produto_com_lock text := 'where p.id = v_item.produto_id for update;';
 begin
@@ -569,10 +571,10 @@ begin
       raise exception 'Migração 25 não reconheceu o cálculo de saldo no recebimento de compras.';
     end if;
     v_def := replace(v_def, v_saldo_antigo, v_saldo_novo);
-    if position(v_entrada_antiga in v_def) = 0 then
+    if v_def !~ v_entrada_padrao then
       raise exception 'Migração 25 não reconheceu o movimento de entrada do recebimento de compras.';
     end if;
-    v_def := replace(v_def, v_entrada_antiga, v_entrada_nova);
+    v_def := regexp_replace(v_def, v_entrada_padrao, v_entrada_nova, 'g');
     if position(v_produto_com_lock in v_def) = 0 then
       if position(v_produto_sem_lock in v_def) = 0 then
         raise exception 'Migração 25 não reconheceu o bloqueio concorrente do produto recebido.';
