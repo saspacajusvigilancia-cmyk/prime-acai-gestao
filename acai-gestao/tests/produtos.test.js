@@ -164,6 +164,23 @@ describe('normalizarProduto', () => {
     expect(() => normalizarProduto({ ...base, preco: 10, minimo: -1 })).toThrow(/reposição/i)
   })
 
+  it('recusa preço vazio ou texto inválido em vez de gravar zero', () => {
+    // Antes, Number('') e Number('abc') viravam 0 (ou NaN → 0) e o produto era
+    // gravado com preço zerado, sem aviso.
+    expect(() => normalizarProduto({ ...base, preco: '' })).toThrow(/preço de venda/i)
+    expect(() => normalizarProduto({ ...base, preco: 'abc' })).toThrow(/preço de venda/i)
+  })
+
+  it('custo com texto inválido é recusado; campo opcional vazio continua zero', () => {
+    expect(() => normalizarProduto({ ...base, preco: 10, custo: 'dois reais' })).toThrow(/custo/i)
+
+    // O formulário entrega NaN para campo opcional vazio: é ausência de valor,
+    // não erro de digitação.
+    const r = normalizarProduto({ ...base, custo: '', minimo: Number.NaN })
+    expect(r.custo).toBe(0)
+    expect(r.minimo).toBe(0)
+  })
+
   it('as chaves de tipo e método são as mesmas que o banco aceita', () => {
     expect(Object.keys(TIPOS_VENDA).sort()).toEqual(['peso', 'receita', 'unidade'])
     expect(Object.keys(METODOS_ESTOQUE).sort()).toEqual(['fechamento', 'movimentacoes', 'nenhum'])

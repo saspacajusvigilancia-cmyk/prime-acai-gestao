@@ -864,13 +864,21 @@ export function configuracoesPage() {
             preencher(null)
           }
 
-          // A logomarca vem de uma tabela à parte; falhar aqui não impede editar
-          // o resto da configuração.
-          const { dados: logo, origem: origemLogo } = await carregarLogo()
-          if (!vivo) return
-          if (origemLogo === 'neon') logoAtual = logo
+          // A logomarca vem de uma tabela à parte: se só ela falhar, o resto da
+          // configuração continua editável. Por isso o try/catch próprio — no
+          // catch externo, a falha da logo marcaria a leitura inteira como
+          // perdida e bloquearia o botão "Salvar".
+          try {
+            const { dados: logo, origem: origemLogo } = await carregarLogo()
+            if (!vivo) return
+            if (origemLogo === 'neon') logoAtual = logo
 
-          await pintarLogo()
+            await pintarLogo()
+          } catch (falhaLogo) {
+            console.error('[configuracoes] Falha ao carregar a logomarca.', falhaLogo)
+            if (!vivo) return
+          }
+
           pintarAvisos()
         } catch (falha) {
           // Sem isto, uma falha de leitura deixava o botão "Salvar" desabilitado

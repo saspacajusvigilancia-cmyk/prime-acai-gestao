@@ -50,4 +50,28 @@ describe('carregar com Neon configurado', () => {
     expect(eventos).toHaveLength(1)
     expect(eventos[0].type).toBe(EVENTOS_DADOS.carregamentoConcluido)
   })
+
+  it('desiste com mensagem clara quando a consulta não responde (timeout)', async () => {
+    vi.useFakeTimers()
+    vi.spyOn(console, 'error').mockImplementation(() => {})
+
+    try {
+      const promessa = carregar({
+        nome: 'resumo',
+        // Nunca resolve: simula a requisição pendurada que deixava a tela em
+        // "Carregando..." para sempre.
+        consulta: () => new Promise(() => {}),
+        exemplo: [],
+      })
+
+      const verificacao = expect(promessa).rejects.toThrow(/Tempo limite/)
+      await vi.advanceTimersByTimeAsync(20_001)
+      await verificacao
+
+      expect(eventos.at(-1)?.type).toBe(EVENTOS_DADOS.carregamentoFalhou)
+      expect(eventos.at(-1)?.detail).toEqual({ nome: 'resumo' })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

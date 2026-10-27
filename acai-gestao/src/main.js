@@ -197,7 +197,8 @@ function pintarOrigemDados() {
     if (falhasCarregamento.size) {
       pill.classList.add('status-pill--erro')
       texto.textContent = 'Falha ao carregar'
-      pill.title = 'A consulta ao Neon falhou. Dados de demonstração não foram exibidos.'
+      pill.title =
+        'A consulta ao Neon falhou. Os números na tela podem ser de demonstração — recarregue para tentar de novo.'
       return
     }
 
