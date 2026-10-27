@@ -774,6 +774,54 @@ log('\n== RLS de clientes e financeiro + perfil inativo ==')
   }
 }
 
+log('\n== 29 · Multi-organização: dados não atravessam a fronteira ==')
+{
+  const clientesOrg2 = await leComo(ADMIN2, 'select count(*)::int as n from public.clientes')
+  const vendasOrg2 = await leComo(ADMIN2, 'select count(*)::int as n from public.vendas')
+  const lancamentosOrg2 = await leComo(ADMIN2, 'select count(*)::int as n from public.lancamentos')
+  const itensOrg2 = await leComo(ADMIN2, 'select count(*)::int as n from public.itens_venda')
+
+  if (
+    !clientesOrg2.erro && clientesOrg2.n === 0 &&
+    !vendasOrg2.erro && vendasOrg2.n === 0 &&
+    !lancamentosOrg2.erro && lancamentosOrg2.n === 0 &&
+    !itensOrg2.erro && itensOrg2.n === 0
+  ) {
+    ok('a loja 2 não enxerga clientes, vendas, itens nem lançamentos da loja 1')
+  } else {
+    podeFalhar(
+      'isolamento de clientes/vendas/financeiro',
+      clientesOrg2.erro?.message ?? vendasOrg2.erro?.message ??
+        lancamentosOrg2.erro?.message ?? itensOrg2.erro?.message ??
+        `clientes ${clientesOrg2.n}, vendas ${vendasOrg2.n}, itens ${itensOrg2.n}, lançamentos ${lancamentosOrg2.n}`,
+    )
+  }
+
+  // A venda é escrita por RPC `security definer`, onde o RLS não vale. O trigger
+  // da 29 precisa recusar um cliente de outra organização mesmo por esse caminho.
+  const clienteOrg1 = await um(
+    `select id from public.clientes where codigo = 'RLS-CLIENTE-17'`,
+  )
+  let erroCruzado = null
+  try {
+    await db.exec(`
+      insert into public.vendas (codigo, cliente_id, status, pagamento, total, organization_id)
+      values ('CROSS-29', '${clienteOrg1.id}', 'Concluída', 'Pix', 0, '${ORG2}')
+    `)
+  } catch (erro) {
+    erroCruzado = erro
+  }
+
+  if (erroCruzado && /não pertence a esta organização/i.test(erroCruzado.message)) {
+    ok('venda da loja 2 com cliente da loja 1 é recusada pelo banco')
+  } else {
+    podeFalhar(
+      'vínculo de cliente entre organizações',
+      erroCruzado?.message ?? 'a venda cruzada foi aceita',
+    )
+  }
+}
+
 log('\n== P2 · Saldos iniciais: o que já existia entrou no livro ==')
 {
   const divergentes = await contar(

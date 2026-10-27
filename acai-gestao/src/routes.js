@@ -195,6 +195,9 @@ export const routes = [
     subtitle: 'Você não tem permissão para abrir este módulo',
     hidden: true,
     publica: true,
+    // Sem isto, o guarda manda quem está logado para `/` e a página manda de
+    // volta para `/acesso-negado`: laço infinito de redirecionamento.
+    permiteLogado: true,
     page: acessoNegadoPage,
   },
 

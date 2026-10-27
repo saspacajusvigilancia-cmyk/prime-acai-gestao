@@ -31,7 +31,7 @@ import {
   sugerirCodigoProduto,
   unidadeDeVenda,
 } from '../services/produtos.js'
-import { badge, entradaMoeda, esc, formatBRL, formatNumero, tabela, toast } from '../ui.js'
+import { atualizarTabela, badge, entradaMoeda, esc, formatBRL, formatNumero, tabela, toast } from '../ui.js'
 
 const METODOS_PESO = [
   { valor: 'bruto_tara', rotulo: 'Peso bruto (descontar a tara)' },
@@ -500,9 +500,13 @@ export function produtosPage() {
           imagemPath: imagemPaths.has(produto.uuid) ? imagemPaths.get(produto.uuid) : null,
         }))
         const tbody = root.querySelector('#tabela-produtos tbody')
-        tbody.innerHTML = linhas.length
-          ? tabela({ colunas, linhas, id: 'tabela-produtos' }).match(/<tbody>([\s\S]*?)<\/tbody>/)[1]
-          : `<tr><td class="table__vazio" colspan="${colunas.length}">${itens.length ? 'Nenhum produto corresponde aos filtros.' : 'Nenhum produto cadastrado.'}</td></tr>`
+        if (linhas.length) {
+          // Atualiza só o corpo da tabela, sem extrair o HTML por regex — o
+          // markup de `tabela()` pode mudar sem quebrar a página.
+          atualizarTabela(root, 'tabela-produtos', colunas, linhas)
+        } else {
+          tbody.innerHTML = `<tr><td class="table__vazio" colspan="${colunas.length}">${itens.length ? 'Nenhum produto corresponde aos filtros.' : 'Nenhum produto cadastrado.'}</td></tr>`
+        }
         root.querySelector('#produtos-contagem').textContent = `${filtrados.length} produto(s) encontrado(s) · ${itens.length} no total`
         root.querySelector('#produtos-pagina').textContent = filtrados.length
           ? `Exibindo ${inicio + 1}–${Math.min(inicio + TAMANHO_PAGINA, filtrados.length)} de ${filtrados.length}`

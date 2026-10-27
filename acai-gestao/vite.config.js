@@ -21,6 +21,14 @@ import { defineConfig } from 'vite'
 const loginSrc = fileURLToPath(new URL('../Login_projetos/src', import.meta.url)).replace(/\\/g, '/')
 
 export default defineConfig({
+  // O ambiente jsdom e o carregamento dos módulos são lentos quando a suíte roda
+  // inteira em paralelo (sobretudo no Windows/CI): os 5 s padrão produziam
+  // "Test timed out" em testes que passam sozinhos. 20 s dá folga sem esconder
+  // travamento de verdade.
+  test: {
+    testTimeout: 20_000,
+    hookTimeout: 20_000,
+  },
   resolve: {
     dedupe: ['lucide', '@neondatabase/neon-js'],
     alias: [

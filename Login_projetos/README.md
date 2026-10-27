@@ -114,6 +114,7 @@ criarConta({ nome, email, senha })
 enviarLinkDeRecuperacao(email)
 definirNovaSenha(senha, token)
 tokenDeRecuperacao()
+limparTokenDaUrl()   // remove ?token= da barra de endereço após ler
 carregarPerfil(id), garantirPerfil(), atualizarNome(nome)
 
 // regras e mensagens (puras)

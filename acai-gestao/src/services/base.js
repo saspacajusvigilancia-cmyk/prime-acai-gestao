@@ -13,6 +13,28 @@ function emitirEventoDados(tipo, nome) {
 }
 
 /**
+ * Tempo máximo de uma consulta.
+ *
+ * O Data API não devolve controle de timeout: uma requisição pendurada deixa a
+ * tela em "Carregando..." para sempre. Aqui a promessa perde a corrida para um
+ * erro claro, que sobe pelo mesmo caminho de qualquer falha de rede.
+ */
+const TEMPO_LIMITE_MS = 20_000
+
+function comTempoLimite(promessa, nome) {
+  let temporizador
+  const limite = new Promise((_, rejeitar) => {
+    temporizador = setTimeout(() => {
+      rejeitar(
+        new Error(`Tempo limite ao falar com o banco de dados ("${nome}"). Verifique a conexão e tente novamente.`),
+      )
+    }, TEMPO_LIMITE_MS)
+  })
+
+  return Promise.race([Promise.resolve(promessa), limite]).finally(() => clearTimeout(temporizador))
+}
+
+/**
  * Executa uma consulta no Neon (Data API).
  *
  * Sem `VITE_NEON_URL`, devolve dados de demonstração. Com o Neon configurado,
@@ -25,7 +47,7 @@ export async function carregar({ nome, consulta, exemplo }) {
     return { dados: exemplo, origem: 'exemplo' }
   }
   try {
-    const dados = await consulta(neon)
+    const dados = await comTempoLimite(consulta(neon), nome)
     emitirEventoDados(EVENTOS_DADOS.carregamentoConcluido, nome)
     return { dados, origem: 'neon' }
   } catch (erro) {
@@ -85,7 +107,7 @@ export async function gravar({ nome, registro, escrever }) {
   }
 
   try {
-    return { dados: await escrever(neon), origem: 'neon' }
+    return { dados: await comTempoLimite(escrever(neon), nome), origem: 'neon' }
   } catch (erro) {
     console.error(`[neon] Falha ao gravar "${nome}".`, erro)
     throw erro
@@ -95,11 +117,15 @@ export async function gravar({ nome, registro, escrever }) {
 /**
  * Evita atualizar a tela depois que o usuário já saiu dela.
  *
+ * `aoFalhar` é opcional e existe para a página trocar o conteúdo de exemplo
+ * por um aviso de indisponibilidade — sem ele, uma falha com o Neon
+ * configurado deixaria números fictícios na tela.
+ *
  * Uso:
- *   const parar = observar(listarProdutos(), ({ dados }) => renderizar(dados))
+ *   const parar = observar(listarProdutos(), ({ dados }) => renderizar(dados), aoFalhar)
  *   return parar   // limpeza do mount()
  */
-export function observar(promessa, callback) {
+export function observar(promessa, callback, aoFalhar) {
   let cancelado = false
 
   promessa
@@ -107,7 +133,9 @@ export function observar(promessa, callback) {
       if (!cancelado) callback(resultado)
     })
     .catch((erro) => {
-      if (!cancelado) console.error('[neon] Erro inesperado:', erro)
+      if (cancelado) return
+      console.error('[neon] Erro inesperado:', erro)
+      if (typeof aoFalhar === 'function') aoFalhar(erro)
     })
 
   return () => {

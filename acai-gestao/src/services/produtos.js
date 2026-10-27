@@ -1,5 +1,6 @@
 import { produtos as exemplo } from '../data.js'
 import { METODOS_PESO, METODOS_PESO_ATIVOS } from '../peso.js'
+import { paraNumero } from '../numeros.js'
 import { carregar, gravar, neon, neonConfigurado, paraBooleano } from './base.js'
 import { prepararImagemProduto } from './imagens-produtos.js'
 
@@ -189,9 +190,24 @@ export async function sugerirCodigoProduto(lista) {
 
 /* ------------------------------------------------------------ normalizar -- */
 
-const numero = (valor) => {
-  const n = Number(valor)
-  return Number.isFinite(n) ? n : 0
+const numero = (valor, campo = 'o campo', { obrigatorio = false } = {}) => {
+  if (valor == null || valor === '') {
+    if (obrigatorio) throw new Error(`Informe ${campo}.`)
+    return 0
+  }
+
+  const n = typeof valor === 'number' ? valor : paraNumero(valor)
+
+  if (!Number.isFinite(n)) {
+    // O formulário entrega `NaN` para campo opcional vazio; texto inválido,
+    // não. Antes os dois viravam 0 e o produto era gravado com preço/custo
+    // zerados sem nenhum aviso.
+    if (obrigatorio) throw new Error(`Informe ${campo}.`)
+    if (typeof valor === 'number') return 0
+    throw new Error(`Informe um valor numérico válido em ${campo}.`)
+  }
+
+  return n
 }
 
 /**
@@ -250,9 +266,9 @@ export function normalizarProduto(valores = {}) {
     local_estoque_origem: localEstoqueOrigem,
     permitir_estoque_negativo: permitirEstoqueNegativo,
     permite_retorno_buffet: permiteRetornoBuffet,
-    minimo: numero(valores.minimo),
-    custo: numero(valores.custo),
-    preco: numero(valores.preco),
+    minimo: numero(valores.minimo, 'o ponto de reposição'),
+    custo: numero(valores.custo, 'o custo'),
+    preco: numero(valores.preco, 'o preço de venda', { obrigatorio: true }),
     ativo: paraBooleano(valores.ativo, true),
   }
 

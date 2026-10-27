@@ -23,7 +23,7 @@ import {
 } from '../auth-ui.js'
 import { config, funcionalidadeAuthHabilitada, texto } from '../config.js'
 import { renderIcons } from '../lib/icons.js'
-import { checarSenha, definirNovaSenha, mensagemDeErro, senhaForte, tokenDeRecuperacao } from '../services/auth.js'
+import { checarSenha, definirNovaSenha, limparTokenDaUrl, mensagemDeErro, senhaForte, tokenDeRecuperacao } from '../services/auth.js'
 
 export function redefinirSenhaPage() {
   if (!funcionalidadeAuthHabilitada('redefinicaoSenha')) {
@@ -94,8 +94,10 @@ export function redefinirSenhaPage() {
         })
       })
 
-      // O token vem na própria URL do link do e-mail.
+      // O token vem na própria URL do link do e-mail. Lemos e já o apagamos da
+      // barra de endereço: ele não deve ficar no histórico nem vazar no Referer.
       const token = tokenDeRecuperacao()
+      limparTokenDaUrl()
 
       if (!token) {
         mostrarLinkInvalido(root)

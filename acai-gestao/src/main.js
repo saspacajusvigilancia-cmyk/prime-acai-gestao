@@ -409,17 +409,19 @@ function montarShellApp(raiz) {
   })
 
   // fecha painel ao clicar fora
-  document.addEventListener('click', (e) => {
+  const aoClicarFora = (e) => {
     if (painel && !painel.hidden && !raiz.querySelector('#notif-wrap')?.contains(e.target)) {
       painel.hidden = true
     }
-  })
+  }
+  document.addEventListener('click', aoClicarFora)
 
   atualizarBadge()
   const intervalo = setInterval(atualizarBadge, 30000)
 
   limparShellApp = () => {
     clearInterval(intervalo)
+    document.removeEventListener('click', aoClicarFora)
     document.removeEventListener('keydown', aoTeclar)
     window.removeEventListener('logo-mudou', aoAtualizarEmpresa)
     window.removeEventListener('empresa-mudou', aoAtualizarEmpresa)

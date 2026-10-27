@@ -302,12 +302,14 @@ export function buffetPage() {
         })
 
         host.querySelector('[data-acao="fechar"]')?.addEventListener('click', async () => {
+          // Campo vazio não é zero: `Number('')` vira 0 e fecharia o turno
+          // zerando o saldo de produtos que ninguém contou.
           const itens = [...host.querySelectorAll('[data-produto]')].map((campo) => ({
             produtoId: campo.dataset.produto,
-            quantidade: Number(campo.value),
+            quantidade: campo.value.trim() === '' ? Number.NaN : Number(campo.value),
           }))
           if (itens.some((item) => !Number.isFinite(item.quantidade) || item.quantidade < 0)) {
-            toast('Informe quantidades válidas para todos os produtos.')
+            toast('Informe a contagem de todos os produtos antes de fechar o turno.')
             return
           }
           const aceitou = await confirmar({

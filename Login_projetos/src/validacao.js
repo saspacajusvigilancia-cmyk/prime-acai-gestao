@@ -52,7 +52,10 @@ const MENSAGENS = {
   // ---- Better Auth ----
   INVALID_EMAIL_OR_PASSWORD: 'E-mail ou senha incorretos.',
   USER_NOT_FOUND: 'E-mail ou senha incorretos.',
-  USER_ALREADY_EXISTS: 'Já existe uma conta com este e-mail.',
+  // Cadastro aberto não deve confirmar se um e-mail já tem conta: isso permite
+  // enumerar usuários. A mensagem orienta os dois casos sem revelar qual é.
+  USER_ALREADY_EXISTS:
+    'Não foi possível criar a conta com este e-mail. Se você já tem cadastro, entre ou recupere a senha.',
   EMAIL_NOT_VERIFIED: 'Confirme o seu e-mail antes de entrar. O link está na sua caixa de entrada.',
   PASSWORD_TOO_SHORT: 'A senha é curta demais. Use pelo menos 8 caracteres, com letras e números.',
   INVALID_EMAIL: 'E-mail inválido.',
@@ -67,8 +70,10 @@ const MENSAGENS = {
   invalid_credentials: 'E-mail ou senha incorretos.',
   user_not_found: 'E-mail ou senha incorretos.',
   email_not_confirmed: 'Confirme o seu e-mail antes de entrar. O link está na sua caixa de entrada.',
-  email_exists: 'Já existe uma conta com este e-mail.',
-  user_already_exists: 'Já existe uma conta com este e-mail.',
+  email_exists:
+    'Não foi possível criar a conta com este e-mail. Se você já tem cadastro, entre ou recupere a senha.',
+  user_already_exists:
+    'Não foi possível criar a conta com este e-mail. Se você já tem cadastro, entre ou recupere a senha.',
   weak_password: 'A senha é fraca demais para o servidor. Use pelo menos 8 caracteres, com letras e números.',
   same_password: 'A nova senha precisa ser diferente da anterior.',
   signup_disabled: 'O cadastro pelo app está desativado. Peça a um administrador para criar a sua conta.',

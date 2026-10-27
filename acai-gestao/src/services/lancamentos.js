@@ -74,16 +74,20 @@ export function carregarFluxoMensal() {
       const { data, error } = await neon
         .from('vw_fluxo_mensal')
         .select('mes, entradas, saidas')
-        .order('mes', { ascending: true })
+        .order('mes', { ascending: false })
         .limit(6)
 
       if (error) throw error
 
+      // A consulta pega os 6 meses mais recentes; o gráfico, do mais antigo
+      // para o mais novo. Antes vinha em ordem crescente com `limit(6)`, o que
+      // devolvia os 6 meses mais antigos do histórico.
+      const linhas = [...(data ?? [])].reverse()
       const mes = new Intl.DateTimeFormat('pt-BR', { month: 'short' })
       return {
-        labels: data.map((linha) => mes.format(new Date(`${linha.mes}T00:00:00`)).replace('.', '')),
-        entradas: data.map((linha) => Number(linha.entradas)),
-        saidas: data.map((linha) => Number(linha.saidas)),
+        labels: linhas.map((linha) => mes.format(new Date(`${linha.mes}T00:00:00`)).replace('.', '')),
+        entradas: linhas.map((linha) => Number(linha.entradas)),
+        saidas: linhas.map((linha) => Number(linha.saidas)),
       }
     },
   })

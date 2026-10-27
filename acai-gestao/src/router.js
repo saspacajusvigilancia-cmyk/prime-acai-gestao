@@ -94,6 +94,13 @@ export function createRouter({ routes, raiz, shells, guarda, onRender }) {
    * senão a pessoa continua vendo itens que já não pode abrir.
    */
   function reconstruirMenu() {
+    // Desmonta o invólucro antes de esquecê-lo: `render` só chama
+    // `aoDesmontar` quando o tipo muda, e aqui o shell é o mesmo. Sem isso,
+    // listeners de `document`/`window` e o intervalo do badge se acumulam a
+    // cada evento `permissoes-mudaram`.
+    if (typeof shells[shellAtual]?.aoDesmontar === 'function') {
+      shells[shellAtual].aoDesmontar(raiz)
+    }
     shellAtual = null
     render()
   }

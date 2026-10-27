@@ -34,8 +34,9 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `26_codigos_sequenciais_produtos.sql` | Reserva atômica de códigos P sequenciais para novos produtos; números reservados e não utilizados podem deixar lacunas |
 | `27_operacoes_e_reconciliacao_buffet.sql` | Perdas e devoluções auditáveis/idempotentes, autorização explícita de retorno por produto, snapshot de abertura por turno, histórico filtrável e resumo de consumo/divergência |
 | `28_codigos_sequenciais_clientes.sql` | Código de cliente reservado atomicamente (C-0000), preenchido pelo banco em inserções sem código e imutável depois de criado |
-| `reverter_08_…` até `reverter_28_…` (e as anteriores) | Reversões conservadoras; a 21 bloqueia categorias personalizadas em uso, a 22 bloqueia movimentos do estoque geral, a 23 impede remover WhatsApps cadastrados, a 24 preserva os novos metadados, a 26 não remove códigos gravados, a 27 bloqueia reversão quando já há operações/snapshots/autorizações e a 28 devolve a edição manual do código do cliente |
-| `garantir_perfil_novo.sql` | Versão de `garantir_perfil()` que lê e-mail e convite — **passo manual**, não é `NN_*.sql` |
+| `29_multi_organizacao.sql` | `organization_id` em vendas, itens, clientes e lançamentos; backfill pela organização mais antiga; preenchimento automático; RLS por organização; validação de cliente/produto/recipiente entre organizações |
+| `reverter_08_…` até `reverter_29_…` (e as anteriores) | Reversões conservadoras; a 21 bloqueia categorias personalizadas em uso, a 22 bloqueia movimentos do estoque geral, a 23 impede remover WhatsApps cadastrados, a 24 preserva os novos metadados, a 26 não remove códigos gravados, a 27 bloqueia reversão quando já há operações/snapshots/autorizações, a 28 devolve a edição manual do código do cliente e a 29 volta as políticas ao formato sem organização sem apagar linhas |
+| `garantir_perfil_novo.sql` | Versão de `garantir_perfil()` que lê e-mail e convite — conta sem convite nasce **inativa** (aprovação pelo administrador) e convite define papel/ativação. **Passo manual**, não é `NN_*.sql`; o app usa `aprovacaoManual: true` |
 | `testar-base.mjs` | Testa a base real de ponta a ponta (`npm run testar:base`) |
 | `testar-permissoes.mjs` | Testa o banco de permissões contra a base real |
 | `validar-migracoes.mjs` | Aplica a cadeia inteira num Postgres **em memória** e exercita os comportamentos (`npm run validar:migracoes`) |
@@ -43,6 +44,10 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `verificar-compras.mjs` | Confere compra total e parcial, estoque, custo médio, lote, bloqueio de duplicidade e permissão do caixa **na base real**, sem gravar nada (`npm run verificar:compras`) |
 | `verificar-vendas.mjs` | Confere a venda transacional **na base real**, sem gravar nada (`npm run verificar:vendas`) |
 | `testar-estoque-api.mjs` | Testa as RPCs do estoque **pelo Neon Data API**, como o navegador faz (`npm run testar:estoque:api`) |
+
+> A numeração pula **13, 14 e 15**: esses arquivos não fazem parte da cadeia
+> aplicada por este projeto. O `aplicar.mjs` segue a ordem alfabética dos nomes e
+> não exige numeração contínua.
 
 Para aplicar as migrações, na ordem dos nomes:
 
@@ -161,6 +166,47 @@ já tiverem criado movimentos, transferências com Buffet ou configuração de
 produto em local futuro; preserve o ledger e migre os saldos antes de tentar
 novamente. Não aplique em produção sem backup com restauração verificada e
 confirmação explícita da organização/destino.
+
+### Multi-organização (migração 29)
+
+Até a 28, `vendas`, `itens_venda`, `clientes` e `lancamentos` não tinham
+`organization_id`. As políticas da 08 e da 17 liberavam por **permissão**, não
+por organização: um administrador de outra loja com a mesma permissão lia os
+dados. A 29 fecha essa lacuna:
+
+- acrescenta `organization_id` (FK para `organizations`) nas quatro tabelas;
+- preenche as linhas existentes com a **organização mais antiga** — decisão
+  segura porque hoje só existe uma. Se o banco já tiver mais de uma organização,
+  confira o resultado antes de confiar no backfill;
+- preenche linhas novas por trigger: `minha_organizacao()` quando há sessão e a
+  organização padrão quando a gravação vem de script/serviço;
+- troca todas as políticas por `pode(...) and organization_id = minha_organizacao()`;
+- valida, no banco, que cliente/produto/recipiente citados numa venda pertencem à
+  mesma organização. A venda roda em RPC `security definer`, onde o RLS não vale;
+  sem essa checagem, um chamador direto da RPC poderia usar preço/estoque alheios.
+
+Aplique depois de validar a cadeia, conferir a organização de destino e ter um
+backup com restauração verificada:
+
+```bash
+npm run validar:migracoes
+node neon/aplicar.mjs 29
+npx neon data-api refresh-schema
+```
+
+Limitações conhecidas, de propósito nesta etapa:
+
+- `vendas.codigo` e `clientes.codigo` continuam únicos **globalmente**; os
+  geradores sequenciais (26/28) não são por organização. Duas lojas não podem
+  repetir o mesmo número de pedido/cliente.
+- A busca de idempotência da venda usa só `chave_idempotencia` (UUID gerado no
+  navegador). A colisão entre organizações é improvável, mas não é impossível.
+- `registrar_movimentacao`, `ajustar_saldo` e `registrar_movimentacao_local`
+  continuam executáveis por `authenticated`. Revogá-las muda o contrato público e
+  exige atualizar `validar-migracoes.mjs`; ficou como pendência separada.
+- `reverter_29` remove as colunas e volta as políticas sem organização, **sem
+  apagar linhas**. Rode-a apenas sabendo que o isolamento entre lojas deixa de
+  existir ao final.
 
 Os arquivos de reversão começam com `reverter_` de propósito: assim **não** casam
 com o filtro de migrações numeradas e nunca entram numa aplicação normal. O

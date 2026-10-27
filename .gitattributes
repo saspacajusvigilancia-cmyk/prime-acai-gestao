@@ -1,0 +1,30 @@
+# Normalização de fim de linha entre Windows/Linux e binários.
+#
+# O repositório guarda texto em LF (padrão do Git), mesmo quando o checkout é
+# feito no Windows. Antes deste arquivo o `git status` avisava "LF will be
+# replaced by CRLF" a cada arquivo novo, e um commit feito no Windows podia
+# gravar CRLF e poluir o diff.
+* text=auto
+
+*.js    text eol=lf
+*.mjs   text eol=lf
+*.cjs   text eol=lf
+*.css   text eol=lf
+*.html  text eol=lf
+*.json  text eol=lf
+*.md    text eol=lf
+*.sql   text eol=lf
+*.yml   text eol=lf
+*.yaml  text eol=lf
+*.sh    text eol=lf
+*.toml  text eol=lf
+*.txt   text eol=lf
+
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.webp binary
+*.ico  binary
+*.woff binary
+*.woff2 binary

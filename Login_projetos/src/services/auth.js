@@ -256,6 +256,37 @@ export function tokenDeRecuperacao() {
   return daQuery(window.location.hash) ?? daQuery(window.location.search)
 }
 
+/**
+ * Remove o `token` da barra de endereço depois que ele já foi lido.
+ *
+ * O token de redefinição fica no histórico do navegador, no `Referer` de
+ * qualquer requisição seguinte e em prints/URLs compartilhadas. Ele é de uso
+ * único, mas não precisa ficar exposto. `replaceState` troca a URL sem recarregar
+ * e sem disparar `hashchange` — o roteador não renderiza de novo.
+ */
+export function limparTokenDaUrl() {
+  if (typeof window === 'undefined' || !window.history?.replaceState) return
+
+  const limpar = (texto) => {
+    const indice = texto.indexOf('?')
+    if (indice < 0) return texto
+
+    const parametros = new URLSearchParams(texto.slice(indice + 1))
+    if (!parametros.has('token')) return texto
+
+    parametros.delete('token')
+    const resto = parametros.toString()
+    return texto.slice(0, indice) + (resto ? `?${resto}` : '')
+  }
+
+  const { origin, pathname, search, hash } = window.location
+  const novaBusca = limpar(search)
+  const novoHash = limpar(hash)
+  if (novaBusca === search && novoHash === hash) return
+
+  window.history.replaceState(null, '', `${origin}${pathname}${novaBusca}${novoHash}`)
+}
+
 /** Atualiza o nome do próprio perfil (a única coluna que o RLS deixa mudar). */
 export async function atualizarNome(nome) {
   const cliente = exigirCliente()

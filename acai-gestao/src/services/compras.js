@@ -296,12 +296,18 @@ async function buscarItens(neon, ids) {
   return data ?? []
 }
 
-async function buscarFornecedores(neon) {
-  const consultaAtual = await neon
-    .from('fornecedores')
-    .select(CAMPOS_FORNECEDOR)
-    .order('nome')
-    .limit(1000)
+async function buscarFornecedores(neon, ids) {
+  const alvo = ids?.filter(Boolean)
+  // Com a lista de ids vazia não há fornecedor a buscar (compra sem fornecedor).
+  if (ids && !alvo.length) return []
+
+  const consultar = (campos) => {
+    let consulta = neon.from('fornecedores').select(campos)
+    if (alvo?.length) consulta = consulta.in('id', alvo)
+    return consulta.order('nome').limit(1000)
+  }
+
+  const consultaAtual = await consultar(CAMPOS_FORNECEDOR)
 
   if (!consultaAtual.error) return consultaAtual.data ?? []
 
@@ -310,11 +316,7 @@ async function buscarFornecedores(neon) {
     /whatsapp/i.test(`${consultaAtual.error.message ?? ''} ${consultaAtual.error.details ?? ''}`)
 
   if (erroColunaWhatsAppAusente) {
-    const consultaLegada = await neon
-      .from('fornecedores')
-      .select(CAMPOS_FORNECEDOR_SEM_WHATSAPP)
-      .order('nome')
-      .limit(1000)
+    const consultaLegada = await consultar(CAMPOS_FORNECEDOR_SEM_WHATSAPP)
 
     if (consultaLegada.error) throw consultaLegada.error
     return consultaLegada.data ?? []
@@ -333,6 +335,33 @@ async function buscarUsuarios(neon, ids) {
     return new Map()
   }
   return new Map((data ?? []).map((p) => [p.id, p.full_name ?? '']))
+}
+
+/**
+ * Monta as compras a partir das linhas do cabeçalho, buscando itens,
+ * fornecedores e autores apenas dos ids envolvidos.
+ */
+async function montarCompras(neon, linhas) {
+  if (!linhas.length) return []
+
+  const [itens, fornecedores, usuarios] = await Promise.all([
+    buscarItens(neon, linhas.map((c) => c.id)),
+    buscarFornecedores(neon, [...new Set(linhas.map((c) => c.fornecedor_id).filter(Boolean))]),
+    buscarUsuarios(neon, [...new Set(linhas.map((c) => c.usuario_id).filter(Boolean))]),
+  ])
+
+  const porCompra = new Map()
+  for (const item of itens) {
+    const lista = porCompra.get(item.compra_id) ?? []
+    lista.push(item)
+    porCompra.set(item.compra_id, lista)
+  }
+
+  const mapaFornecedores = new Map(fornecedores.map((f) => [f.id, paraFornecedor(f)]))
+
+  return linhas
+    .map((linha) => paraCompra(linha, porCompra.get(linha.id) ?? [], mapaFornecedores, usuarios))
+    .sort((a, b) => String(b.criadoEm ?? '').localeCompare(String(a.criadoEm ?? '')))
 }
 
 /**
@@ -358,27 +387,7 @@ export function listarCompras({ id, status, de, ate, busca } = {}) {
 
       if (error) throw error
 
-      const linhas = data ?? []
-      if (!linhas.length) return []
-
-      const [itens, fornecedores, usuarios] = await Promise.all([
-        buscarItens(neon, linhas.map((c) => c.id)),
-        buscarFornecedores(neon),
-        buscarUsuarios(neon, [...new Set(linhas.map((c) => c.usuario_id).filter(Boolean))]),
-      ])
-
-      const porCompra = new Map()
-      for (const item of itens) {
-        const lista = porCompra.get(item.compra_id) ?? []
-        lista.push(item)
-        porCompra.set(item.compra_id, lista)
-      }
-
-      const mapaFornecedores = new Map(fornecedores.map((f) => [f.id, paraFornecedor(f)]))
-
-      let resultado = linhas
-        .map((linha) => paraCompra(linha, porCompra.get(linha.id) ?? [], mapaFornecedores, usuarios))
-        .sort((a, b) => String(b.criadoEm ?? '').localeCompare(String(a.criadoEm ?? '')))
+      let resultado = await montarCompras(neon, data ?? [])
 
       if (busca) {
         const termo = texto(busca).toLowerCase()
@@ -397,7 +406,22 @@ export function listarCompras({ id, status, de, ate, busca } = {}) {
 
 /** Busca uma compra específica (cabeçalho + itens). */
 export async function obterCompra(id) {
-  const { dados } = await listarCompras({ id })
+  const { dados } = await carregar({
+    nome: 'compra',
+    exemplo: [],
+    consulta: async (neon) => {
+      // Uma compra, um id: não passa pela listagem de até 500 registros.
+      const { data, error } = await neon
+        .from('compras')
+        .select(CAMPOS_COMPRA)
+        .eq('id', id)
+        .limit(1)
+
+      if (error) throw error
+      return montarCompras(neon, data ?? [])
+    },
+  })
+
   return dados[0] ?? null
 }
 

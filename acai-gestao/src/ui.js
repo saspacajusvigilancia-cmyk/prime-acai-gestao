@@ -33,8 +33,17 @@ export function entradaMoeda({
   return `<div class="campo__grupo"><span class="campo__prefixo">${esc(prefixo)}</span><input id="${esc(id)}" name="${esc(name)}" class="campo__input" type="text" inputmode="decimal" data-moeda value="${esc(formatarEntradaMoeda(value))}" placeholder="${esc(placeholder)}" autocomplete="off"${required ? ' required' : ''} /></div>`
 }
 
-/** Aceita 'AAAA-MM-DD' e devolve 'DD/MM' sem sofrer com fuso horário. */
-export const formatData = (iso) => dateShort.format(new Date(`${iso}T00:00:00`))
+/**
+ * Aceita 'AAAA-MM-DD' e devolve 'DD/MM' sem sofrer com fuso horário.
+ *
+ * Data ausente ou inválida vira string vazia: um registro antigo sem `desde`
+ * não pode derrubar a tabela inteira com `RangeError: Invalid time value`.
+ */
+export function formatData(iso) {
+  if (!iso) return ''
+  const data = new Date(`${iso}T00:00:00`)
+  return Number.isNaN(data.getTime()) ? '' : dateShort.format(data)
+}
 
 export const formatPercentual = (valor) => `${decimal.format(Math.abs(valor))}%`
 

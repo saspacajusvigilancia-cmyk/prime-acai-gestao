@@ -21,6 +21,9 @@ jobs:
       - name: Install dependencies
         working-directory: acai-gestao
         run: npm ci
+      - name: Run shared auth package tests
+        working-directory: Login_projetos
+        run: npm test
       - name: Run unit tests
         working-directory: acai-gestao
         run: npm test

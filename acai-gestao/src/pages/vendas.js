@@ -1,6 +1,6 @@
 import { resumo as resumoExemplo, vendas as vendasExemplo } from '../data.js'
 import { diaValido, rotuloDia, somarDias } from '../datas.js'
-import { abrirFormulario } from '../formulario.js'
+import { abrirFormulario, fechar } from '../formulario.js'
 import { centavosParaReais, paraCentavos } from '../numeros.js'
 import { renderIcons } from '../icons.js'
 import { hoje, observar } from '../services/base.js'
@@ -670,6 +670,10 @@ export function vendasPage() {
 
       return () => {
         window.removeEventListener('busca-global', aoBuscarGlobal)
+        // O formulário é anexado ao `body`; sem fechar aqui ele sobrevive à
+        // troca de rota (com o MutationObserver e as fotos em memória) e o
+        // "Salvar" continuaria agindo sobre o estado da página anterior.
+        fechar()
         pararVendas()
         pararResumo()
       }

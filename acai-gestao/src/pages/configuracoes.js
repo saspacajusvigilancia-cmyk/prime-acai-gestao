@@ -852,26 +852,36 @@ export function configuracoesPage() {
 
         botaoSalvar.disabled = true
 
-        const { dados, origem } = await carregarEmpresa()
-        if (!vivo) return
+        try {
+          const { dados, origem } = await carregarEmpresa()
+          if (!vivo) return
 
-        if (origem === 'neon') {
-          salvos = dados
-          preencher(dados)
-        } else {
+          if (origem === 'neon') {
+            salvos = dados
+            preencher(dados)
+          } else {
+            falhouLeitura = true
+            preencher(null)
+          }
+
+          // A logomarca vem de uma tabela à parte; falhar aqui não impede editar
+          // o resto da configuração.
+          const { dados: logo, origem: origemLogo } = await carregarLogo()
+          if (!vivo) return
+          if (origemLogo === 'neon') logoAtual = logo
+
+          await pintarLogo()
+          pintarAvisos()
+        } catch (falha) {
+          // Sem isto, uma falha de leitura deixava o botão "Salvar" desabilitado
+          // para sempre e sem explicação na tela.
+          console.error('[configuracoes] Falha ao carregar a configuração.', falha)
+          if (!vivo) return
           falhouLeitura = true
-          preencher(null)
+          pintarAvisos()
+        } finally {
+          if (vivo) definirSalvando(false)
         }
-
-        // A logomarca vem de uma tabela à parte; falhar aqui não impede editar
-        // o resto da configuração.
-        const { dados: logo, origem: origemLogo } = await carregarLogo()
-        if (!vivo) return
-        if (origemLogo === 'neon') logoAtual = logo
-
-        await pintarLogo()
-        pintarAvisos()
-        definirSalvando(false)
       }
 
       iniciar()

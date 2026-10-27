@@ -48,6 +48,9 @@ export const loginProjetosConfig = {
     loginDica: 'Use o e-mail cadastrado na Prime Açaí.',
   },
 
-  // Nova conta entra imediatamente sem etapa de aprovação manual.
-  aprovacaoManual: false,
+  // Conta criada por cadastro próprio entra INATIVA e depende do administrador
+  // (ver `acai-gestao/neon/garantir_perfil_novo.sql`); convite já define se a
+  // conta nasce ativa. Isto precisa acompanhar o banco: com `false` aqui, a
+  // tela de cadastro diria "entrou" e o app expulsaria a pessoa em seguida.
+  aprovacaoManual: true,
 }

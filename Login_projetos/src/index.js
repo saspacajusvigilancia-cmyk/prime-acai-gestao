@@ -64,6 +64,7 @@ export {
   entrar,
   enviarLinkDeRecuperacao,
   garantirPerfil,
+  limparTokenDaUrl,
   mensagemDeErro,
   observarAuth,
   rotuloPapel,

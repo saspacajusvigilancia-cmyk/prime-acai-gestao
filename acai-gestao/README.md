@@ -72,17 +72,45 @@ para instalar em outro app, configurar identidade/rotas/funcionalidades e
 implementar um adaptador de provedor. Não use chaves administrativas no
 frontend.
 
+**Aprovação de contas:** a configuração usa `aprovacaoManual: true`. Quem se
+cadastra sem convite nasce inativo (`garantir_perfil_novo.sql`) e aguarda a
+decisão de um administrador em **Usuários**; um convite válido já define papel e
+ativação. O app encerra a sessão da conta inativa e explica o motivo em vez de
+deixá-la navegando. Para abrir o cadastro com acesso imediato, é preciso mudar os
+dois lados juntos (configuração e função do banco).
+
+### Multi-organização
+
+A migração `29_multi_organizacao.sql` coloca `organization_id` em `vendas`,
+`itens_venda`, `clientes` e `lancamentos` e troca as políticas por permissão +
+organização. Linhas antigas são vinculadas à organização mais antiga; linhas novas
+recebem a organização da sessão por trigger. A venda (RPC `security definer`)
+também recusa cliente/produto/recipiente de outra organização. Códigos de venda e
+cliente ainda são únicos **globalmente** e a busca de idempotência usa a chave
+global — as duas limitações estão registradas em `neon/README.md`.
+
+Antes de publicar um build que dependa do isolamento, aplique a migração no banco
+de destino com backup verificado e atualize o cache do Data API:
+
+```bash
+node neon/aplicar.mjs 29
+npx neon data-api refresh-schema
+```
+
+
 ## Banco de dados
 
 O banco é criado por **um arquivo só**: `neon/00_banco_neon.sql`
 (tabelas, índices, funções, views, GRANTs, RLS e os dados de exemplo).
 Depois dele, cada mudança veio numa migração numerada (`neon/01_…` até
-`neon/27_…`; a `12` é dados de estudo e não entra na aplicação padrão, a `16`
+`neon/29_…`; a `12` é dados de estudo e não entra na aplicação padrão, a `16`
 é Compras, a `17` aplica permissões de clientes/financeiro, a `18` acrescenta
-canais e pagamentos, a `19` habilita fotos persistentes de produtos e a `20`
-cria o catálogo de categorias. As migrações `22`–`25` tratam locais, baixas por
-produto, operações do Estoque Buffet e reconciliação por turno), aplicada por
-prefixo, **um arquivo por vez**:
+canais e pagamentos, a `19` habilita fotos persistentes de produtos, a `20` cria
+o catálogo de categorias, a `21` categoriza os tipos de venda, as `22`–`25`
+tratam locais, baixas por produto, operações do Estoque Buffet e reconciliação
+por turno, a `26`/`28` reservam códigos sequenciais de produto/cliente e a `29`
+aplica o isolamento por organização). A aplicação é por prefixo, **um arquivo
+por vez**:
 
 ```bash
 node neon/aplicar.mjs 11     # só a que começa com "11"
@@ -117,6 +145,13 @@ verificada. A migração `27` não foi aplicada automaticamente a uma base real.
 ```bash
 npm test                  # unitários (Vitest + jsdom), sem tocar no banco
 npm run validar:migracoes # a cadeia de migrações num Postgres em memória
+```
+
+O pacote compartilhado tem a própria suíte (Node, sem dependências externas):
+
+```bash
+cd ../Login_projetos
+npm test
 ```
 
 ## Testar a base real
