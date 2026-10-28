@@ -112,14 +112,14 @@ as branches abaixo. Trocar de branch é trocar o host na `DATABASE_URL`; a
 | `prime-acai-predeploy-20261028` | `ep-plain-lake-b66do9gp` | ensaio de migração antes de produção |
 | `backup-antes-27-20261028` | sem endpoint | ponto de restauração anterior à migração 27 |
 | `backup-riscos-20261028` | sem endpoint | cópia verificada anterior às migrações 29, 31 e 32 |
-| `teste-migracao-32-20261028` | endpoint temporário | ensaio das migrações 29, 31 e 32; pode ser descartada |
 
 Crie o branch de ensaio a partir de `production` (`npx neon branches create --name <nome>`),
 aplique a migração nele, valide com `compare_database_schema` e só então repita em
 produção. Branch de ensaio defasado dá falso positivo: em 28/10/2026 o anterior
 estava quatro migrações atrás e foi recriado do zero. O backup
 `backup-riscos-20261028` foi aberto e conferido (8.539 vendas, 12.803 itens e
-9 clientes) antes da aplicação em produção.
+9 clientes) antes da aplicação em produção. A branch temporária
+`teste-migracao-32-20261028` foi usada no ensaio e excluída depois da limpeza.
 
 ### RLS sem política é intencional
 
@@ -297,11 +297,18 @@ pulou a migração 17.
 
 A auditoria de 28/10/2026 encontrou **8.537 vendas de seed** na branch
 `production`, datadas de 17/05/2026 a 19/10/2026, misturadas a apenas duas vendas
-reais posteriores. Os totais das vendas de seed não fecham com a soma dos itens
-de propósito; isso **não** é bug de cálculo do app. O impacto é de relatório:
+reais posteriores. Os totais das vendas de seed não fechavam com a soma dos itens
+de propósito; isso **não** era bug de cálculo do app. O impacto era de relatório:
 outubro/2026 aparecia com cerca de R$ 58,5 mil de faturamento fictício.
 
-Não apague nada por data sem revisar. Use, nesta ordem:
+A limpeza foi autorizada e executada em 28/10/2026, depois de o backup
+`backup-riscos-20261028` ser aberto e conferido. O corte foi
+`2026-10-20 00:00:00-03` e a produção terminou com **2 vendas, 2 itens, 9
+clientes, 518 lançamentos e 29 movimentos de estoque**; as vendas mantidas são
+`#9543` (R$ 6,99) e `#9544` (R$ 20,97). O saldo em cache dos produtos foi
+recalculado e ficou igual ao livro-razão (0 divergências).
+
+Para repetir em outro banco, não apague nada por data sem revisar:
 
 1. `neon/diagnostico_dados_demonstracao.sql` — **somente leitura**, mostra vendas
    por período, divergências de total, produtos/clientes antigos, integridade do
@@ -310,15 +317,12 @@ Não apague nada por data sem revisar. Use, nesta ordem:
 3. `neon/limpar_dados_demonstracao.sql` — limpeza **guardada**, exige
    `acai.organization_id`, `acai.limpar_ate` e `acai.confirmar = 'SIM'`, roda em
    transação, recusa corte que não preserve nenhuma venda real, desliga os dois
-   triggers de manutenção só dentro da transação, repõe o saldo dos cinco
-   movimentos ligados a vendas de seed e confere o resultado antes do `COMMIT`.
-   O script foi simulado na branch `teste-migracao-32-20261028` com rollback:
-   apagaria 8.537 vendas e 12.801 itens, preservaria as duas vendas reais
-   (`#9543`/`#9544`) e religaria os triggers.
+   triggers de manutenção só dentro da transação, repõe o saldo dos movimentos
+   ligados a vendas de seed e confere o resultado antes do `COMMIT`.
 
 O script de limpeza **não** é executado por `npm run validar:migracoes` nem por
 deploy. Ele precisa de autorização explícita e de um corte conferido no
-diagnóstico. **A limpeza ainda não foi executada em produção.**
+diagnóstico.
 
 ## Testes
 

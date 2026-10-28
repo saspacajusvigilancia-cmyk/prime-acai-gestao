@@ -261,9 +261,14 @@ propósito, para nunca entrarem numa aplicação automática:
   organização, desliga o trigger de imutabilidade do livro e o trigger de saldo do
   produto **apenas dentro da transação**, apaga os movimentos/vendas de seed,
   recalcula o saldo dos produtos afetados e religa os triggers antes do `COMMIT`.
-  Se qualquer passo falhar, o `ROLLBACK` restaura dados e triggers. Simulado com
-  rollback em 28/10/2026: 8.537 vendas e 12.801 itens sairiam, duas vendas reais
-  ficariam e os triggers voltariam ao estado original.
+  Se qualquer passo falhar, o `ROLLBACK` restaura dados e triggers.
+
+A limpeza foi autorizada e executada em `production` em 28/10/2026, com corte
+`2026-10-20 00:00:00-03`, depois do backup verificado. Resultado: **2 vendas,
+2 itens, 9 clientes, 518 lançamentos e 29 movimentos**; `#9543` e `#9544` foram
+preservadas, o saldo em cache ficou igual ao livro-razão e os triggers voltaram
+ao estado original. A branch temporária de ensaio foi excluída; o backup
+`backup-riscos-20261028` permanece.
 
 Não execute a limpeza sem uma branch/backup restaurável e sem revisar o
 diagnóstico. Ela não apaga produtos nem clientes automaticamente.
