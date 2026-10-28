@@ -37,10 +37,12 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `29_multi_organizacao.sql` | `organization_id` em vendas, itens, clientes e lançamentos; backfill pela organização mais antiga; preenchimento automático; RLS por organização; validação de cliente/produto/recipiente entre organizações |
 | `30_indices_chaves_estrangeiras.sql` | Índices nas 25 colunas de chave estrangeira que ainda faziam varredura completa no lado filho; só cria índices, sem tocar em dados, RLS ou funções |
 | `31_permissoes_perfil_e_indices_compostos.sql` | Versiona a RPC `definir_permissao_perfil()` (antes só existia em produção), restringe a execução a `authenticated` e cria os dois índices das FKs compostas restantes; idempotente |
-| `reverter_08_…` até `reverter_31_…` (e as anteriores) | Reversões conservadoras; a 21 bloqueia categorias personalizadas em uso, a 22 bloqueia movimentos do estoque geral, a 23 impede remover WhatsApps cadastrados, a 24 preserva os novos metadados, a 26 não remove códigos gravados, a 27 bloqueia reversão quando já há operações/snapshots/autorizações, a 28 devolve a edição manual do código do cliente, a 29 volta as políticas ao formato sem organização sem apagar linhas, a 30 remove apenas os índices que criou e a 31 remove a RPC e os dois índices |
+| `32_codigos_idempotencia_por_organizacao.sql` | Código de venda, código de cliente e chave de idempotência únicos por organização; contador atômico em `private.organization_counters`; `registrar_venda()` filtra cliente/produto/recipiente/chave pela organização; remove políticas antigas `usuario_*`; idempotente |
+| `reverter_08_…` até `reverter_32_…` (e as anteriores) | Reversões conservadoras; a 21 bloqueia categorias personalizadas em uso, a 22 bloqueia movimentos do estoque geral, a 23 impede remover WhatsApps cadastrados, a 24 preserva os novos metadados, a 26 não remove códigos gravados, a 27 bloqueia reversão quando já há operações/snapshots/autorizações, a 28 devolve a edição manual do código do cliente, a 29 volta as políticas ao formato sem organização sem apagar linhas, a 30 remove apenas os índices que criou, a 31 remove a RPC e os dois índices e a 32 restaura as chaves globais somente se não houver repetição entre organizações |
 | `garantir_perfil_novo.sql` | Versão de `garantir_perfil()` que lê e-mail e convite — conta sem convite nasce **inativa** (aprovação pelo administrador) e convite define papel/ativação. **Passo manual**, não é `NN_*.sql`; o app usa `aprovacaoManual: true` |
 | `classificar_produtos_buffet.sql` | Classificação inicial do Estoque Buffet: `Acai self-service` vira `buffet`, granola/leite em pó/morango/banana viram `insumo` e o retorno é ligado só em granola e leite em pó. **Passo manual**, não é `NN_*.sql`; a reversão está em `classificar_produtos_buffet_reverter.sql` |
 | `testar-base.mjs` | Testa a base real de ponta a ponta (`npm run testar:base`) |
+| `diagnostico_seguranca.sql` | Diagnóstico somente leitura de RLS, políticas abertas, privilégios diretos, tabelas internas sem política e unicidade composta por organização |
 | `testar-permissoes.mjs` | Testa o banco de permissões contra a base real |
 | `validar-migracoes.mjs` | Aplica a cadeia inteira num Postgres **em memória** e exercita os comportamentos (`npm run validar:migracoes`) |
 | `verificar-estoque.mjs` | Confere o livro-razão do estoque **na base real** (`npm run verificar:estoque`; `--concorrencia` inclui o teste de duas conexões) |
@@ -208,7 +210,39 @@ npx neon data-api refresh-schema
 ```
 
 A reversão remove a função e os dois índices. Em produção, reaplicar a `31`
-recria a função; nenhum dado é perdido.
+recria a função; nenhum dado é perdido. A `31` foi aplicada em `production` em
+28/10/2026, junto com as migrações 29 e 32, após backup verificado.
+
+### Códigos e idempotência por organização (migração 32)
+
+A `29` isolou as linhas, mas manteve três chaves globais:
+`vendas.codigo`, `clientes.codigo` e `vendas.chave_idempotencia`. Duas lojas não
+podiam repetir o mesmo número de pedido/cliente, e a busca de idempotência podia
+devolver a venda de outra organização. A `32`:
+
+- cria `private.organization_counters`, fora do Data API, com um contador
+  atômico por organização e recurso (`venda`/`cliente`);
+- troca as constraints globais por índices únicos
+  `(organization_id, codigo)` e
+  `(organization_id, chave_idempotencia) where chave_idempotencia is not null`;
+- reescreve `proximo_codigo_venda()`, `proximo_codigo_cliente()`,
+  `reservar_codigo_venda()` e `reservar_codigo_cliente()`;
+- ajusta `registrar_venda()` para validar cliente, produto, recipiente e chave
+  de idempotência na organização da sessão;
+- remove as políticas antigas `usuario_clientes`, `usuario_lancamentos`,
+  `usuario_vendas` e `usuario_itens_venda`, que tinham `qual = true` em bancos
+  que pularam a `17`;
+- mantém um trigger que sobe o contador se um código numérico for digitado
+  manualmente acima dele.
+
+A migração é idempotente e tem reversão em
+`reverter_32_codigos_idempotencia_por_organizacao.sql`. A reversão recusa rodar
+se houver códigos/chaves repetidos entre organizações, para não perder dados.
+Ela foi aplicada em `production` em 28/10/2026 após conferir a branch de backup
+`backup-riscos-20261028`.
+
+O diagnóstico somente leitura `diagnostico_seguranca.sql` confere RLS, políticas
+abertas, privilégios diretos e os índices compostos.
 
 ### Dados de demonstração na branch de produção
 
@@ -245,10 +279,16 @@ dados. A 29 fecha essa lacuna:
 - troca todas as políticas por `pode(...) and organization_id = minha_organizacao()`;
 - valida, no banco, que cliente/produto/recipiente citados numa venda pertencem à
   mesma organização. A venda roda em RPC `security definer`, onde o RLS não vale;
-  sem essa checagem, um chamador direto da RPC poderia usar preço/estoque alheios.
+  sem essa checagem, um chamador direto da RPC poderia usar preço/estoque alheios;
+- remove as políticas antigas `usuario_clientes`, `usuario_lancamentos`,
+  `usuario_vendas` e `usuario_itens_venda`. Uma produção que pulou a 17 mantinha
+  `qual = true` nessas políticas; como políticas permissivas se somam, sem essa
+  remoção o isolamento da 29 ficaria anulado.
 
-Aplique depois de validar a cadeia, conferir a organização de destino e ter um
-backup com restauração verificada:
+A 29 foi aplicada em `production` em 28/10/2026, depois de a branch
+`backup-riscos-20261028` ser aberta e conferida. Aplique em outro banco depois de
+validar a cadeia, conferir a organização de destino e ter um backup com
+restauração verificada:
 
 ```bash
 npm run validar:migracoes
@@ -256,19 +296,19 @@ node neon/aplicar.mjs 29
 npx neon data-api refresh-schema
 ```
 
-Limitações conhecidas, de propósito nesta etapa:
+Limitações desta etapa (a primeira foi fechada pela migração 32):
 
-- `vendas.codigo` e `clientes.codigo` continuam únicos **globalmente**; os
-  geradores sequenciais (26/28) não são por organização. Duas lojas não podem
-  repetir o mesmo número de pedido/cliente.
-- A busca de idempotência da venda usa só `chave_idempotencia` (UUID gerado no
-  navegador). A colisão entre organizações é improvável, mas não é impossível.
+- ~~`vendas.codigo` e `clientes.codigo` únicos globalmente~~. A `32` troca por
+  unicidade composta com `organization_id` e usa contador atômico por
+  organização; duas lojas podem repetir `#1`/`C-0001`.
+- ~~A busca de idempotência usa só `chave_idempotencia`~~. A `32` passou a buscar
+  e a gravar a chave dentro da organização da sessão.
 - `registrar_movimentacao`, `ajustar_saldo` e `registrar_movimentacao_local`
   continuam executáveis por `authenticated`. Revogá-las muda o contrato público e
   exige atualizar `validar-migracoes.mjs`; ficou como pendência separada.
 - `reverter_29` remove as colunas e volta as políticas sem organização, **sem
   apagar linhas**. Rode-a apenas sabendo que o isolamento entre lojas deixa de
-  existir ao final.
+  existir ao final. A `reverter_32` precisa rodar antes.
 
 Os arquivos de reversão começam com `reverter_` de propósito: assim **não** casam
 com o filtro de migrações numeradas e nunca entram numa aplicação normal. O

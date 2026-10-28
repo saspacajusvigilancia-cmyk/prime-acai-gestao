@@ -822,6 +822,198 @@ log('\n== 29 · Multi-organização: dados não atravessam a fronteira ==')
   }
 }
 
+log('\n== 32 · Códigos e idempotência por organização ==')
+{
+  await devePassar(
+    'o mesmo código de cliente pode existir em duas organizações',
+    `insert into public.clientes (organization_id, codigo, nome) values
+       ('${ORG}',  'C-32-IGUAL', 'Cliente da loja 1'),
+       ('${ORG2}', 'C-32-IGUAL', 'Cliente da loja 2')`,
+  )
+  await deveFalhar(
+    'o mesmo código de cliente na MESMA organização é recusado',
+    `insert into public.clientes (organization_id, codigo, nome)
+     values ('${ORG}', 'C-32-IGUAL', 'Cliente repetido')`,
+    'duplicate key|unique',
+  )
+
+  await devePassar(
+    'o mesmo código de venda e a mesma chave de idempotência podem existir em duas organizações',
+    `insert into public.vendas
+       (organization_id, codigo, status, pagamento, total, chave_idempotencia)
+     values
+       ('${ORG}',  '#32-IGUAL', 'Concluída', 'Pix', 0, 'chave-32-igual'),
+       ('${ORG2}', '#32-IGUAL', 'Concluída', 'Pix', 0, 'chave-32-igual')`,
+  )
+  await deveFalhar(
+    'o mesmo código de venda na MESMA organização é recusado',
+    `insert into public.vendas
+       (organization_id, codigo, status, pagamento, total)
+     values ('${ORG}', '#32-IGUAL', 'Concluída', 'Pix', 0)`,
+    'duplicate key|unique',
+  )
+  await deveFalhar(
+    'a mesma chave de idempotência na MESMA organização é recusada',
+    `insert into public.vendas
+       (organization_id, codigo, status, pagamento, total, chave_idempotencia)
+     values ('${ORG}', '#32-OUTRO', 'Concluída', 'Pix', 0, 'chave-32-igual')`,
+    'duplicate key|unique',
+  )
+
+  // A RPC security definer também precisa procurar a chave na organização da
+  // sessão. Duas lojas podem usar a mesma chave sem uma devolver a venda da outra.
+  await autenticar(ADMIN)
+  const produto1 = await um(
+    `insert into public.produtos
+       (organization_id, codigo, nome, categoria, tipo_venda, unidade, preco, ativo, controla_estoque)
+     values ('${ORG}', 'IDEM-32-1', 'Produto idempotente 1', 'Teste', 'unidade', 'un', 1, true, false)
+     returning id`,
+  )
+  await autenticar(ADMIN2)
+  const produto2 = await um(
+    `insert into public.produtos
+       (organization_id, codigo, nome, categoria, tipo_venda, unidade, preco, ativo, controla_estoque)
+     values ('${ORG2}', 'IDEM-32-2', 'Produto idempotente 2', 'Teste', 'unidade', 'un', 1, true, false)
+     returning id`,
+  )
+
+  const venda1 = await rpcComo(
+    ADMIN,
+    `select * from public.registrar_venda(
+       '[{"produto_id":"${produto1.id}","quantidade":1}]'::jsonb,
+       'idem-32', null, 'Pix', 'Concluída', '#32-ORG1'
+     )`,
+  )
+  const venda2 = await rpcComo(
+    ADMIN2,
+    `select * from public.registrar_venda(
+       '[{"produto_id":"${produto2.id}","quantidade":1}]'::jsonb,
+       'idem-32', null, 'Pix', 'Concluída', '#32-ORG2'
+     )`,
+  )
+  const primeira = venda1.linhas[0]
+  const segunda = venda2.linhas[0]
+  if (
+    !venda1.erro && !venda2.erro &&
+    primeira?.ja_existia === false && segunda?.ja_existia === false &&
+    primeira?.id && segunda?.id && primeira.id !== segunda.id
+  ) {
+    ok('a mesma chave de idempotência em outra organização cria uma venda nova, não devolve a alheia')
+  } else {
+    podeFalhar(
+      'idempotência por organização na RPC',
+      venda1.erro?.message ?? venda2.erro?.message ?? JSON.stringify({ primeira, segunda }),
+    )
+  }
+
+  // O próximo pedido exibido também é por organização e não consome o contador.
+  await autenticar(ADMIN)
+  const proximoLoja1 = (await um('select public.proximo_codigo_venda() as c')).c
+  await autenticar(ADMIN2)
+  const proximoLoja2 = (await um('select public.proximo_codigo_venda() as c')).c
+  if (/^#[0-9]+$/.test(proximoLoja1) && /^#[0-9]+$/.test(proximoLoja2)) {
+    ok('cada organização consulta seu próprio próximo pedido', `${proximoLoja1} / ${proximoLoja2}`)
+  } else {
+    podeFalhar('próximo pedido por organização', `${proximoLoja1} / ${proximoLoja2}`)
+  }
+
+  // Limpa os registros deste bloco para não interferir nas contagens seguintes.
+  await db.exec(`
+    delete from public.vendas
+     where chave_idempotencia = 'chave-32-igual'
+        or chave_idempotencia = 'idem-32'
+        or codigo in ('#32-IGUAL', '#32-ORG1', '#32-ORG2');
+    delete from public.produtos where codigo in ('IDEM-32-1', 'IDEM-32-2');
+    delete from public.clientes where codigo = 'C-32-IGUAL';
+  `)
+}
+
+log('\n== Segurança: RLS e privilégios diretos ==')
+{
+  const semRls = await contar(`
+    select count(*)::int as n
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'public'
+       and c.relkind = 'r'
+       and not c.relrowsecurity
+  `)
+  if (semRls === 0) ok('todas as tabelas públicas têm RLS ligado')
+  else podeFalhar('RLS desligado', `${semRls} tabela(s) sem RLS`)
+
+  const politicasSemOrganizacao = await contar(`
+    select count(*)::int as n
+      from pg_policies
+     where schemaname = 'public'
+       and tablename in ('vendas','itens_venda','clientes','lancamentos')
+       and not (
+         coalesce(qual, '') like '%organization_id%'
+         or coalesce(with_check, '') like '%organization_id%'
+       )
+  `)
+  if (politicasSemOrganizacao === 0) {
+    ok('toda política de vendas/clientes/financeiro filtra pela organização')
+  } else {
+    podeFalhar('política sem organization_id', `${politicasSemOrganizacao} política(s)`)
+  }
+
+  const politicasAbertas = await contar(`
+    select count(*)::int as n
+      from pg_policies
+     where schemaname = 'public'
+       and tablename in ('vendas','itens_venda','clientes','lancamentos')
+       and (qual = 'true' or with_check = 'true')
+  `)
+  if (politicasAbertas === 0) ok('não sobrou política permissiva com qual/with_check true')
+  else podeFalhar('política permissiva', `${politicasAbertas} política(s)`)
+
+  const semPolitica = (await db.query(`
+    select c.relname
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'public'
+       and c.relkind = 'r'
+       and c.relrowsecurity
+       and not exists (
+         select 1 from pg_policies p
+          where p.schemaname = 'public' and p.tablename = c.relname
+       )
+     order by c.relname
+  `)).rows.map((r) => r.relname)
+  const esperadas = [
+    'audit_logs',
+    'estoque_operacoes_locais_v2',
+    'invite_permissions',
+    'invites',
+    'user_permissions',
+  ]
+  if (JSON.stringify(semPolitica) === JSON.stringify(esperadas)) {
+    ok('as cinco tabelas internas continuam com RLS e sem política direta')
+  } else {
+    podeFalhar('tabelas sem política', JSON.stringify(semPolitica))
+  }
+
+  const privilegiosAnonimos = await contar(`
+    select count(*)::int as n
+      from information_schema.role_table_grants
+     where table_schema = 'public'
+       and grantee = 'anonymous'
+  `)
+  if (privilegiosAnonimos === 0) ok('o papel anonymous não tem privilégio direto em tabelas públicas')
+  else podeFalhar('privilégios de anonymous', `${privilegiosAnonimos} concessão(ões)`)
+
+  const privilegiosInternos = await contar(`
+    select count(*)::int as n
+      from information_schema.role_table_grants
+     where table_schema = 'public'
+       and grantee = 'authenticated'
+       and table_name in ('audit_logs','invites','invite_permissions','user_permissions','estoque_operacoes_locais_v2')
+       and privilege_type in ('SELECT','INSERT','UPDATE','DELETE')
+  `)
+  if (privilegiosInternos === 0) ok('as tabelas internas não têm DML direto para authenticated')
+  else podeFalhar('DML direto nas tabelas internas', `${privilegiosInternos} concessão(ões)`)
+}
+
 log('\n== P2 · Saldos iniciais: o que já existia entrou no livro ==')
 {
   const divergentes = await contar(

@@ -103,7 +103,7 @@ continuar a mesma.
 ### Branches do projeto no Neon
 
 O projeto `Prime Açaí` (`nameless-tooth-87377816`, região `aws-sa-east-1`) usa
-três branches. Trocar de branch é trocar o host na `DATABASE_URL`; a
+as branches abaixo. Trocar de branch é trocar o host na `DATABASE_URL`; a
 `VITE_NEON_URL` continua apontando para `production`.
 
 | Branch | Endpoint | Uso |
@@ -111,11 +111,15 @@ três branches. Trocar de branch é trocar o host na `DATABASE_URL`; a
 | `production` (padrão) | `ep-fragrant-snow-b6xa862f` | base real do app |
 | `prime-acai-predeploy-20261028` | `ep-plain-lake-b66do9gp` | ensaio de migração antes de produção |
 | `backup-antes-27-20261028` | sem endpoint | ponto de restauração anterior à migração 27 |
+| `backup-riscos-20261028` | sem endpoint | cópia verificada anterior às migrações 29, 31 e 32 |
+| `teste-migracao-32-20261028` | endpoint temporário | ensaio das migrações 29, 31 e 32; pode ser descartada |
 
 Crie o branch de ensaio a partir de `production` (`npx neon branches create --name <nome>`),
 aplique a migração nele, valide com `compare_database_schema` e só então repita em
 produção. Branch de ensaio defasado dá falso positivo: em 28/10/2026 o anterior
-estava quatro migrações atrás e foi recriado do zero.
+estava quatro migrações atrás e foi recriado do zero. O backup
+`backup-riscos-20261028` foi aberto e conferido (8.539 vendas, 12.803 itens e
+9 clientes) antes da aplicação em produção.
 
 ### RLS sem política é intencional
 
@@ -177,17 +181,31 @@ A migração `29_multi_organizacao.sql` coloca `organization_id` em `vendas`,
 `itens_venda`, `clientes` e `lancamentos` e troca as políticas por permissão +
 organização. Linhas antigas são vinculadas à organização mais antiga; linhas novas
 recebem a organização da sessão por trigger. A venda (RPC `security definer`)
-também recusa cliente/produto/recipiente de outra organização. Códigos de venda e
-cliente ainda são únicos **globalmente** e a busca de idempotência usa a chave
-global — as duas limitações estão registradas em `neon/README.md`.
+também recusa cliente/produto/recipiente de outra organização. A migração `29`
+remove as políticas antigas `usuario_*` (que tinham `qual = true`) e não deixa
+política permissiva anular o isolamento.
 
-Antes de publicar um build que dependa do isolamento, aplique a migração no banco
-de destino com backup verificado e atualize o cache do Data API:
+A migração `32_codigos_idempotencia_por_organizacao.sql` fecha as três chaves
+globais restantes: `vendas.codigo`, `clientes.codigo` e
+`vendas.chave_idempotencia` passam a ser únicos **dentro da organização**. O
+contador interno (`private.organization_counters`) reserva códigos de venda e de
+cliente de forma atômica, e a RPC `registrar_venda()` procura a chave de
+idempotência apenas na organização da sessão. Assim, duas lojas podem ter o
+pedido `#1` e o cliente `C-0001` sem uma enxergar a venda da outra.
+
+As migrações 29, 30, 31 e 32 estão aplicadas em `production` desde 28/10/2026,
+depois de a branch `backup-riscos-20261028` ser aberta e conferida. Para aplicar
+em outro banco, valide a cadeia e use backup verificado:
 
 ```bash
 node neon/aplicar.mjs 29
+node neon/aplicar.mjs 31
+node neon/aplicar.mjs 32
 npx neon data-api refresh-schema
 ```
+
+O diagnóstico somente leitura de RLS, privilégios e chaves compostas é
+`neon/diagnostico_seguranca.sql`.
 
 
 ## Banco de dados
@@ -195,16 +213,16 @@ npx neon data-api refresh-schema
 O banco é criado por **um arquivo só**: `neon/00_banco_neon.sql`
 (tabelas, índices, funções, views, GRANTs, RLS e os dados de exemplo).
 Depois dele, cada mudança veio numa migração numerada (`neon/01_…` até
-`neon/31_…`; a `12` é dados de estudo e não entra na aplicação padrão, a `16`
+`neon/32_…`; a `12` é dados de estudo e não entra na aplicação padrão, a `16`
 é Compras, a `17` aplica permissões de clientes/financeiro, a `18` acrescenta
 canais e pagamentos, a `19` habilita fotos persistentes de produtos, a `20` cria
 o catálogo de categorias, a `21` categoriza os tipos de venda, as `22`–`25`
 tratam locais, baixas por produto, operações do Estoque Buffet e reconciliação
 por turno, a `26`/`28` reservam códigos sequenciais de produto/cliente, a `29`
 aplica o isolamento por organização, a `30` indexa as chaves estrangeiras
-simples e a `31` versiona a RPC de permissões por perfil e os dois índices de
-chave estrangeira compostos que faltavam). A aplicação é por prefixo, **um
-arquivo por vez**:
+simples, a `31` versiona a RPC de permissões por perfil e os dois índices de
+chave estrangeira compostos que faltavam e a `32` torna códigos e idempotência
+únicos por organização). A aplicação é por prefixo, **um arquivo por vez**:
 
 ```bash
 node neon/aplicar.mjs 11     # só a que começa com "11"
@@ -262,9 +280,18 @@ A migração `31` fecha as duas lacunas que sobraram na auditoria de 28/10/2026:
   `movimentacoes_estoque (organization_id, produto_id)`).
 
 Ela é idempotente e tem reversão em
-`neon/reverter_31_permissoes_perfil_e_indices_compostos.sql`. **Não** foi
-aplicada automaticamente em produção por este repositório: aplique com backup
-verificado e depois atualize o cache do Data API.
+`neon/reverter_31_permissoes_perfil_e_indices_compostos.sql`. Foi aplicada em
+`production` em 28/10/2026 junto com a 29 e a 32, após backup verificado.
+
+A migração `32` troca as unicidades globais de código de venda, código de cliente
+e chave de idempotência por índices compostos com `organization_id`. A reserva
+de códigos usa um contador no schema `private`, fora do Data API, e a RPC
+`registrar_venda()` passou a filtrar cliente, produto, recipiente e chave de
+idempotência pela organização da sessão. A reversão está em
+`neon/reverter_32_codigos_idempotencia_por_organizacao.sql` e recusa rodar se
+houver códigos/chaves repetidos entre organizações. Ela também remove as
+políticas antigas `usuario_clientes`/`usuario_lancamentos` quando a produção
+pulou a migração 17.
 
 ### Dados de demonstração em produção
 

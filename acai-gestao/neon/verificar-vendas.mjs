@@ -8,7 +8,7 @@
  *
  * Por que existe: o `npm run validar:migracoes` prova a regra num Postgres em
  * memória; este prova que a venda está de pé NA PRODUÇÃO — com o cadastro de
- * verdade (o self-service a R$ 69,90/kg), com o livro-razão de verdade e com os
+ * verdade (o primeiro produto por peso ativo, com o preço real do cadastro), com o livro-razão de verdade e com os
  * perfis de verdade (o caixa que vende, quem tem `vendas.editar` que estorna, e
  * o perfil sem permissão que não estorna).
  *
@@ -137,6 +137,12 @@ const selfService = await um(
     limit 1`,
 )
 
+// O preço é o do cadastro real: não fixe R$ 69,90 nem outro valor de uma base
+// antiga. O teste precisa continuar válido quando o produto/preço mudar.
+const totalEsperado = selfService
+  ? Math.round(n(selfService.preco) * 0.45 * 100) / 100
+  : 0
+
 const porUnidade = await um(
   c,
   `select p.id, p.codigo, p.nome, p.preco, p.unidade
@@ -225,8 +231,8 @@ if (!selfService) {
     )
 
     ok(
-      `450 g × ${brl(selfService.preco)}/kg = ${brl(31.46)}`,
-      n(v1.total) === 31.46,
+      `450 g × ${brl(selfService.preco)}/kg = ${brl(totalEsperado)}`,
+      n(v1.total) === totalEsperado,
       `total devolvido = ${brl(v1.total)}`,
     )
 
@@ -256,7 +262,7 @@ if (!selfService) {
     )
     ok(
       'o total da linha é o total do pedido (2 casas)',
-      n(item.total) === 31.46 && n(v1.total) === 31.46,
+      n(item.total) === totalEsperado && n(v1.total) === totalEsperado,
       `linha ${brl(item.total)} · pedido ${brl(v1.total)}`,
     )
     ok('o item aponta para o produto e copiou a descrição', item.produto_id === selfService.id, item.descricao)
@@ -279,9 +285,10 @@ if (!selfService) {
     ok('a venda registrou quantos itens baixaram', n(v1.movimentos) === 1, `${v1.movimentos} movimento(s)`)
 
     const saldo = n((await como(c, uid, () => um(c, `select public.saldo_estoque($1) as s`, [selfService.id]))).s)
+    const saldoEsperado = antes.saldoSelfService + 5 - 0.45
     ok(
-      'o saldo derivado do livro-razão bate: 5 − 0,450 = 4,550 kg',
-      Math.abs(saldo - 4.55) < 1e-9,
+      `o saldo derivado do livro-razão bate: ${antes.saldoSelfService} + 5 − 0,450 = ${saldoEsperado.toFixed(3)} kg`,
+      Math.abs(saldo - saldoEsperado) < 1e-9,
       `saldo = ${saldo} kg`,
     )
 
@@ -344,7 +351,7 @@ if (!selfService) {
     )
     ok(
       'preço e quantidade mandados pelo navegador são ignorados',
-      n(v4.total) === 31.46 && n(item4.quantidade) === 0.45 && n(item4.preco_unitario) === n(selfService.preco),
+      n(v4.total) === totalEsperado && n(item4.quantidade) === 0.45 && n(item4.preco_unitario) === n(selfService.preco),
       `total=${brl(v4.total)} quantidade=${item4.quantidade} preço=${brl(item4.preco_unitario)}`,
     )
 
@@ -423,7 +430,7 @@ if (!selfService) {
       item5.peso_bruto_g === null &&
         item5.tara_g === null &&
         n(item5.peso_liquido_g) === 450 &&
-        n(v5.total) === 31.46,
+        n(v5.total) === totalEsperado,
       `bruto=${item5.peso_bruto_g} tara=${item5.tara_g} total=${brl(v5.total)}`,
     )
 
@@ -445,7 +452,7 @@ if (!selfService) {
         )
       ).n,
     )
-    ok('venda cancelada entra no histórico SEM baixar estoque', n(v6.total) === 31.46 && mov6 === 0, `movimentos=${mov6}`)
+    ok('venda cancelada entra no histórico SEM baixar estoque', n(v6.total) === totalEsperado && mov6 === 0, `movimentos=${mov6}`)
   })
 
   /* ----------------------------------------------------------- unidade ---- */

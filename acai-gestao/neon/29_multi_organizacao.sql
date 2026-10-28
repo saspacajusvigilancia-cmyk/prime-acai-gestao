@@ -270,6 +270,15 @@ create index if not exists idx_venda_detalhes_forma
   on public.venda_detalhes (forma_pagamento_id);
 
 -- -------------------------------------------------------------- políticas ---
+-- Remove também as políticas antigas do modelo de loja única. Em uma produção
+-- que pulou a 17, `usuario_clientes`/`usuario_lancamentos` continuam com
+-- `qual = true`; como políticas permissivas se somam, deixá-las aqui anularia
+-- todo o isolamento por organização.
+drop policy if exists usuario_vendas on public.vendas;
+drop policy if exists usuario_itens_venda on public.itens_venda;
+drop policy if exists usuario_clientes on public.clientes;
+drop policy if exists usuario_lancamentos on public.lancamentos;
+
 -- Vendas -------------------------------------------------------------------
 drop policy if exists vendas_leitura on public.vendas;
 create policy vendas_leitura on public.vendas
