@@ -35,8 +35,10 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `27_operacoes_e_reconciliacao_buffet.sql` | Perdas e devoluções auditáveis/idempotentes, autorização explícita de retorno por produto, snapshot de abertura por turno, histórico filtrável e resumo de consumo/divergência |
 | `28_codigos_sequenciais_clientes.sql` | Código de cliente reservado atomicamente (C-0000), preenchido pelo banco em inserções sem código e imutável depois de criado |
 | `29_multi_organizacao.sql` | `organization_id` em vendas, itens, clientes e lançamentos; backfill pela organização mais antiga; preenchimento automático; RLS por organização; validação de cliente/produto/recipiente entre organizações |
-| `reverter_08_…` até `reverter_29_…` (e as anteriores) | Reversões conservadoras; a 21 bloqueia categorias personalizadas em uso, a 22 bloqueia movimentos do estoque geral, a 23 impede remover WhatsApps cadastrados, a 24 preserva os novos metadados, a 26 não remove códigos gravados, a 27 bloqueia reversão quando já há operações/snapshots/autorizações, a 28 devolve a edição manual do código do cliente e a 29 volta as políticas ao formato sem organização sem apagar linhas |
+| `30_indices_chaves_estrangeiras.sql` | Índices nas 25 colunas de chave estrangeira que ainda faziam varredura completa no lado filho; só cria índices, sem tocar em dados, RLS ou funções |
+| `reverter_08_…` até `reverter_30_…` (e as anteriores) | Reversões conservadoras; a 21 bloqueia categorias personalizadas em uso, a 22 bloqueia movimentos do estoque geral, a 23 impede remover WhatsApps cadastrados, a 24 preserva os novos metadados, a 26 não remove códigos gravados, a 27 bloqueia reversão quando já há operações/snapshots/autorizações, a 28 devolve a edição manual do código do cliente, a 29 volta as políticas ao formato sem organização sem apagar linhas e a 30 remove apenas os índices que criou |
 | `garantir_perfil_novo.sql` | Versão de `garantir_perfil()` que lê e-mail e convite — conta sem convite nasce **inativa** (aprovação pelo administrador) e convite define papel/ativação. **Passo manual**, não é `NN_*.sql`; o app usa `aprovacaoManual: true` |
+| `classificar_produtos_buffet.sql` | Classificação inicial do Estoque Buffet: `Acai self-service` vira `buffet`, granola/leite em pó/morango/banana viram `insumo` e o retorno é ligado só em granola e leite em pó. **Passo manual**, não é `NN_*.sql`; a reversão está em `classificar_produtos_buffet_reverter.sql` |
 | `testar-base.mjs` | Testa a base real de ponta a ponta (`npm run testar:base`) |
 | `testar-permissoes.mjs` | Testa o banco de permissões contra a base real |
 | `validar-migracoes.mjs` | Aplica a cadeia inteira num Postgres **em memória** e exercita os comportamentos (`npm run validar:migracoes`) |
@@ -120,6 +122,15 @@ Aplicada em 28/10/2026 ao projeto Prime Açaí (`nameless-tooth-87377816`), em
 backup `backup-antes-27-20261028`. A cadeia foi validada antes com
 `npm run validar:migracoes`; o schema dos dois branches ficou idêntico
 (`compare_database_schema` sem diferenças).
+
+A 27 **não** classifica produto nenhum: sem produto `buffet`/`insumo`, o
+snapshot de abertura nasce vazio. Em 28/10/2026 a classificação aprovada foi
+aplicada como passo manual (`classificar_produtos_buffet.sql`, sem numeração de
+propósito, igual a `garantir_perfil_novo.sql`), porque é configuração de dados
+da filial e não muda schema — e porque classificar produtos como migração
+quebrava o teste de fechamento que exige a contagem completa do turno. Estado
+resultante: 1 produto `buffet`, 5 `insumo`, retorno ligado apenas em granola e
+leite em pó.
 
 A migração **não** classifica todos os produtos como venda direta: os registros
 existentes mantêm a política legada. Ela atribui a filial por meio dos

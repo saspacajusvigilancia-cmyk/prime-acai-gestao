@@ -214,6 +214,18 @@ backup `backup-antes-27-20261028`. Ela continua **não** sendo aplicada
 automaticamente por nenhum script de deploy: a aplicação é sempre manual e
 escopada por banco.
 
+Sem produto `buffet`/`insumo` o fechamento abre sem item nenhum. A classificação
+não vem da migração `27` (ela não classifica nada de propósito): em 28/10/2026
+foi aplicada como **passo manual**, `neon/classificar_produtos_buffet.sql`, com
+reversão em `neon/classificar_produtos_buffet_reverter.sql`. Todo produto novo
+de buffet ou insumo precisa ser classificado na tela de produtos, e o retorno só
+é aceito pela constraint quando o tipo é `buffet` ou `insumo`.
+
+A migração `30` criou os 25 índices que faltavam nas colunas de chave estrangeira
+(`vendas.usuario_id`, `movimentacoes_estoque.usuario_id`,
+`venda_detalhes.forma_pagamento_id`, etc.). Sem eles, apagar ou atualizar a linha
+pai percorria a tabela filha inteira.
+
 ## Testes
 
 ```bash
