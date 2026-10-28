@@ -105,6 +105,12 @@ export function buffetPage() {
         perda: novaChave(),
         devolucao: novaChave(),
       }
+      // Contagens digitadas sobrevivem ao redesenho da tela. Sem isso,
+      // qualquer recarga (abrir/fechar um fechamento, filtrar o histórico)
+      // devolvia todos os campos ao saldo do sistema, apagando o que o
+      // operador já tinha contado — e o fechamento seguinte zerava o estoque.
+      let contagensDigitadas = new Map()
+      let fechamentoDaContagem = null
       let erro = ''
 
       const saldoBuffet = (produto) =>
@@ -140,16 +146,35 @@ export function buffetPage() {
       }
 
       function render() {
+        // Guarda o que já foi digitado ANTES de trocar o HTML da tela. O
+        // fechamento é identificado pelo id: ao abrir outro turno, as
+        // contagens antigas não podem vazar para o novo.
+        const capturadas = new Map()
+        host.querySelectorAll('[data-produto]').forEach((campo) => {
+          if (campo.dataset.produto) capturadas.set(campo.dataset.produto, campo.value)
+        })
+
         const aberto = fechamentos.find((item) => item.status === 'aberto')
+        const idAberto = aberto?.id ?? null
+        if (idAberto !== fechamentoDaContagem) {
+          contagensDigitadas = new Map()
+          fechamentoDaContagem = idAberto
+        } else if (capturadas.size) {
+          contagensDigitadas = capturadas
+        }
+
         const elegiveis = itensElegiveis()
         const comSaldoBuffet = elegiveis.filter((produto) => saldoBuffet(produto) > 0)
         const disponiveisNormais = elegiveis.filter((produto) =>
           saldoLocal(produto, 'loja') > 0 || saldoLocal(produto, 'geral') > 0,
         )
         const autorizadosRetorno = comSaldoBuffet.filter((produto) => produto.permiteRetornoBuffet)
-        const opcoesProduto = (lista, selecionado = '') => lista.map((produto) => `
+        // O rótulo mostra o saldo do LOCAL RELEVANTE para o formulário. Antes
+        // todos mostravam o saldo do Buffet — inclusive o de abastecimento,
+        // que sai da loja/estoque geral e aparecia sempre zerado.
+        const opcoesProduto = (lista, selecionado = '', saldoDe = saldoBuffet) => lista.map((produto) => `
           <option value="${esc(produto.uuid ?? produto.id)}"${String(produto.uuid ?? produto.id) === String(selecionado) ? ' selected' : ''}>
-            ${esc(produto.nome)} — ${formatNumero(saldoBuffet(produto))} ${esc(produto.unidade)}
+            ${esc(produto.nome)} — ${formatNumero(saldoDe(produto))} ${esc(produto.unidade)}
           </option>
         `).join('')
         host.innerHTML = `
@@ -174,9 +199,11 @@ export function buffetPage() {
                         <td><strong>${esc(produto.nome)}</strong><span class="cell-sub">${esc(produto.id)}</span></td>
                         <td>${esc(produto.unidade)}</td>
                         <td class="ta-right">${formatNumero(saldoBuffet(produto))}</td>
-                        <td><input class="campo__input" type="number" min="0" step="0.001"
+                        <td><input class="campo__input" type="number" min="0"
+                          step="${produto.unidade === 'un' ? '1' : '0.001'}" inputmode="decimal"
                           data-produto="${esc(produto.uuid ?? produto.id)}"
-                          value="${saldoBuffet(produto)}" aria-label="Contagem de ${esc(produto.nome)}" /></td>
+                          value="${esc(contagensDigitadas.get(String(produto.uuid ?? produto.id)) ?? saldoBuffet(produto))}"
+                          aria-label="Contagem de ${esc(produto.nome)}" /></td>
                       </tr>
                     `).join('')}</tbody>
                   </table>
@@ -206,7 +233,10 @@ export function buffetPage() {
               </table></div>` : '<p class="muted">Cadastre produtos como Buffet ou insumos e habilite o controle de estoque para operar este local.</p>'}
             ${pode('estoque', 'criar') ? `
               <form data-form-operacao="abastecimento" class="buffet__form">
-                <label class="campo"><span class="campo__label">Produto a abastecer</span><select class="campo__input" name="produtoId" required>${opcoesProduto(disponiveisNormais)}</select></label>
+                <label class="campo"><span class="campo__label">Produto a abastecer</span><select class="campo__input" name="produtoId" required>${disponiveisNormais.map((produto) => `
+                  <option value="${esc(produto.uuid ?? produto.id)}">
+                    ${esc(produto.nome)} — loja ${formatNumero(saldoLocal(produto, 'loja'))} · geral ${formatNumero(saldoLocal(produto, 'geral'))} ${esc(produto.unidade)}
+                  </option>`).join('')}</select></label>
                 <label class="campo"><span class="campo__label">Origem</span><select class="campo__input" name="origem"><option value="estoque">Estoque da loja</option><option value="estoque_geral">Estoque geral</option></select></label>
                 <label class="campo"><span class="campo__label">Quantidade</span><input class="campo__input" name="quantidade" type="number" min="0.001" step="0.001" required /></label>
                 <label class="campo"><span class="campo__label">Motivo</span><input class="campo__input" name="motivo" maxlength="500" required value="Abastecimento do Buffet" /></label>
@@ -281,6 +311,12 @@ export function buffetPage() {
         `
         renderIcons(host)
 
+        host.querySelectorAll('[data-produto]').forEach((campo) => {
+          campo.addEventListener('input', () => {
+            if (campo.dataset.produto) contagensDigitadas.set(campo.dataset.produto, campo.value)
+          })
+        })
+
         host.querySelector('[data-acao="abrir"]')?.addEventListener('click', async (evento) => {
           const botao = evento.currentTarget
           botao.disabled = true
@@ -310,6 +346,15 @@ export function buffetPage() {
           }))
           if (itens.some((item) => !Number.isFinite(item.quantidade) || item.quantidade < 0)) {
             toast('Informe a contagem de todos os produtos antes de fechar o turno.')
+            return
+          }
+          const itemComFracao = itens.find((item) => {
+            const produto = produtos.find((p) => String(p.uuid ?? p.id) === item.produtoId)
+            return produto?.unidade === 'un' && !Number.isInteger(item.quantidade)
+          })
+          if (itemComFracao) {
+            const produto = produtos.find((p) => String(p.uuid ?? p.id) === itemComFracao.produtoId)
+            toast(`"${produto?.nome ?? 'Produto'}" é contado em unidades inteiras. Ajuste a contagem.`)
             return
           }
           const aceitou = await confirmar({
@@ -345,7 +390,19 @@ export function buffetPage() {
             const produtoId = valores.get('produtoId')
             const produto = produtos.find((item) => (item.uuid ?? item.id) === produtoId)
             const quantidade = Number(valores.get('quantidade'))
-            const descricao = `${formatNumero(quantidade)} ${produto?.unidade ?? ''} de ${produto?.nome ?? 'produto'}`
+            if (!produto) {
+              toast('Selecione um produto válido.')
+              return
+            }
+            if (!Number.isFinite(quantidade) || quantidade <= 0) {
+              toast('Informe uma quantidade maior que zero.')
+              return
+            }
+            if (produto.unidade === 'un' && !Number.isInteger(quantidade)) {
+              toast(`"${produto.nome}" é contado em unidades inteiras.`)
+              return
+            }
+            const descricao = `${formatNumero(quantidade)} ${produto.unidade} de ${produto.nome}`
             const titulo = tipo === 'abastecimento'
               ? 'Confirmar abastecimento do Buffet?'
               : tipo === 'perda'
@@ -411,9 +468,15 @@ export function buffetPage() {
         host.querySelector('[data-form-filtro="operacoes"]')?.addEventListener('submit', async (evento) => {
           evento.preventDefault()
           const valores = new FormData(evento.currentTarget)
+          const desde = valores.get('desde') || ''
+          const ate = valores.get('ate') || ''
+          if (desde && ate && desde > ate) {
+            toast('A data inicial não pode ser posterior à data final.')
+            return
+          }
           filtrosOperacoes = {
-            desde: valores.get('desde') || '',
-            ate: valores.get('ate') || '',
+            desde,
+            ate,
             produtoId: valores.get('produtoId') || '',
           }
           await carregarDados()

@@ -195,14 +195,16 @@ npx neon data-api refresh-schema
 O banco é criado por **um arquivo só**: `neon/00_banco_neon.sql`
 (tabelas, índices, funções, views, GRANTs, RLS e os dados de exemplo).
 Depois dele, cada mudança veio numa migração numerada (`neon/01_…` até
-`neon/29_…`; a `12` é dados de estudo e não entra na aplicação padrão, a `16`
+`neon/31_…`; a `12` é dados de estudo e não entra na aplicação padrão, a `16`
 é Compras, a `17` aplica permissões de clientes/financeiro, a `18` acrescenta
 canais e pagamentos, a `19` habilita fotos persistentes de produtos, a `20` cria
 o catálogo de categorias, a `21` categoriza os tipos de venda, as `22`–`25`
 tratam locais, baixas por produto, operações do Estoque Buffet e reconciliação
-por turno, a `26`/`28` reservam códigos sequenciais de produto/cliente e a `29`
-aplica o isolamento por organização). A aplicação é por prefixo, **um arquivo
-por vez**:
+por turno, a `26`/`28` reservam códigos sequenciais de produto/cliente, a `29`
+aplica o isolamento por organização, a `30` indexa as chaves estrangeiras
+simples e a `31` versiona a RPC de permissões por perfil e os dois índices de
+chave estrangeira compostos que faltavam). A aplicação é por prefixo, **um
+arquivo por vez**:
 
 ```bash
 node neon/aplicar.mjs 11     # só a que começa com "11"
@@ -244,9 +246,48 @@ de buffet ou insumo precisa ser classificado na tela de produtos, e o retorno s�
 é aceito pela constraint quando o tipo é `buffet` ou `insumo`.
 
 A migração `30` criou os 25 índices que faltavam nas colunas de chave estrangeira
-(`vendas.usuario_id`, `movimentacoes_estoque.usuario_id`,
+simples (`vendas.usuario_id`, `movimentacoes_estoque.usuario_id`,
 `venda_detalhes.forma_pagamento_id`, etc.). Sem eles, apagar ou atualizar a linha
 pai percorria a tabela filha inteira.
+
+A migração `31` fecha as duas lacunas que sobraram na auditoria de 28/10/2026:
+
+- versiona `public.definir_permissao_perfil(text, text, text, boolean)`, que já
+  existia em produção mas não em nenhuma migração — um banco criado do zero pela
+  cadeia `neon/*.sql` tinha a tela **Configurações → Permissões** quebrada. A
+  função exige administrador, recusa alterar o perfil `admin`, valida perfil e
+  permissão contra o catálogo e grava a mudança em `audit_logs`;
+- cria os índices das duas FKs compostas restantes
+  (`tipos_venda (organization_id, categoria)` e
+  `movimentacoes_estoque (organization_id, produto_id)`).
+
+Ela é idempotente e tem reversão em
+`neon/reverter_31_permissoes_perfil_e_indices_compostos.sql`. **Não** foi
+aplicada automaticamente em produção por este repositório: aplique com backup
+verificado e depois atualize o cache do Data API.
+
+### Dados de demonstração em produção
+
+A auditoria de 28/10/2026 encontrou **8.537 vendas de seed** na branch
+`production`, datadas de 17/05/2026 a 19/10/2026, misturadas a apenas duas vendas
+reais posteriores. Os totais das vendas de seed não fecham com a soma dos itens
+de propósito; isso **não** é bug de cálculo do app. O impacto é de relatório:
+outubro/2026 aparecia com cerca de R$ 58,5 mil de faturamento fictício.
+
+Não apague nada por data sem revisar. Use, nesta ordem:
+
+1. `neon/diagnostico_dados_demonstracao.sql` — **somente leitura**, mostra vendas
+   por período, divergências de total, produtos/clientes antigos, integridade do
+   estoque e tabelas com RLS sem política;
+2. criar uma branch/backup do Neon e confirmar que ela abre;
+3. `neon/limpar_dados_demonstracao.sql` — limpeza **guardada**, exige
+   `acai.limpar_ate` e `acai.confirmar = 'SIM'`, roda em transação, repõe o saldo
+   dos poucos movimentos ligados a vendas de seed e aborta se o corte atingir uma
+   venda que seria preservada.
+
+O script de limpeza **não** é executado por `npm run validar:migracoes` nem por
+deploy. Ele precisa de autorização explícita e de um corte conferido no
+diagnóstico.
 
 ## Testes
 

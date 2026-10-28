@@ -760,7 +760,12 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
         renderItensNovos()
       }
 
+      let salvandoCompra = false
+
       async function salvarCompra(aguardarRecebimento) {
+        // Dois cliques (ou Enter repetido) não podem gerar duas compras: os
+        // botões são desabilitados juntos, antes de qualquer chamada de rede.
+        if (salvandoCompra) return
         if (!podeCriar()) {
           toast('Sua conta não tem permissão para registrar compras.')
           return
@@ -770,9 +775,15 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
           return
         }
 
+        salvandoCompra = true
         const botao = aguardarRecebimento ? el('#compra-salvar') : el('#compra-salvar-rascunho')
         const rotuloOriginal = botao.innerHTML
-        botao.disabled = true
+        const botoesTravados = ['#compra-salvar', '#compra-salvar-rascunho', '#compra-limpar', '#item-adicionar']
+          .map((seletor) => el(seletor))
+          .filter(Boolean)
+        botoesTravados.forEach((b) => {
+          b.disabled = true
+        })
         botao.innerHTML = '<span>Salvando...</span>'
 
         try {
@@ -809,7 +820,10 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
           console.error('[compras] Falha ao salvar compra.', erro)
           toast(mensagemErro(erro))
         } finally {
-          botao.disabled = false
+          salvandoCompra = false
+          botoesTravados.forEach((b) => {
+            b.disabled = false
+          })
           botao.innerHTML = rotuloOriginal
           renderIcons(botao)
         }
@@ -818,7 +832,9 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
       el('#compra-salvar').addEventListener('click', () => salvarCompra(true))
       el('#compra-salvar-rascunho').addEventListener('click', () => salvarCompra(false))
       el('#compra-limpar').addEventListener('click', limparCompra)
-      el('[data-acao="nova-compra"]').addEventListener('click', () => {
+      // O botão só é renderizado para quem tem `compras.criar`; sem a
+      // permissão o elemento não existe e o listener derrubava a tela toda.
+      el('[data-acao="nova-compra"]')?.addEventListener('click', () => {
         if (!podeCriar()) {
           toast('Sua conta não tem permissão para registrar compras.')
           return

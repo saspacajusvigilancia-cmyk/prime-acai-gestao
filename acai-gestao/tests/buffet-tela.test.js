@@ -69,6 +69,33 @@ describe('tela do Estoque Buffet', () => {
     expect(root.querySelector('#buffet-turno')).toBeNull()
   })
 
+  it('preserva a contagem digitada quando a tela é redesenhada', async () => {
+    const fechamentos = await import('../src/services/fechamentos-buffet.js')
+    vi.mocked(fechamentos.listarFechamentosBuffet).mockResolvedValue({
+      origem: 'neon',
+      dados: [{ id: 'f1', status: 'aberto', abertoEm: '2026-11-01T10:00:00Z' }],
+    })
+
+    document.body.innerHTML = '<div id="app"></div>'
+    const root = document.querySelector('#app')
+    const page = buffetPage()
+    root.innerHTML = page.html
+    page.mount(root)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    const campo = root.querySelector('[data-produto="p1"]')
+    campo.value = '7.5'
+    campo.dispatchEvent(new Event('input', { bubbles: true }))
+
+    // O filtro de operações recarrega os dados e redesenha a tela inteira.
+    root.querySelector('[data-form-filtro="operacoes"]').dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    )
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(root.querySelector('[data-produto="p1"]').value).toBe('7.5')
+  })
+
   it('oferece a seleção do turno quando não há fechamento aberto', async () => {
     const fechamentos = await import('../src/services/fechamentos-buffet.js')
     vi.mocked(fechamentos.listarFechamentosBuffet).mockResolvedValue({

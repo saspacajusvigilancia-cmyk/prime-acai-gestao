@@ -2342,6 +2342,40 @@ await devePassar(
    insert into public.recipientes (organization_id, nome, tara_g) values ('${ORG}','Copo 500ml com tampa',20)`,
 )
 
+log('\n== Permissões por perfil (migração 31) ==')
+{
+  const caixa = await escreveComo(
+    CASHIER,
+    `select public.definir_permissao_perfil('manager','financeiro','ver',true)`,
+  )
+  if (caixa.erro && /administradores/i.test(caixa.erro.message)) {
+    ok('o caixa não altera permissões de perfil')
+  } else {
+    podeFalhar('o caixa não altera permissões de perfil', caixa.erro?.message ?? 'não deu erro')
+  }
+
+  const concede = await escreveComo(
+    ADMIN,
+    `select public.definir_permissao_perfil('manager','financeiro','ver',true)`,
+  )
+  const remove = await escreveComo(
+    ADMIN,
+    `select public.definir_permissao_perfil('manager','financeiro','ver',false)`,
+  )
+  if (!concede.erro && !remove.erro) ok('o administrador concede e remove a permissão do gerente')
+  else podeFalhar('o administrador concede e remove a permissão do gerente', concede.erro?.message ?? remove.erro?.message)
+
+  const adminRole = await escreveComo(
+    ADMIN,
+    `select public.definir_permissao_perfil('admin','financeiro','ver',false)`,
+  )
+  if (adminRole.erro && /administrador nao pode ser alterado/i.test(adminRole.erro.message)) {
+    ok('o perfil admin não pode ser alterado')
+  } else {
+    podeFalhar('o perfil admin não pode ser alterado', adminRole.erro?.message ?? 'não deu erro')
+  }
+}
+
 log('\n== O seed da 00 se recusa a apagar uma base com dados ==')
 {
   const antes = await contar(`select count(*)::int as n from public.vendas`)

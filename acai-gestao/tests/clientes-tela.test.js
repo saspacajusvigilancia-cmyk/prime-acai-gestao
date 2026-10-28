@@ -19,6 +19,7 @@ vi.mock('../src/services/resumo.js', () => ({
 }))
 
 vi.mock('../src/services/base.js', () => ({
+  neonConfigurado: false,
   observar: (promessa, callback) => {
     promessa.then(callback)
     return () => {}
@@ -70,6 +71,24 @@ describe('cadastro de cliente', () => {
 
     // O foco inicial pula o campo travado e vai para o nome.
     expect(document.activeElement?.name).toBe('nome')
+  })
+
+  it('recusa e-mail inválido sem chamar o serviço de cadastro', async () => {
+    const servico = await import('../src/services/clientes.js')
+
+    root.querySelector('[data-acao="novo-cliente"]').click()
+    await tick()
+
+    document.querySelector('[name="nome"]').value = 'Ana Souza'
+    document.querySelector('[name="email"]').value = 'ana@'
+    document.querySelector('.modal__form').dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    )
+    await tick()
+
+    expect(servico.criarCliente).not.toHaveBeenCalled()
+    expect(document.querySelector('.modal__erro').textContent).toContain('e-mail válido')
+    expect(document.querySelector('.modal')).not.toBeNull()
   })
 
   it('avisa e não abre o formulário quando o código não pode ser gerado', async () => {

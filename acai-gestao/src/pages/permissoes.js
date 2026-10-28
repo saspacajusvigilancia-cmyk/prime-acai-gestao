@@ -76,14 +76,21 @@ export function permissoesPage() {
           const isOpen = aberto === perfil.nome
           return `
             <section class="card" style="margin-bottom:10px">
-              <div style="display:flex;align-items:center;gap:10px;padding:4px 2px;cursor:pointer;user-select:none" data-perfil="${esc(perfil.nome)}">
+              <div role="button" tabindex="0" aria-expanded="${isOpen}" aria-controls="matriz-${esc(perfil.nome)}"
+                style="display:flex;align-items:center;gap:10px;padding:4px 2px;cursor:pointer;user-select:none" data-perfil="${esc(perfil.nome)}">
                 <span class="badge badge--${perfil.cor}" style="font-size:11px">${esc(perfil.rotulo)}</span>
-                <span style="margin-left:auto;font-size:12px;color:var(--texto-fraco)">${isOpen ? '▾' : '▸'}</span>
+                <span style="margin-left:auto;font-size:12px;color:var(--texto-fraco)" aria-hidden="true">${isOpen ? '▾' : '▸'}</span>
               </div>
-              ${isOpen ? renderMatriz(perfil) : ''}
+              ${isOpen ? `<div id="matriz-${esc(perfil.nome)}">${renderMatriz(perfil)}</div>` : ''}
             </section>
           `
         }).join('')
+        // `data-indeterminate` não é um atributo HTML: o estado "algumas
+        // permissões marcadas" precisa ser aplicado via propriedade. Antes ele
+        // era calculado e descartado, e o checkbox do módulo parecia desmarcado.
+        listaEl.querySelectorAll('[data-indeterminate="1"]').forEach((checkbox) => {
+          checkbox.indeterminate = true
+        })
         renderIcons(listaEl)
       }
 
@@ -100,7 +107,7 @@ export function permissoesPage() {
               return `
                 <div style="margin-bottom:12px">
                   <label style="display:flex;align-items:center;gap:8px;font-weight:600;font-size:13px;cursor:pointer">
-                    <input type="checkbox" data-modulo="${esc(modulo)}" data-role="${esc(perfil.nome)}" ${todas ? 'checked' : ''} ${perfil.editavel ? '' : 'disabled'} />
+                    <input type="checkbox" data-modulo="${esc(modulo)}" data-role="${esc(perfil.nome)}" ${mestre} ${perfil.editavel ? '' : 'disabled'} aria-label="Todas as permissões de ${esc(MODULOS[modulo])}" />
                     ${esc(MODULOS[modulo])}
                   </label>
                   <div style="margin-left:24px;display:flex;flex-wrap:wrap;gap:6px 14px;margin-top:6px">
@@ -154,7 +161,7 @@ export function permissoesPage() {
         }
       })
 
-      // Click on profile header to toggle
+      // Click (ou Enter/Espaço) no cabeçalho do perfil para abrir/fechar.
       listaEl.addEventListener('click', (e) => {
         const header = e.target.closest('[data-perfil]')
         if (!header) return
@@ -162,6 +169,14 @@ export function permissoesPage() {
         const nome = header.dataset.perfil
         aberto = aberto === nome ? null : nome
         render()
+      })
+
+      listaEl.addEventListener('keydown', (e) => {
+        if (e.key !== 'Enter' && e.key !== ' ') return
+        const header = e.target.closest('[data-perfil]')
+        if (!header || e.target.tagName === 'INPUT') return
+        e.preventDefault()
+        header.click()
       })
 
       root.recarregarPermissoes = () => carregar()

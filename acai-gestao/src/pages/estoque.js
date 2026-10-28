@@ -98,18 +98,23 @@ const precoHtml = (p) => {
 
 /**
  * Ações da linha do item. "Histórico" aparece sempre: quem enxerga a tela já
- * tem `estoque.consultar`. "Movimentar" e "Contar" dependem da permissão de
- * verdade — e o banco recusa de novo se a tela errar.
+ * tem `estoque.consultar`. "Movimentar" exige `estoque.criar`; "Contar" grava
+ * ajuste e exige `estoque.editar`; "Editar" exige `estoque.editar`. O banco
+ * recusa de novo se a tela errar.
  */
-const acoesProduto = ({ podeEditar, podeMovimentar }) => (p) => `
+const acoesProduto = ({ podeEditar, podeMovimentar, podeContar }) => (p) => `
   <div class="table__acoes">
     ${
       podeMovimentar
         ? `<button class="btn btn--ghost btn--sm" type="button" data-acao="movimentar-produto"
                    data-id="${esc(p.uuid ?? p.id)}" title="Registrar entrada, saída ou perda">
              <i data-lucide="arrow-left-right"></i><span>Movimentar</span>
-           </button>
-           <button class="btn btn--ghost btn--sm" type="button" data-acao="contar-produto"
+           </button>`
+        : ''
+    }
+    ${
+      podeContar
+        ? `<button class="btn btn--ghost btn--sm" type="button" data-acao="contar-produto"
                    data-id="${esc(p.uuid ?? p.id)}" title="Contagem física: informo o saldo contado">
              <i data-lucide="clipboard-list"></i><span>Contar</span>
            </button>`
@@ -130,7 +135,7 @@ const acoesProduto = ({ podeEditar, podeMovimentar }) => (p) => `
   </div>
 `
 
-const colunasProdutos = ({ podeEditar = false, podeMovimentar = false } = {}) => [
+const colunasProdutos = ({ podeEditar = false, podeMovimentar = false, podeContar = false } = {}) => [
   {
     key: 'nome',
     label: 'Produto',
@@ -212,7 +217,7 @@ const colunasProdutos = ({ podeEditar = false, podeMovimentar = false } = {}) =>
   {
     key: 'acoes',
     label: 'Ações',
-    render: acoesProduto({ podeEditar, podeMovimentar }),
+    render: acoesProduto({ podeEditar, podeMovimentar, podeContar }),
   },
 ]
 
@@ -370,7 +375,7 @@ export function estoquePage() {
   const podeMovimentar = podeCriar
   const podeContar = podeEditar
 
-  const colunas = colunasProdutos({ podeEditar, podeMovimentar })
+  const colunas = colunasProdutos({ podeEditar, podeMovimentar, podeContar })
   const colunasRec = colunasRecipientesCompletas({ comAcoes: true, podeEditar })
 
   const inicial = indicadores(produtosExemplo)
@@ -778,9 +783,20 @@ export function estoquePage() {
           campos: camposProduto({ comSaldo: false, categoriaAtual: p.categoria }),
           valores: valoresDoProduto(p),
           aoSalvar: async (valores) => {
+            // A tela de estoque edita só os campos operacionais (código, nome,
+            // preço, mínimo...). Classificação, regra de baixa e retorno do
+            // Buffet são definidos na tela de Produtos e NÃO são exibidos
+            // aqui: enviá-los vazios faria `normalizarProduto` gravar
+            // `tipo_produto = 'outro'` e desligar a baixa automática sem o
+            // operador perceber. Por isso os valores atuais são preservados.
             const { dados: salvo, origem } = await atualizarProduto(p.uuid ?? p.id, {
               ...valores,
               quantidade: p.quantidade,
+              tipoProduto: p.tipoProduto,
+              regraBaixaEstoque: p.regraBaixaEstoque,
+              localEstoqueOrigem: p.localEstoqueOrigem,
+              permitirEstoqueNegativo: p.permitirEstoqueNegativo,
+              permiteRetornoBuffet: p.permiteRetornoBuffet,
             })
 
             if (origem === 'exemplo') {

@@ -2,6 +2,7 @@ import { clientes as clientesExemplo, resumo as resumoExemplo } from '../data.js
 import { abrirFormulario } from '../formulario.js'
 import { observar, hoje } from '../services/base.js'
 import { criarCliente, listarClientes, sugerirCodigoCliente } from '../services/clientes.js'
+import { pode } from '../services/permissoes.js'
 import { carregarResumo } from '../services/resumo.js'
 import {
   atualizarKpi,
@@ -88,7 +89,24 @@ function indicadores(lista) {
   }
 }
 
+/** Validação de contato: e-mail e telefone são opcionais, mas se vierem, valem. */
+function validarContato({ email, telefone }) {
+  const emailLimpo = String(email ?? '').trim()
+  if (emailLimpo && !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(emailLimpo)) {
+    throw new Error('Informe um e-mail válido, como cliente@email.com.')
+  }
+
+  const telefoneLimpo = String(telefone ?? '').trim()
+  if (telefoneLimpo) {
+    const digitos = telefoneLimpo.replace(/\D/g, '')
+    if (digitos.length < 10 || digitos.length > 11) {
+      throw new Error('Informe um telefone com DDD, como (11) 90000-0000.')
+    }
+  }
+}
+
 export function clientesPage() {
+  const podeCriar = pode('clientes', 'criar')
   const inicial = indicadores(clientesExemplo)
 
   return {
@@ -129,7 +147,9 @@ export function clientesPage() {
         ${cardHead({
           titulo: 'Base de clientes',
           descricao: 'Cadastro, histórico de compras e classificação',
-          acoes: botaoPrimario({ label: 'Novo cliente', icon: 'user-plus', acao: 'novo-cliente' }),
+          acoes: podeCriar
+            ? botaoPrimario({ label: 'Novo cliente', icon: 'user-plus', acao: 'novo-cliente' })
+            : '',
         })}
         ${toolbar({ buscaId: 'busca-clientes', placeholder: 'Buscar por nome, e-mail ou telefone...' })}
         <p class="table__count" id="contagem-clientes"></p>
@@ -143,8 +163,10 @@ export function clientesPage() {
       const contagem = root.querySelector('#contagem-clientes')
       const input = root.querySelector('#busca-clientes')
 
-      const aplicarIndicadores = () => {
-        const kpi = indicadores(dados)
+      // Os indicadores acompanham o filtro: dizer "gasto médio" da base
+      // inteira enquanto a tabela mostra uma busca é uma informação enganosa.
+      const aplicarIndicadores = (lista = dados) => {
+        const kpi = indicadores(lista)
         atualizarKpi(root, 'gastoMedio', { valor: formatBRL(kpi.gastoMedio) })
         atualizarKpi(root, 'clientesVip', { valor: kpi.vips })
       }
@@ -153,6 +175,7 @@ export function clientesPage() {
         const linhas = filtrar(dados, termo)
         atualizarTabela(root, 'tabela-clientes', colunas, linhas)
         contagem.textContent = `${linhas.length} de ${dados.length} clientes`
+        aplicarIndicadores(linhas)
       }
 
       aplicar('')
@@ -165,11 +188,19 @@ export function clientesPage() {
       }
       window.addEventListener('busca-global', aoBuscarGlobal)
 
-      const pararClientes = observar(listarClientes(), ({ dados: remotos }) => {
-        dados = remotos
-        aplicar(input.value)
-        aplicarIndicadores()
-      })
+      const pararClientes = observar(
+        listarClientes(),
+        ({ dados: remotos }) => {
+          dados = remotos
+          aplicar(input.value)
+        },
+        () => {
+          // Sem dados reais, manter a lista de exemplo faria a tela mentir.
+          dados = []
+          aplicar(input.value)
+          toast('Não foi possível carregar os clientes. Verifique a conexão e tente novamente.')
+        },
+      )
 
       const aplicarResumo = (r) => {
         atualizarKpi(root, 'clientesBase', {
@@ -179,7 +210,14 @@ export function clientesPage() {
         atualizarKpi(root, 'novosClientes', { valor: r.novosClientes })
       }
 
-      const pararResumo = observar(carregarResumo(), ({ dados: r }) => aplicarResumo(r))
+      const pararResumo = observar(
+        carregarResumo(),
+        ({ dados: r }) => aplicarResumo(r),
+        () => {
+          atualizarKpi(root, 'clientesBase', { valor: '—', delta: undefined })
+          atualizarKpi(root, 'novosClientes', { valor: '—' })
+        },
+      )
 
       /** Busca de novo no banco e redesenha — usado depois de gravar. */
       const recarregar = async () => {
@@ -194,7 +232,11 @@ export function clientesPage() {
         aplicarResumo(r)
       }
 
-      root.querySelector('[data-acao="novo-cliente"]').addEventListener('click', async () => {
+      root.querySelector('[data-acao="novo-cliente"]')?.addEventListener('click', async () => {
+        if (!podeCriar) {
+          toast('Sua conta não tem permissão para cadastrar clientes.')
+          return
+        }
         let codigo
 
         try {
@@ -232,6 +274,7 @@ export function clientesPage() {
           ],
           valores: { codigo, desde: hoje(), tier: 'Novo' },
           aoSalvar: async (valores) => {
+            validarContato(valores)
             const { dados: criado, origem } = await criarCliente(valores)
 
             if (origem === 'exemplo') {

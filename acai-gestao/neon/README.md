@@ -36,7 +36,8 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `28_codigos_sequenciais_clientes.sql` | Código de cliente reservado atomicamente (C-0000), preenchido pelo banco em inserções sem código e imutável depois de criado |
 | `29_multi_organizacao.sql` | `organization_id` em vendas, itens, clientes e lançamentos; backfill pela organização mais antiga; preenchimento automático; RLS por organização; validação de cliente/produto/recipiente entre organizações |
 | `30_indices_chaves_estrangeiras.sql` | Índices nas 25 colunas de chave estrangeira que ainda faziam varredura completa no lado filho; só cria índices, sem tocar em dados, RLS ou funções |
-| `reverter_08_…` até `reverter_30_…` (e as anteriores) | Reversões conservadoras; a 21 bloqueia categorias personalizadas em uso, a 22 bloqueia movimentos do estoque geral, a 23 impede remover WhatsApps cadastrados, a 24 preserva os novos metadados, a 26 não remove códigos gravados, a 27 bloqueia reversão quando já há operações/snapshots/autorizações, a 28 devolve a edição manual do código do cliente, a 29 volta as políticas ao formato sem organização sem apagar linhas e a 30 remove apenas os índices que criou |
+| `31_permissoes_perfil_e_indices_compostos.sql` | Versiona a RPC `definir_permissao_perfil()` (antes só existia em produção), restringe a execução a `authenticated` e cria os dois índices das FKs compostas restantes; idempotente |
+| `reverter_08_…` até `reverter_31_…` (e as anteriores) | Reversões conservadoras; a 21 bloqueia categorias personalizadas em uso, a 22 bloqueia movimentos do estoque geral, a 23 impede remover WhatsApps cadastrados, a 24 preserva os novos metadados, a 26 não remove códigos gravados, a 27 bloqueia reversão quando já há operações/snapshots/autorizações, a 28 devolve a edição manual do código do cliente, a 29 volta as políticas ao formato sem organização sem apagar linhas, a 30 remove apenas os índices que criou e a 31 remove a RPC e os dois índices |
 | `garantir_perfil_novo.sql` | Versão de `garantir_perfil()` que lê e-mail e convite — conta sem convite nasce **inativa** (aprovação pelo administrador) e convite define papel/ativação. **Passo manual**, não é `NN_*.sql`; o app usa `aprovacaoManual: true` |
 | `classificar_produtos_buffet.sql` | Classificação inicial do Estoque Buffet: `Acai self-service` vira `buffet`, granola/leite em pó/morango/banana viram `insumo` e o retorno é ligado só em granola e leite em pó. **Passo manual**, não é `NN_*.sql`; a reversão está em `classificar_produtos_buffet_reverter.sql` |
 | `testar-base.mjs` | Testa a base real de ponta a ponta (`npm run testar:base`) |
@@ -181,6 +182,52 @@ já tiverem criado movimentos, transferências com Buffet ou configuração de
 produto em local futuro; preserve o ledger e migre os saldos antes de tentar
 novamente. Não aplique em produção sem backup com restauração verificada e
 confirmação explícita da organização/destino.
+
+### Permissões por perfil e índices compostos (migração 31)
+
+A tela **Configurações → Permissões** chama
+`definir_permissao_perfil(p_role, p_modulo, p_acao, p_permitido)`. A função
+existia em produção, mas não em nenhuma migração: um banco novo criado pela
+cadeia `neon/*.sql` abria a tela e falhava em todo clique. A `31` traz a
+definição já em uso, `security definer` com `search_path = ''`, que exige
+`eh_admin()`, recusa alterar o perfil `admin`, valida perfil/permissão no
+catálogo e registra a alteração em `audit_logs`. `PUBLIC` perde o `EXECUTE`
+padrão; só `authenticated` recebe.
+
+A mesma migração cria os índices que faltavam para as FKs compostas
+`tipos_venda (organization_id, categoria)` e
+`movimentacoes_estoque (organization_id, produto_id)`. A `30` cobriu apenas as
+colunas simples.
+
+Valide e aplique com backup:
+
+```bash
+npm run validar:migracoes
+node neon/aplicar.mjs 31
+npx neon data-api refresh-schema
+```
+
+A reversão remove a função e os dois índices. Em produção, reaplicar a `31`
+recria a função; nenhum dado é perdido.
+
+### Dados de demonstração na branch de produção
+
+Em 28/10/2026 a branch `production` tinha **8.537 vendas de seed** (17/05 a
+19/10/2026) e apenas duas vendas reais depois de 20/10. Os totais das linhas de
+seed divergem da soma dos itens de propósito — é dado fictício, não falha da
+RPC de venda. O diagnóstico e a limpeza são arquivos **não numerados**, de
+propósito, para nunca entrarem numa aplicação automática:
+
+- `diagnostico_dados_demonstracao.sql`: somente leitura. Mostra vendas por mês,
+  divergências de total separando seed de real, referências de produtos/clientes,
+  integridade do livro-razão e tabelas com RLS sem política.
+- `limpar_dados_demonstracao.sql`: limpeza guardada. Exige
+  `set acai.limpar_ate = '…'` e `set acai.confirmar = 'SIM'`, roda em transação,
+  recusa cortes que atinjam vendas preservadas, repõe o saldo dos movimentos de
+  venda apagados e confere o resultado antes do `COMMIT`.
+
+Não execute a limpeza sem uma branch/backup restaurável e sem revisar o
+diagnóstico. Ela não apaga produtos nem clientes automaticamente.
 
 ### Multi-organização (migração 29)
 

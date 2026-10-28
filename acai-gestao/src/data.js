@@ -75,6 +75,14 @@ const produto = (p) => ({
   controlaEstoque: true,
   metodoEstoque: 'movimentacoes',
   metodoPeso: null,
+  // Classificação e regra de baixa têm os mesmos padrões do banco. Sem elas
+  // o modo demonstração não tinha nenhum item elegível no Buffet e a edição
+  // pela tela de Estoque parecia apagar a classificação.
+  tipoProduto: 'venda_direta',
+  regraBaixaEstoque: 'legada',
+  localEstoqueOrigem: 'estoque',
+  permitirEstoqueNegativo: false,
+  permiteRetornoBuffet: false,
   ativo: true,
   ...p,
 })
@@ -84,12 +92,12 @@ export const produtos = neonConfigurado ? [] : [
   produto({ id: 'P002', nome: 'Açaí tradicional 500ml', categoria: 'Açaí', quantidade: 48, minimo: 45, unidade: 'un', custo: 9.4, preco: 21.9 }),
   produto({ id: 'P003', nome: 'Açaí tradicional 700ml', categoria: 'Açaí', quantidade: 22, minimo: 30, unidade: 'un', custo: 12.8, preco: 28.5 }),
   produto({ id: 'P004', nome: 'Açaí zero açúcar 500ml', categoria: 'Açaí', quantidade: 31, minimo: 25, unidade: 'un', custo: 10.1, preco: 23.9 }),
-  produto({ id: 'P005', nome: 'Granola crocante', categoria: 'Adicionais', quantidade: 9, minimo: 15, unidade: 'kg', custo: 18.0, preco: 3.5 }),
-  produto({ id: 'P006', nome: 'Leite em pó', categoria: 'Adicionais', quantidade: 14, minimo: 10, unidade: 'kg', custo: 32.0, preco: 4.0 }),
-  produto({ id: 'P007', nome: 'Morango fresco', categoria: 'Frutas', quantidade: 6, minimo: 12, unidade: 'kg', custo: 24.5, preco: 5.0 }),
-  produto({ id: 'P008', nome: 'Banana prata', categoria: 'Frutas', quantidade: 21, minimo: 10, unidade: 'kg', custo: 6.8, preco: 3.0 }),
-  produto({ id: 'P009', nome: 'Copo 500ml com tampa', categoria: 'Embalagens', quantidade: 640, minimo: 300, unidade: 'un', custo: 0.42, preco: 0 }),
-  produto({ id: 'P010', nome: 'Colher descartável', categoria: 'Embalagens', quantidade: 250, minimo: 400, unidade: 'un', custo: 0.08, preco: 0 }),
+  produto({ id: 'P005', nome: 'Granola crocante', categoria: 'Adicionais', quantidade: 9, minimo: 15, unidade: 'kg', custo: 18.0, preco: 3.5, tipoProduto: 'insumo', permiteRetornoBuffet: true }),
+  produto({ id: 'P006', nome: 'Leite em pó', categoria: 'Adicionais', quantidade: 14, minimo: 10, unidade: 'kg', custo: 32.0, preco: 4.0, tipoProduto: 'insumo', permiteRetornoBuffet: true }),
+  produto({ id: 'P007', nome: 'Morango fresco', categoria: 'Frutas', quantidade: 6, minimo: 12, unidade: 'kg', custo: 24.5, preco: 5.0, tipoProduto: 'insumo', permiteRetornoBuffet: true }),
+  produto({ id: 'P008', nome: 'Banana prata', categoria: 'Frutas', quantidade: 21, minimo: 10, unidade: 'kg', custo: 6.8, preco: 3.0, tipoProduto: 'insumo', permiteRetornoBuffet: true }),
+  produto({ id: 'P009', nome: 'Copo 500ml com tampa', categoria: 'Embalagens', quantidade: 640, minimo: 300, unidade: 'un', custo: 0.42, preco: 0, tipoProduto: 'embalagem' }),
+  produto({ id: 'P010', nome: 'Colher descartável', categoria: 'Embalagens', quantidade: 250, minimo: 400, unidade: 'un', custo: 0.08, preco: 0, tipoProduto: 'embalagem' }),
   ...(dadosTesteHabilitados ? produtosTeste : []),
 ]
 

@@ -96,7 +96,7 @@ function campo({
       ? `<textarea id="${id}" name="${nome}" class="campo__input" rows="3"${obrigatorio ? ' required' : ''}>${esc(valor)}</textarea>`
       : tipo === 'moeda'
         ? entradaMoeda({ id, name: nome, value: valor, required: obrigatorio })
-        : `<input id="${id}" name="${nome}" class="campo__input" type="${tipo}" value="${esc(valor)}"${tipo === 'number' ? ' min="0" step="0.01" inputmode="decimal"' : ''}${obrigatorio ? ' required' : ''} />`
+        : `<input id="${id}" name="${nome}" class="campo__input" type="${tipo === 'number' ? 'text' : tipo}" value="${esc(valor)}"${tipo === 'number' ? ' inputmode="decimal" placeholder="0"' : ''}${obrigatorio ? ' required' : ''} />`
   return `<div class="campo${largo ? ' campo--largo' : ''}">
     <label class="campo__label" for="${id}">${esc(label)}${obrigatorio ? ' <span class="campo__req">*</span>' : ''}</label>
     ${control}
@@ -527,9 +527,25 @@ export function produtosPage() {
       function definirTipoVenda() {
         const tipo = form.elements.namedItem('tipoVenda').value
         const unidade = form.elements.namedItem('unidade')
+        const anterior = form.dataset.tipoVenda ?? ''
+
+        // Produto por peso é sempre contado em kg. Ao sair do peso, devolve a
+        // unidade para 'un' — antes um produto vendido por unidade podia
+        // herdar 'kg' da seleção anterior.
         if (tipo === 'peso') unidade.value = 'kg'
-        root.querySelector('label[for="produto-preco"]').textContent =
-          `Preço de venda por ${unidadeDeVenda(tipo)}`
+        else if (anterior === 'peso' && unidade.value === 'kg') unidade.value = 'un'
+        form.dataset.tipoVenda = tipo
+
+        // `textContent` apagava o asterisco de campo obrigatório do rótulo.
+        const label = root.querySelector('label[for="produto-preco"]')
+        const obrigatorio = Boolean(label.querySelector('.campo__req'))
+        label.textContent = `Preço de venda por ${unidadeDeVenda(tipo)}`
+        if (obrigatorio) {
+          const req = document.createElement('span')
+          req.className = 'campo__req'
+          req.textContent = '*'
+          label.append(' ', req)
+        }
       }
 
       async function abrirEditor(produto = null) {
@@ -558,7 +574,9 @@ export function produtosPage() {
           localEstoqueOrigem: 'estoque',
           permitirEstoqueNegativo: 'false',
           permiteRetornoBuffet: 'false',
-          preco: '0',
+          // Vazio de propósito: o preço é obrigatório e um "0" pré-preenchido
+          // fazia o operador salvar produto sem preço sem perceber.
+          preco: '',
           unidade: 'un',
           controlaEstoque: 'true',
           metodoEstoque: 'movimentacoes',
@@ -568,7 +586,9 @@ export function produtosPage() {
           ativo: 'true',
         }
         configurarCampoCategoria(valores.categoria)
+        form.dataset.tipoVenda = ''
         Object.entries(valores).forEach(([nome, valor]) => campoValor(nome, valor))
+        definirTipoVenda()
         form.elements.namedItem('quantidade').disabled = Boolean(produto)
         form.elements.namedItem('quantidade').closest('.campo').hidden = Boolean(produto)
         fileInput.value = ''

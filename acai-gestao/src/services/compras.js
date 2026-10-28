@@ -832,7 +832,17 @@ export function registrarCompra({
           .select(CAMPOS_COMPRA)
           .single()
 
-        if (erroStatus) throw erroStatus
+        if (erroStatus) {
+          // Sem rollback automático entre as chamadas do Data API: se o
+          // status não pôde ser atualizado, a compra ficaria órfã em
+          // rascunho (e o operador tentaria de novo, duplicando). Remove os
+          // itens e o cabeçalho antes de propagar o erro. A limpeza é
+          // best-effort: o RLS pode recusar, e nesse caso o erro original
+          // (mais útil) continua sendo o exibido.
+          await neon.from('compras_itens').delete().eq('compra_id', compra.id)
+          await neon.from('compras').delete().eq('id', compra.id)
+          throw erroStatus
+        }
         compra = atualizada
       }
 

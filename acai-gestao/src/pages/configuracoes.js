@@ -42,6 +42,7 @@ import {
   validarLogo,
 } from '../services/empresa.js'
 import { esc, toast } from '../ui.js'
+import { pode } from '../services/permissoes.js'
 import { permissoesPage } from './permissoes.js'
 import { usuariosPage } from './usuarios.js'
 import { configProdutosPage, configVendasPage } from './config-vendas.js'
@@ -240,6 +241,12 @@ const LOGOMARCA_HTML = `
 `
 
 export function configuracoesPage() {
+  // Gerenciar contas e permissões é restrito por permissão própria (o RPC do
+  // banco também exige administrador). Mostrar a seção para quem não pode
+  // usá-la só produzia uma tela que falha em todo clique.
+  const podeUsuarios = pode('usuarios', 'ver')
+  const podePermissoes = pode('permissoes', 'ver')
+
   return {
     html: `
       <div class="config">
@@ -252,16 +259,16 @@ export function configuracoesPage() {
                   <i data-lucide="building-2"></i><span>Configuração da Empresa</span>
                 </button>
               </li>
-              <li>
+              ${podeUsuarios ? `<li>
                 <button class="config__secao" id="btn-usuarios" type="button" data-painel="usuarios" aria-controls="painel-usuarios" aria-pressed="false">
                   <i data-lucide="users"></i><span>Usuários</span>
                 </button>
-              </li>
-              <li>
+              </li>` : ''}
+              ${podePermissoes ? `<li>
                 <button class="config__secao" id="btn-permissoes" type="button" data-painel="permissoes" aria-controls="painel-permissoes" aria-pressed="false">
                   <i data-lucide="shield-check"></i><span>Permissões</span>
                 </button>
-              </li>
+              </li>` : ''}
               <li>
                 <button class="config__secao" id="btn-produtos" type="button" data-painel="produtos" aria-controls="painel-produtos" aria-pressed="false">
                   <i data-lucide="package"></i><span>Produtos</span>
@@ -304,8 +311,8 @@ export function configuracoesPage() {
               </div>
             </form>
           </section>
-          <section class="config__painel" id="painel-usuarios" aria-labelledby="btn-usuarios" hidden></section>
-          <section class="config__painel" id="painel-permissoes" aria-labelledby="btn-permissoes" hidden></section>
+          ${podeUsuarios ? '<section class="config__painel" id="painel-usuarios" aria-labelledby="btn-usuarios" hidden></section>' : ''}
+          ${podePermissoes ? '<section class="config__painel" id="painel-permissoes" aria-labelledby="btn-permissoes" hidden></section>' : ''}
           <section class="config__painel" id="painel-produtos" aria-labelledby="btn-produtos" hidden></section>
           <section class="config__painel" id="painel-vendas" aria-labelledby="btn-vendas" hidden></section>
         </div>
@@ -408,10 +415,12 @@ export function configuracoesPage() {
       const alvoNotif = window.__notifAlvo
       if (alvoNotif) {
         window.__notifAlvo = null
-        mostrarPainel('usuarios')
-        Promise.resolve()
-          .then(() => painelUsuarios?.abrirNotificacaoUsuario?.(alvoNotif))
-          .catch(() => {})
+        if (podeUsuarios) {
+          mostrarPainel('usuarios')
+          Promise.resolve()
+            .then(() => painelUsuarios?.abrirNotificacaoUsuario?.(alvoNotif))
+            .catch(() => {})
+        }
       }
 
       const arquivoInput = root.querySelector('#logo-arquivo')

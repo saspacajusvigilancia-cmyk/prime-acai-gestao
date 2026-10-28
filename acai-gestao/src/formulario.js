@@ -128,16 +128,34 @@ export function campoHtml(campo, valor) {
 let aberto = null
 let limpar = null
 
-/** Traduz erros técnicos em mensagens que o usuário entende. */
+/**
+ * Traduz erros técnicos em mensagens que o usuário entende.
+ *
+ * O usuário final não tem o que fazer com "neon/00_banco_neon.sql", nome de
+ * variável de ambiente ou stack trace. Quando a mensagem original já é útil
+ * (validação de negócio lançada pelo serviço), ela é preservada; o resto vira
+ * uma orientação curta e acionável.
+ */
 function mensagemDeErro(erro) {
   const texto = erro?.message ?? String(erro)
+  const contexto = [erro?.code, erro?.constraint, texto, erro?.details, erro?.hint]
+    .filter(Boolean)
+    .join(' ')
 
-  if (/duplicate key/i.test(texto)) return 'Já existe um registro com esse código.'
-  if (/violates foreign key/i.test(texto)) return 'O registro relacionado não foi encontrado.'
-  if (/permission denied|row-level security/i.test(texto))
-    return 'Sem permissão para gravar. Rode o neon/00_banco_neon.sql no seu projeto.'
-  if (/Failed to fetch|NetworkError|ERR_/i.test(texto))
-    return 'Não foi possível falar com o banco. Confira a conexão e a URL no .env.'
+  if (
+    erro?.code === '23505' ||
+    erro?.constraint?.endsWith('_codigo_key') ||
+    /duplicate key|unique constraint/i.test(contexto)
+  ) {
+    return 'Já existe um registro com esse código.'
+  }
+  if (/violates foreign key/i.test(contexto)) return 'O registro relacionado não foi encontrado.'
+  if (erro?.code === '42501' || /permission denied|row-level security/i.test(contexto))
+    return 'Sua conta não tem permissão para esta operação.'
+  if (/Failed to fetch|NetworkError|ERR_|ECONN|ETIMEDOUT/i.test(contexto))
+    return 'Não foi possível conectar ao sistema. Verifique sua conexão e tente novamente.'
+  if (/timeout|tempo limite/i.test(contexto))
+    return 'A operação demorou mais que o esperado. Tente novamente.'
   return texto
 }
 
@@ -173,7 +191,7 @@ export function abrirFormulario({
             )
             .join('')}
         </div>
-        <p class="modal__erro" role="alert" hidden></p>
+        <p class="modal__erro" role="alert" tabindex="-1" hidden></p>
         <footer class="modal__acoes">
           <button class="btn btn--ghost" type="button" data-fechar>Cancelar</button>
           <button class="btn btn--primary" type="submit" data-salvar>${esc(textoBotao)}</button>
@@ -182,6 +200,7 @@ export function abrirFormulario({
     </div>
   `
 
+  const focoAnterior = document.activeElement
   document.body.appendChild(overlay)
   aberto = overlay
   renderIcons(overlay)
@@ -192,16 +211,71 @@ export function abrirFormulario({
   const botaoSalvar = overlay.querySelector('[data-salvar]')
   const erroGeral = overlay.querySelector('.modal__erro')
   const campoDeItens = campos.find((c) => c.tipo === 'itens')
+  let salvando = false
+
+  // Liga ajuda e mensagem de erro ao campo pelo aria-describedby: leitores de
+  // tela anunciam a explicação junto do input, e não como texto solto.
+  overlay.querySelectorAll('[data-campo]').forEach((grupo) => {
+    const nome = grupo.dataset.campo
+    const input = grupo.querySelector('.campo__input')
+    if (!input) return
+    const ids = []
+    const ajuda = grupo.querySelector('.campo__ajuda')
+    const erro = grupo.querySelector('[data-erro]')
+    if (ajuda) {
+      ajuda.id = `ajuda-${nome}`
+      ids.push(ajuda.id)
+    }
+    if (erro) {
+      erro.id = `erro-${nome}`
+      ids.push(erro.id)
+    }
+    if (ids.length) input.setAttribute('aria-describedby', ids.join(' '))
+  })
 
   /* -------------------------------------------------------- fechar ------ */
 
-  function aoTeclar(evento) {
-    if (evento.key === 'Escape') fechar()
+  function focaveis() {
+    return [...overlay.querySelectorAll(
+      'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+    )].filter((el) => el.offsetParent !== null)
   }
 
-  overlay.querySelectorAll('[data-fechar]').forEach((el) => el.addEventListener('click', fechar))
+  function aoTeclar(evento) {
+    if (evento.key === 'Escape') {
+      // Fechar durante o salvamento deixaria a requisição em voo e o usuário
+      // sem saber se gravou. O botão também fica travado enquanto salva.
+      if (!salvando) fechar()
+      return
+    }
+    if (evento.key !== 'Tab') return
+
+    // Prende o foco dentro da janela: Tab no último campo volta ao primeiro.
+    const lista = focaveis()
+    if (!lista.length) return
+    const primeiro = lista[0]
+    const ultimo = lista[lista.length - 1]
+    if (evento.shiftKey && document.activeElement === primeiro) {
+      evento.preventDefault()
+      ultimo.focus()
+    } else if (!evento.shiftKey && document.activeElement === ultimo) {
+      evento.preventDefault()
+      primeiro.focus()
+    }
+  }
+
+  overlay.querySelectorAll('[data-fechar]').forEach((el) =>
+    el.addEventListener('click', () => {
+      if (!salvando) fechar()
+    }),
+  )
   document.addEventListener('keydown', aoTeclar)
-  limpar = () => document.removeEventListener('keydown', aoTeclar)
+  limpar = () => {
+    document.removeEventListener('keydown', aoTeclar)
+    // Devolve o foco ao botão que abriu a janela (teclado continua de onde
+    // parou, em vez de voltar para o início da página).
+    if (focoAnterior instanceof HTMLElement && focoAnterior.isConnected) focoAnterior.focus()
+  }
 
   /* --------------------------------------------- itens: somar subtotais -- */
 
@@ -216,7 +290,10 @@ export function abrirFormulario({
       el.hidden = true
       el.textContent = ''
     })
-    overlay.querySelectorAll('.campo__input').forEach((el) => el.classList.remove('is-erro'))
+    overlay.querySelectorAll('.campo__input').forEach((el) => {
+      el.classList.remove('is-erro')
+      el.removeAttribute('aria-invalid')
+    })
     erroGeral.hidden = true
   }
 
@@ -227,7 +304,10 @@ export function abrirFormulario({
     const p = alvo.querySelector('[data-erro]')
     p.textContent = mensagem
     p.hidden = false
-    alvo.querySelectorAll('.campo__input').forEach((el) => el.classList.add('is-erro'))
+    alvo.querySelectorAll('.campo__input').forEach((el) => {
+      el.classList.add('is-erro')
+      el.setAttribute('aria-invalid', 'true')
+    })
   }
 
   function coletar() {
@@ -294,6 +374,7 @@ export function abrirFormulario({
 
   form.addEventListener('submit', async (evento) => {
     evento.preventDefault()
+    if (salvando) return
     limparErros()
 
     const valoresColetados = coletar()
@@ -305,7 +386,12 @@ export function abrirFormulario({
       return
     }
 
+    salvando = true
     botaoSalvar.disabled = true
+    botaoSalvar.setAttribute('aria-busy', 'true')
+    overlay.querySelectorAll('[data-fechar]').forEach((el) => {
+      el.disabled = true
+    })
     const rotulo = botaoSalvar.textContent
     botaoSalvar.textContent = 'Salvando...'
 
@@ -317,8 +403,14 @@ export function abrirFormulario({
       console.error('[formulario] Falha ao salvar:', erro)
       erroGeral.textContent = mensagemDeErro(erro)
       erroGeral.hidden = false
+      erroGeral.focus?.()
+      salvando = false
       botaoSalvar.disabled = false
+      botaoSalvar.removeAttribute('aria-busy')
       botaoSalvar.textContent = rotulo
+      overlay.querySelectorAll('[data-fechar]').forEach((el) => {
+        el.disabled = false
+      })
     }
   })
 
