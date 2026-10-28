@@ -29,12 +29,54 @@ Copie `.env.example` para `.env` e preencha:
 | `VITE_NEON_URL` | URL HTTPS do Neon (host + database). Sem ela, o app roda em modo demonstração (dados de exemplo) |
 | `VITE_APP_URL` | Opcional; origem pública para os links de recuperação de senha |
 | `VITE_CADASTRO_PUBLICO` | `false` esconde o "Criar conta" — só um administrador cria contas |
-| `DATABASE_URL` | Opcional — conexão direta para os roteiros `npm run verificar:*` |
+| `DATABASE_URL` | **Segredo**, opcional — conexão Postgres direta para aplicar migrações e rodar `npm run verificar:*`; nunca vai para o navegador |
 | `VITE_TESTE_EMAIL` / `VITE_TESTE_SENHA` | Opcional — só para `npm run testar:base` |
 
 Sem `VITE_NEON_URL`, a interface usa os dados de demonstração. Com a URL
 configurada, falhas de leitura não são substituídas por exemplos: a tela mostra
 um aviso no indicador de dados até uma consulta daquele conjunto funcionar.
+
+### Conexão direta com o Postgres (`DATABASE_URL`)
+
+O app no navegador **não** usa essa variável: ele fala com o Data API pela
+`VITE_NEON_URL` (pública) e o RLS decide o que cada conta vê. `DATABASE_URL`
+serve só para os roteiros locais — aplicar migrações e rodar
+`npm run verificar:*` — e é **segredo** (o `.env` já está no `.gitignore`).
+
+1. No Console do Neon, selecione o projeto e a branch e clique em **Connect**.
+2. Desmarque **Connection pooling** e copie a string que começa com
+   `postgresql://`. Para migração use o host **direto** (sem `-pooler`): o
+   `aplicar.mjs` roda DDL e transações por arquivo, que não combinam com o
+   pooler em modo transação.
+3. Cole no `acai-gestao/.env`:
+
+   ```dotenv
+   DATABASE_URL=postgresql://usuario:senha@ep-xxx.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require
+   ```
+
+   Se a senha tiver `@`, `:`, `/`, `#` ou espaço, use a versão já codificada que
+   o Console mostra (ou codifique com `encodeURIComponent`).
+4. Confira a conexão sem gravar nada — o `verificar:vendas` abre uma transação,
+   testa e termina em `ROLLBACK`:
+
+   ```powershell
+   npm run verificar:vendas
+   ```
+
+5. Aplique a migração pendente e atualize o cache do Data API:
+
+   ```powershell
+   node neon/aplicar.mjs 29
+   npx neon data-api refresh-schema --database neondb
+   ```
+
+   Sem o CLI, use **Postgres database → Data API → Refresh schema cache** no
+   Console. O `garantir_perfil_novo.sql` é passo manual: cole o conteúdo em
+   **SQL Editor** (ou rode com `psql -f`), porque ele não é uma migração `NN_*`.
+
+Nunca comite o `.env` nem cole a string em issue/chat. Se ela vazar, troque a
+senha do papel no Console (**Roles → Reset password**); a `VITE_NEON_URL` pode
+continuar a mesma.
 
 ### Prévia com dados fictícios das novas telas
 
