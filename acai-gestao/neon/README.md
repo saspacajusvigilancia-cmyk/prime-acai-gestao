@@ -43,6 +43,8 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `classificar_produtos_buffet.sql` | Classificação inicial do Estoque Buffet: `Acai self-service` vira `buffet`, granola/leite em pó/morango/banana viram `insumo` e o retorno é ligado só em granola e leite em pó. **Passo manual**, não é `NN_*.sql`; a reversão está em `classificar_produtos_buffet_reverter.sql` |
 | `testar-base.mjs` | Testa a base real de ponta a ponta (`npm run testar:base`) |
 | `diagnostico_seguranca.sql` | Diagnóstico somente leitura de RLS, políticas abertas, privilégios diretos, tabelas internas sem política e unicidade composta por organização |
+| `limpar_dados_demonstracao.sql` | Limpeza guardada de vendas de seed, por organização e corte, com recálculo do estoque e confirmação explícita; não roda sozinha |
+| `limpar_financeiro_demonstracao.sql` | Limpeza guardada dos lançamentos financeiros de seed, com quantidade esperada e confirmação explícita; não toca em vendas, clientes, produtos nem estoque |
 | `testar-permissoes.mjs` | Testa o banco de permissões contra a base real |
 | `validar-migracoes.mjs` | Aplica a cadeia inteira num Postgres **em memória** e exercita os comportamentos (`npm run validar:migracoes`) |
 | `verificar-estoque.mjs` | Confere o livro-razão do estoque **na base real** (`npm run verificar:estoque`; `--concorrencia` inclui o teste de duas conexões) |
@@ -262,16 +264,21 @@ propósito, para nunca entrarem numa aplicação automática:
   produto **apenas dentro da transação**, apaga os movimentos/vendas de seed,
   recalcula o saldo dos produtos afetados e religa os triggers antes do `COMMIT`.
   Se qualquer passo falhar, o `ROLLBACK` restaura dados e triggers.
+- `limpar_financeiro_demonstracao.sql`: limpeza guardada dos lançamentos. Exige
+  organização, corte, `acai.lancamentos_esperados` e `acai.confirmar = 'SIM'`,
+  confere a quantidade antes e depois do `DELETE`, roda em transação e não toca
+  em vendas, clientes, produtos nem estoque.
 
 A limpeza foi autorizada e executada em `production` em 28/10/2026, com corte
 `2026-10-20 00:00:00-03`, depois do backup verificado. Resultado: **2 vendas,
-2 itens, 9 clientes, 518 lançamentos e 29 movimentos**; `#9543` e `#9544` foram
+2 itens, 9 clientes, 0 lançamentos e 29 movimentos**; `#9543` e `#9544` foram
 preservadas, o saldo em cache ficou igual ao livro-razão e os triggers voltaram
-ao estado original. A branch temporária de ensaio foi excluída; o backup
-`backup-riscos-20261028` permanece.
+ao estado original. Foram removidos 518 lançamentos financeiros de seed
+(R$ 459.073,43 em entradas e R$ 583.938,18 em saídas). A branch temporária de
+ensaio foi excluída; o backup `backup-riscos-20261028` permanece.
 
 Não execute a limpeza sem uma branch/backup restaurável e sem revisar o
-diagnóstico. Ela não apaga produtos nem clientes automaticamente.
+diagnóstico. Nenhum dos scripts apaga produtos ou clientes automaticamente.
 
 ### Multi-organização (migração 29)
 

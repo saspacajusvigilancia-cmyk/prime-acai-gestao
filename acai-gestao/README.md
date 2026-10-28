@@ -304,9 +304,10 @@ outubro/2026 aparecia com cerca de R$ 58,5 mil de faturamento fictício.
 A limpeza foi autorizada e executada em 28/10/2026, depois de o backup
 `backup-riscos-20261028` ser aberto e conferido. O corte foi
 `2026-10-20 00:00:00-03` e a produção terminou com **2 vendas, 2 itens, 9
-clientes, 518 lançamentos e 29 movimentos de estoque**; as vendas mantidas são
+clientes, 0 lançamentos e 29 movimentos de estoque**; as vendas mantidas são
 `#9543` (R$ 6,99) e `#9544` (R$ 20,97). O saldo em cache dos produtos foi
-recalculado e ficou igual ao livro-razão (0 divergências).
+recalculado e ficou igual ao livro-razão (0 divergências). Os 9 clientes foram
+preservados de propósito; são cadastros de seed e não entram no faturamento.
 
 Para repetir em outro banco, não apague nada por data sem revisar:
 
@@ -318,10 +319,15 @@ Para repetir em outro banco, não apague nada por data sem revisar:
    `acai.organization_id`, `acai.limpar_ate` e `acai.confirmar = 'SIM'`, roda em
    transação, recusa corte que não preserve nenhuma venda real, desliga os dois
    triggers de manutenção só dentro da transação, repõe o saldo dos movimentos
-   ligados a vendas de seed e confere o resultado antes do `COMMIT`.
+   ligados a vendas de seed e confere o resultado antes do `COMMIT`;
+4. `neon/limpar_financeiro_demonstracao.sql` — limpeza **guardada** dos
+   lançamentos financeiros, exige a organização, o corte, a quantidade esperada
+   (`acai.lancamentos_esperados`) e `acai.confirmar = 'SIM'`; confere a
+   quantidade antes e depois do `DELETE` e não toca em vendas, clientes, produtos
+   nem estoque.
 
-O script de limpeza **não** é executado por `npm run validar:migracoes` nem por
-deploy. Ele precisa de autorização explícita e de um corte conferido no
+Os scripts de limpeza **não** são executados por `npm run validar:migracoes` nem
+por deploy. Eles precisam de autorização explícita e de um corte conferido no
 diagnóstico.
 
 ## Testes
