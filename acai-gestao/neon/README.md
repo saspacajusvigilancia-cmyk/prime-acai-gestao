@@ -115,7 +115,11 @@ aprovados para retorno. Os relatórios usam o ledger e os snapshots feitos ao
 abrir o turno; para fechamentos anteriores, o consumo não pode ser reconstruído
 com segurança. A reversão 27 é deliberadamente bloqueada após o primeiro uso
 de operações, snapshots ou autorizações, para não apagar dados de auditoria.
-Esta migração ainda não foi aplicada a uma base real.
+Aplicada em 28/10/2026 ao projeto Prime Açaí (`nameless-tooth-87377816`), em
+`production` e no branch de ensaio `prime-acai-predeploy-20261028`, com o
+backup `backup-antes-27-20261028`. A cadeia foi validada antes com
+`npm run validar:migracoes`; o schema dos dois branches ficou idêntico
+(`compare_database_schema` sem diferenças).
 
 A migração **não** classifica todos os produtos como venda direta: os registros
 existentes mantêm a política legada. Ela atribui a filial por meio dos

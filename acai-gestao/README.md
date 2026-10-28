@@ -78,6 +78,34 @@ Nunca comite o `.env` nem cole a string em issue/chat. Se ela vazar, troque a
 senha do papel no Console (**Roles → Reset password**); a `VITE_NEON_URL` pode
 continuar a mesma.
 
+### Branches do projeto no Neon
+
+O projeto `Prime Açaí` (`nameless-tooth-87377816`, região `aws-sa-east-1`) usa
+três branches. Trocar de branch é trocar o host na `DATABASE_URL`; a
+`VITE_NEON_URL` continua apontando para `production`.
+
+| Branch | Endpoint | Uso |
+|---|---|---|
+| `production` (padrão) | `ep-fragrant-snow-b6xa862f` | base real do app |
+| `prime-acai-predeploy-20261028` | `ep-plain-lake-b66do9gp` | ensaio de migração antes de produção |
+| `backup-antes-27-20261028` | sem endpoint | ponto de restauração anterior à migração 27 |
+
+Crie o branch de ensaio a partir de `production` (`npx neon branches create --name <nome>`),
+aplique a migração nele, valide com `compare_database_schema` e só então repita em
+produção. Branch de ensaio defasado dá falso positivo: em 28/10/2026 o anterior
+estava quatro migrações atrás e foi recriado do zero.
+
+### RLS sem política é intencional
+
+Cinco tabelas têm RLS ligado e nenhuma política: `audit_logs`, `invites`,
+`invite_permissions`, `user_permissions` e `estoque_operacoes_locais_v2`. Isso é
+proposital — elas são lidas e escritas apenas por RPCs `security definer`
+(`listar_auditoria`, `convidar_usuario`, `cancelar_convite`,
+`definir_permissao_usuario`, `permissoes_do_usuario`, `pode`,
+`registrar_movimentacao_local_v2`, entre outras). Sem política, o Data API nega
+acesso direto e a única porta é a função que valida sessão e permissão. Não
+adicione política de `select` nessas tabelas sem revisar essas RPCs.
+
 ### Prévia com dados fictícios das novas telas
 
 Para gerar uma prévia isolada com registros de teste em produtos, categorias,
@@ -180,7 +208,11 @@ pois o sistema ainda não mantém snapshot de custo por fechamento.
 Preparação e Produção permanecem inativos até configuração explícita. Antes de
 aplicar a migração `27`, valide a cadeia com `npm run validar:migracoes`,
 confirme a organização de destino e tenha um backup cuja restauração foi
-verificada. A migração `27` não foi aplicada automaticamente a uma base real.
+verificada. A migração `27` foi aplicada ao projeto Prime Açaí em 28/10/2026, em
+`production` e no branch de ensaio `prime-acai-predeploy-20261028`, a partir do
+backup `backup-antes-27-20261028`. Ela continua **não** sendo aplicada
+automaticamente por nenhum script de deploy: a aplicação é sempre manual e
+escopada por banco.
 
 ## Testes
 
