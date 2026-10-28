@@ -189,22 +189,31 @@ const leituras = [
   ['vendas do dia', '/vendas?select=codigo,status,pagamento,total,criado_em,estornada_em,clientes(nome),itens_venda(count)&order=criado_em.desc&limit=100'],
   ['vendas recentes', '/vendas?select=codigo,status,pagamento,total,criado_em,estornada_em,clientes(nome),itens_venda(count)&order=criado_em.desc&limit=8'],
   ['clientes (vw_clientes_resumo)', '/vw_clientes_resumo?select=codigo,nome,telefone,email,desde,tier,pedidos,total,ultima_compra&order=total.desc'],
-  ['lancamentos', '/lancamentos?select=id,data,descricao,categoria,tipo,valor,forma&order=data.desc&limit=60'],
-  ['fluxo mensal (view)', '/vw_fluxo_mensal?select=mes,entradas,saidas&order=mes.asc&limit=6'],
+  // Depois da limpeza autorizada dos dados de demonstração, estas duas bases
+  // podem estar legitimamente vazias. O teste continua exigindo HTTP 200 e um
+  // array JSON; só não exige mais pelo menos uma linha.
+  ['lancamentos', '/lancamentos?select=id,data,descricao,categoria,tipo,valor,forma&order=data.desc&limit=60', true],
+  ['fluxo mensal (view)', '/vw_fluxo_mensal?select=mes,entradas,saidas&order=mes.asc&limit=6', true],
   ['faturamento diario (view)', '/vw_faturamento_diario?select=dia,total&order=dia.asc'],
   ['vendas por categoria (view)', '/vw_vendas_por_categoria?select=categoria,total&order=total.desc'],
   ['resumo (view)', '/vw_resumo?select=*'],
 ]
-for (const [nome, caminho] of leituras) {
+for (const [nome, caminho, podeVazio = false] of leituras) {
   const r = await req(caminho)
   const n = Array.isArray(r.json) ? r.json.length : 0
-  ok(nome, r.status === 200 && n > 0, `HTTP ${r.status} · ${n} linha(s)`)
+  ok(nome, r.status === 200 && Array.isArray(r.json) && (podeVazio || n > 0), `HTTP ${r.status} · ${n} linha(s)`)
 }
 
 secao('2) Relacionamentos embutidos')
 const emb = await req('/vendas?select=codigo,clientes(nome),itens_venda(count)&limit=3')
 const amostra = emb.json?.[0]
-ok('clientes(nome)', typeof amostra?.clientes?.nome === 'string', JSON.stringify(amostra?.clientes))
+// Venda sem cliente é válida: o relacionamento vem como null, não como erro.
+const relacionamentoCliente = amostra?.clientes
+ok(
+  'clientes(nome)',
+  relacionamentoCliente === null || typeof relacionamentoCliente?.nome === 'string',
+  JSON.stringify(relacionamentoCliente),
+)
 ok('itens_venda(count)', typeof amostra?.itens_venda?.[0]?.count === 'number', JSON.stringify(amostra?.itens_venda))
 
 secao('3) Contagens antes da escrita')
