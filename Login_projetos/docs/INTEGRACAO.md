@@ -88,7 +88,9 @@ Copie `.env.example` para a raiz do seu projeto e preencha:
 ```ini
 VITE_NEON_URL=https://ep-xxxxx.c-2.us-east-2.aws.neon.tech/neondb
 VITE_APP_URL=https://seu-dominio.example
-VITE_CADASTRO_PUBLICO=true
+# Cadastro aberto (padrão). Para operar por convite, use o par abaixo:
+VITE_CADASTRO_PUBLICO=false
+VITE_CADASTRO_POR_CONVITE=true
 ```
 
 `VITE_APP_URL` é opcional; quando definida, é a origem/base usada para compor
@@ -135,8 +137,10 @@ configurarLogin({
 ```
 
 Tudo é opcional: o que não for passado fica no padrão (`src/config.js`).
-`cadastroPublico` e `VITE_CADASTRO_PUBLICO=false` também podem desabilitar o
-cadastro. `telasAuth()` só registra funcionalidades habilitadas; se o host
+`cadastroPublico` e `VITE_CADASTRO_PUBLICO=false` escondem o link "Criar conta";
+`cadastroPorConvite` e `VITE_CADASTRO_POR_CONVITE=true` mantêm a tela de
+cadastro funcionando por link direto — é o modo "só convidados", em que o
+administrador envia `#/cadastro` para quem convidou. `telasAuth()` só registra funcionalidades habilitadas; se o host
 mantiver suas próprias rotas, deve encaminhar rotas de autenticação desativadas
 para um destino seguro usando `ehRotaAuthConfigurada(path)` e
 `rotaAuthHabilitada(path)`. Mantenha `login: true` a menos que o host forneça

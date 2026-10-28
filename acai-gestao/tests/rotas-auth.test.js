@@ -92,7 +92,9 @@ describe('tela de login montada pelo app', () => {
     expect(root.querySelector('#btn-login')).toBeTruthy()
 
     expect(root.querySelector('a[href="#/recuperar-senha"]')).toBeTruthy()
-    expect(root.querySelector('a[href="#/cadastro"]')).toBeTruthy()
+    // Cadastro por convite: sem link público, mas a rota continua ativa.
+    expect(root.querySelector('a[href="#/cadastro"]')).toBeFalsy()
+    expect(root.textContent).toContain('O cadastro é por convite')
   })
 
   it('o botão de olho alterna o type da senha sem apagar o valor digitado', () => {

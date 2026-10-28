@@ -18,13 +18,18 @@ import {
   marcarErro,
   mostrarAlerta,
 } from '../auth-ui.js'
-import { config, funcionalidadeAuthHabilitada, texto } from '../config.js'
+import { config, funcionalidadeAuthHabilitada, linkCadastroVisivel, texto } from '../config.js'
 import { emailValido, entrar, mensagemDeErro } from '../services/auth.js'
 import { avisarSessao, estadoSessao } from '../sessao.js'
 
 export function loginPage() {
-  const cadastroPublico = funcionalidadeAuthHabilitada('cadastro')
+  const linkCadastro = linkCadastroVisivel()
   const recuperacaoHabilitada = funcionalidadeAuthHabilitada('recuperacaoSenha')
+  const avisoCadastro = linkCadastro
+    ? ''
+    : config.cadastroPorConvite
+      ? '<p>O cadastro é por convite. Peça o seu acesso a um administrador.</p>'
+      : '<p>O cadastro pelo app está desativado. Peça o seu acesso a um administrador.</p>'
 
   return {
     html: layoutAuth({
@@ -62,13 +67,9 @@ export function loginPage() {
       rodape: `
         <div class="auth__rodape-linha">
           ${recuperacaoHabilitada ? `<a href="#${config.rotas.recuperar}">Esqueci minha senha</a>` : ''}
-          ${cadastroPublico ? `<a href="#${config.rotas.cadastro}">Criar conta</a>` : ''}
+          ${linkCadastro ? `<a href="#${config.rotas.cadastro}">Criar conta</a>` : ''}
         </div>
-        ${
-          cadastroPublico
-            ? ''
-            : '<p>O cadastro pelo app está desativado. Peça o seu acesso a um administrador.</p>'
-        }
+        ${avisoCadastro}
       `,
     }),
 

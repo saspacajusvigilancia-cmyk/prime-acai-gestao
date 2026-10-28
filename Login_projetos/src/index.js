@@ -23,6 +23,7 @@ import {
   configurarLogin,
   ehRotaAuthConfigurada,
   funcionalidadeAuthHabilitada,
+  linkCadastroVisivel,
   rotaAuthHabilitada,
   texto,
 } from './config.js'
@@ -38,6 +39,7 @@ export {
   configurarLogin,
   ehRotaAuthConfigurada,
   funcionalidadeAuthHabilitada,
+  linkCadastroVisivel,
   rotaAuthHabilitada,
   texto,
 }

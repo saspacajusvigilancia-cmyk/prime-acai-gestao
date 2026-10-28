@@ -7,6 +7,7 @@ import {
   configurarLogin,
   ehRotaAuthConfigurada,
   funcionalidadeAuthHabilitada,
+  linkCadastroVisivel,
   rotaAuthHabilitada,
   texto,
 } from '../src/config.js'
@@ -67,6 +68,20 @@ describe('config', () => {
     assert.equal(config.cadastroPublico, false)
 
     configurarLogin({ senhaMinima: 8, cadastroPublico: true })
+  })
+
+  test('cadastro por convite esconde o link mas mantém a tela', () => {
+    configurarLogin({ cadastroPublico: false, cadastroPorConvite: true })
+
+    assert.equal(linkCadastroVisivel(), false, 'o login não anuncia o cadastro')
+    assert.equal(funcionalidadeAuthHabilitada('cadastro'), true, 'a tela segue acessível pelo link')
+    assert.equal(rotaAuthHabilitada('/cadastro'), true)
+
+    configurarLogin({ cadastroPublico: false, cadastroPorConvite: false })
+    assert.equal(funcionalidadeAuthHabilitada('cadastro'), false, 'sem as duas, bloqueia de vez')
+
+    configurarLogin({ cadastroPublico: true, cadastroPorConvite: false })
+    assert.equal(linkCadastroVisivel(), true)
   })
 
   test('configura funcionalidades, provedor e destino de logout', () => {

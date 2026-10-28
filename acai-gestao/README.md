@@ -28,13 +28,35 @@ Copie `.env.example` para `.env` e preencha:
 |---|---|
 | `VITE_NEON_URL` | URL HTTPS do Neon (host + database). Sem ela, o app roda em modo demonstração (dados de exemplo) |
 | `VITE_APP_URL` | Opcional; origem pública para os links de recuperação de senha |
-| `VITE_CADASTRO_PUBLICO` | `false` esconde o "Criar conta" — só um administrador cria contas |
+| `VITE_CADASTRO_PUBLICO` | `false` esconde o link "Criar conta" da tela de login |
+| `VITE_CADASTRO_POR_CONVITE` | Com a anterior em `false`, mantém a tela `#/cadastro` acessível por link direto — é assim que o convidado cria a própria conta |
 | `DATABASE_URL` | **Segredo**, opcional — conexão Postgres direta para aplicar migrações e rodar `npm run verificar:*`; nunca vai para o navegador |
 | `VITE_TESTE_EMAIL` / `VITE_TESTE_SENHA` | Opcional — só para `npm run testar:base` |
 
 Sem `VITE_NEON_URL`, a interface usa os dados de demonstração. Com a URL
 configurada, falhas de leitura não são substituídas por exemplos: a tela mostra
 um aviso no indicador de dados até uma consulta daquele conjunto funcionar.
+
+### Cadastro de usuários (por convite)
+
+O app não cria contas pelo administrador — quem cria é a própria pessoa, na tela
+`#/cadastro`. Por isso o cadastro público fica **aberto no serviço de Auth** e a
+opção que o esconde é o par abaixo:
+
+```ini
+VITE_CADASTRO_PUBLICO=false   # some o link "Criar conta" do login
+VITE_CADASTRO_POR_CONVITE=true # mantém a tela acessível pelo link do convite
+```
+
+O fluxo é: administrador → **Usuários → Convidar usuário** → copia o link exibido
+e envia para a pessoa. Ao se cadastrar com aquele e-mail, `garantir_perfil()`
+aplica o papel e as permissões do convite.
+
+Isso **não** é barreira de segurança: quem descobrir o endereço ainda consegue
+criar uma conta. O que protege os dados é o banco — conta sem convite nasce
+inativa (`is_active = false`) e o RLS não devolve nada até um administrador
+aprovar em **Usuários**. Para fechar de vez seria preciso criar as contas por um
+backend (o Data API não tem permissão para isso), o que hoje não existe.
 
 ### Conexão direta com o Postgres (`DATABASE_URL`)
 

@@ -59,7 +59,9 @@ E no `.env` do projeto:
 ```ini
 VITE_NEON_URL=https://ep-xxxxx.c-2.us-east-2.aws.neon.tech/neondb
 VITE_APP_URL=https://seu-dominio.example
-VITE_CADASTRO_PUBLICO=true
+# Cadastro aberto (padrão). Para operar por convite, use o par abaixo:
+VITE_CADASTRO_PUBLICO=false
+VITE_CADASTRO_POR_CONVITE=true
 ```
 
 ---
@@ -74,7 +76,8 @@ configurarLogin({
     nome, assinatura, icone, chamada, descricao, pontos
   },
   rotas: { login, cadastro, recuperar, redefinir, depoisDoLogin, depoisDoLogout },
-  cadastroPublico,       // liga/desliga a tela de cadastro
+  cadastroPublico,       // mostra o link "Criar conta" na tela de login
+  cadastroPorConvite,    // mantém a tela de cadastro acessível por link direto
   funcionalidades,       // login, cadastro, recuperacaoSenha, redefinicaoSenha
   provedor,              // cliente/adaptador compatível (Neon é o padrão)
   urlAplicacao,          // origem/base pública usada no link de recuperação

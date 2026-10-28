@@ -34,11 +34,15 @@ describe('marca da Prime Açaí nas telas do pacote', () => {
     expect(html).not.toContain('Meu Sistema')
   })
 
-  it('a tela de login aponta para as rotas do app', () => {
+  it('a tela de login aponta para as rotas do app e esconde o cadastro por convite', () => {
     const { html } = pacote.loginPage()
 
     expect(html).toContain('href="#/recuperar-senha"')
-    expect(html).toContain('href="#/cadastro"')
+    // Cadastro por convite: o link não aparece, mas a tela segue registrada
+    // para quem recebe o endereço do convite.
+    expect(html).not.toContain('href="#/cadastro"')
+    expect(html).toContain('O cadastro é por convite')
+    expect(pacote.telasAuth()['/cadastro']).toBeTypeOf('function')
   })
 
   it('o cadastro destaca o papel padrão e volta para o login', () => {

@@ -48,8 +48,19 @@ export const config = {
     depoisDoLogout: '/login',
   },
 
-  /** Se `false`, o link "Criar conta" some e a tela de cadastro bloqueia. */
+  /** Se `false`, o link "Criar conta" some da tela de login. */
   cadastroPublico: env.VITE_CADASTRO_PUBLICO !== 'false',
+
+  /**
+   * Mantém a tela de cadastro acessível por link direto mesmo com o link
+   * escondido (`VITE_CADASTRO_PUBLICO=false`).
+   *
+   * Serve para operar por convite: o administrador cria o convite e compartilha
+   * `#/cadastro` só com a pessoa convidada. Não é barreira de segurança — quem
+   * souber o endereço ainda cria uma conta, que nasce inativa e depende de
+   * aprovação (RLS + `garantir_perfil` no banco).
+   */
+  cadastroPorConvite: env.VITE_CADASTRO_POR_CONVITE === 'true',
 
   /** Telas e operações opcionais; login permanece habilitado por padrão. */
   funcionalidades: {
@@ -132,9 +143,20 @@ export function ehRotaAuthConfigurada(rota) {
 /** Verifica se uma tela/operação de autenticação foi habilitada pelo host. */
 export function funcionalidadeAuthHabilitada(funcionalidade) {
   if (funcionalidade === 'cadastro') {
-    return config.cadastroPublico && config.funcionalidades.cadastro !== false
+    const permitido = config.cadastroPublico || config.cadastroPorConvite
+    return permitido && config.funcionalidades.cadastro !== false
   }
   return config.funcionalidades[funcionalidade] !== false
+}
+
+/**
+ * Mostra o link "Criar conta" na tela de login?
+ *
+ * Só quando o cadastro é público de verdade. Com `cadastroPorConvite`, a tela
+ * continua existindo para quem recebeu o link direto, mas o login não a anuncia.
+ */
+export function linkCadastroVisivel() {
+  return config.cadastroPublico && config.funcionalidades.cadastro !== false
 }
 
 /** Verifica se a rota de autenticação está habilitada. */
