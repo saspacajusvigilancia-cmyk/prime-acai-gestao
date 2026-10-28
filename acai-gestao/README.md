@@ -308,13 +308,17 @@ Não apague nada por data sem revisar. Use, nesta ordem:
    estoque e tabelas com RLS sem política;
 2. criar uma branch/backup do Neon e confirmar que ela abre;
 3. `neon/limpar_dados_demonstracao.sql` — limpeza **guardada**, exige
-   `acai.limpar_ate` e `acai.confirmar = 'SIM'`, roda em transação, repõe o saldo
-   dos poucos movimentos ligados a vendas de seed e aborta se o corte atingir uma
-   venda que seria preservada.
+   `acai.organization_id`, `acai.limpar_ate` e `acai.confirmar = 'SIM'`, roda em
+   transação, recusa corte que não preserve nenhuma venda real, desliga os dois
+   triggers de manutenção só dentro da transação, repõe o saldo dos cinco
+   movimentos ligados a vendas de seed e confere o resultado antes do `COMMIT`.
+   O script foi simulado na branch `teste-migracao-32-20261028` com rollback:
+   apagaria 8.537 vendas e 12.801 itens, preservaria as duas vendas reais
+   (`#9543`/`#9544`) e religaria os triggers.
 
 O script de limpeza **não** é executado por `npm run validar:migracoes` nem por
 deploy. Ele precisa de autorização explícita e de um corte conferido no
-diagnóstico.
+diagnóstico. **A limpeza ainda não foi executada em produção.**
 
 ## Testes
 

@@ -256,9 +256,14 @@ propósito, para nunca entrarem numa aplicação automática:
   divergências de total separando seed de real, referências de produtos/clientes,
   integridade do livro-razão e tabelas com RLS sem política.
 - `limpar_dados_demonstracao.sql`: limpeza guardada. Exige
-  `set acai.limpar_ate = '…'` e `set acai.confirmar = 'SIM'`, roda em transação,
-  recusa cortes que atinjam vendas preservadas, repõe o saldo dos movimentos de
-  venda apagados e confere o resultado antes do `COMMIT`.
+  `acai.organization_id`, `set acai.limpar_ate = '…'` e `set acai.confirmar = 'SIM'`,
+  roda em transação, recusa corte que não preserve nenhuma venda real da
+  organização, desliga o trigger de imutabilidade do livro e o trigger de saldo do
+  produto **apenas dentro da transação**, apaga os movimentos/vendas de seed,
+  recalcula o saldo dos produtos afetados e religa os triggers antes do `COMMIT`.
+  Se qualquer passo falhar, o `ROLLBACK` restaura dados e triggers. Simulado com
+  rollback em 28/10/2026: 8.537 vendas e 12.801 itens sairiam, duas vendas reais
+  ficariam e os triggers voltariam ao estado original.
 
 Não execute a limpeza sem uma branch/backup restaurável e sem revisar o
 diagnóstico. Ela não apaga produtos nem clientes automaticamente.
