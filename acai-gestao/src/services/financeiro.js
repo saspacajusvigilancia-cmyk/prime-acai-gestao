@@ -121,13 +121,13 @@ function paraNumero(valor) {
  * Baixa uma parcela. O valor vem do formulário, mas o banco revalida saldo,
  * permissão e idempotência — a tela não é a autoridade.
  */
-export function baixarParcela({ parcelaId, valor, data, formaPagamentoId, observacoes }) {
+export function baixarParcela({ parcelaId, valor, data, formaPagamentoId, observacoes, chave }) {
   const valorNumerico = paraNumero(valor)
-  const chave = `manual:${parcelaId}:${Date.now()}`
+  const chaveIdempotencia = chave || `manual:${parcelaId}:${Date.now()}`
 
   return gravar({
     nome: 'baixa financeira',
-    registro: { parcelaId, valor: valorNumerico, chave },
+    registro: { parcelaId, valor: valorNumerico, chave: chaveIdempotencia },
     escrever: async (neon) => {
       const { data, error } = await neon.rpc('baixar_parcela_financeira', {
         p_parcela_id: parcelaId,
@@ -135,7 +135,7 @@ export function baixarParcela({ parcelaId, valor, data, formaPagamentoId, observ
         p_data: data || hoje(),
         p_forma_pagamento_id: formaPagamentoId || null,
         p_observacoes: observacoes?.trim() || '',
-        p_chave: chave,
+        p_chave: chaveIdempotencia,
       })
 
       if (error) throw error

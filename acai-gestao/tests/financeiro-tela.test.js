@@ -146,6 +146,7 @@ describe('financeiro · títulos', () => {
       data: '2026-10-29',
       formaPagamentoId: 'forma-pix',
       observacoes: '',
+      chave: expect.stringMatching(/^manual:parcela-1:\d+$/),
     })
   })
 

@@ -356,20 +356,27 @@ export function financeiroPage() {
       /**
        * As views de títulos chegam na migração 33. Enquanto ela não estiver
        * aplicada, a tela não pode exibir os valores de exemplo como se fossem
-       * reais: zera os indicadores e diz o que falta.
+       * reais: zera o indicador e diz o que falta.
        */
-      const financeiroIndisponivel = () => {
+      const titulosIndisponiveis = (tipo) => {
+        const id = tipo === 'receber' ? 'tabela-receber' : 'tabela-pagar'
+        const contagem = tipo === 'receber' ? contagemReceber : contagemPagar
+        atualizarTabela(root, id, colunasTitulos, [])
+        contagem.textContent = 'Indisponível — recurso ainda não ativado neste ambiente'
+      }
+
+      const resumoIndisponivel = () => {
         atualizarKpi(root, 'aReceber', { valor: '—' })
         atualizarKpi(root, 'aPagar', { valor: '—' })
         aplicarHint('aReceber', 'Indisponível neste banco')
         aplicarHint('aPagar', 'Indisponível neste banco')
-        atualizarTabela(root, 'tabela-receber', colunasTitulos, [])
-        atualizarTabela(root, 'tabela-pagar', colunasTitulos, [])
-        contagemReceber.textContent = 'Indisponível — recurso ainda não ativado neste ambiente'
-        contagemPagar.textContent = 'Indisponível — recurso ainda não ativado neste ambiente'
       }
 
       const abrirBaixa = (parcelaId, descricao, saldo) => {
+        // A chave nasce com o formulário: se a resposta se perder e o usuário
+        // tentar de novo, o banco devolve a mesma baixa em vez de debitar duas.
+        const chave = `manual:${parcelaId}:${Date.now()}`
+
         abrirFormulario({
           titulo: 'Baixar título',
           descricao: descricao,
@@ -412,6 +419,7 @@ export function financeiroPage() {
               data: valores.data,
               formaPagamentoId: valores.forma_pagamento_id,
               observacoes: valores.observacoes,
+              chave,
             })
 
             if (origem === 'exemplo') {
@@ -470,17 +478,17 @@ export function financeiroPage() {
       const pararReceber = observar(
         listarTitulos('receber'),
         ({ dados: remotos }) => aplicarTitulos('receber', remotos),
-        financeiroIndisponivel,
+        () => titulosIndisponiveis('receber'),
       )
       const pararPagar = observar(
         listarTitulos('pagar'),
         ({ dados: remotos }) => aplicarTitulos('pagar', remotos),
-        financeiroIndisponivel,
+        () => titulosIndisponiveis('pagar'),
       )
       const pararResumo = observar(
         carregarResumoFinanceiro(),
         ({ dados: resumo }) => aplicarResumo(resumo),
-        financeiroIndisponivel,
+        resumoIndisponivel,
       )
       const pararFormas = observar(listarFormasPagamento({ somenteAtivos: true }), ({ dados }) => {
         formas = dados
