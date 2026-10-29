@@ -1758,7 +1758,7 @@ select
   c.nome as cliente,
   fo.nome as fornecedor
 from public.titulos_financeiros t
-join public.filiais f on f.id = t.filial_id
+left join public.filiais f on f.id = t.filial_id
 join public.parcelas_financeiras p on p.titulo_id = t.id
 left join public.clientes c on c.id = t.cliente_id
 left join public.fornecedores fo on fo.id = t.fornecedor_id;

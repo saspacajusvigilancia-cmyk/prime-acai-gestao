@@ -68,7 +68,7 @@ export const routes = [
     label: 'Estoque Buffet',
     title: 'Estoque Buffet',
     subtitle: 'Fechamento, contagem e histórico do buffet',
-    icon: 'clipboard-check',
+    icon: 'cooking-pot',
     group: 'Operação',
     modulo: 'estoque',
     page: buffetPage,

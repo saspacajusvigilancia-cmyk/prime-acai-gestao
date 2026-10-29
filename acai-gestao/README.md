@@ -204,17 +204,21 @@ node neon/aplicar.mjs 32
 npx neon data-api refresh-schema
 ```
 
-As migrações `33` (ERP empresas/filiais/financeiro) e `34` (demonstração
-protegida) **não estão aplicadas em produção**. A 33 é a única que muda o
-schema de produção; até ela ser aplicada, a tela Financeiro mostra `—` nos
-cartões de títulos e avisa que a migração falta, em vez de exibir os valores de
-exemplo. Para aplicar em um banco validado:
+As migrações `33` (ERP empresas/filiais/financeiro), `34` (demonstração
+protegida) e `35` (correção do `JOIN` da view de títulos) **estão aplicadas em
+produção** desde 29/10/2026. A `34` só instala `demo_carregar()`, que é usada
+em branches descartáveis e recusa a loja (base com vendas/compras), então fica
+inerte em produção.
+
+A migração `35` corrige o `JOIN` da view `vw_titulos_financeiros` (INNER →
+LEFT em `filiais`). Antes, um usuário com `financeiro.consultar` mas sem
+`configuracoes.ver/editar` via a lista "Contas a receber e a pagar" vazia: o
+RLS de `filiais` filtrava a linha e o INNER JOIN descartava o título inteiro.
+Para aplicar a `35` em outro banco validado:
 
 ```bash
 npm run validar:migracoes
-npm run testar:demonstracao
-node neon/aplicar.mjs 33
-node neon/aplicar.mjs 34
+node neon/aplicar.mjs 35
 npx neon data-api refresh-schema
 ```
 

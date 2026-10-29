@@ -2587,6 +2587,57 @@ log('\n== O seed da 00 se recusa a apagar uma base com dados ==')
   else podeFalhar('e as vendas continuam todas lá', `${depois} vendas (antes ${antes})`)
 }
 
+log('\n== 35 · A view de títulos não esvazia com permissão financeira parcial ==')
+{
+  // O gerente tem financeiro.consultar E configuracoes.ver. Sem configuracoes.ver,
+  // o RLS de `filiais` escondia a linha no JOIN INNER antigo da vw_titulos_financeiros;
+  // com o LEFT JOIN da 35 o título precisa continuar visível.
+  const filial = await um(
+    `select id from public.filiais where organization_id = '${ORG}' and codigo = 'MATRIZ'`,
+  )
+  const titulo = await um(`
+    insert into public.titulos_financeiros
+      (organization_id, filial_id, tipo, origem_tipo, numero, descricao, data_vencimento, valor_original)
+    values ('${ORG}', '${filial.id}', 'receber', 'manual', 'TIT-35-REGRESSAO',
+            'Título de regressão da 35', current_date, 100)
+    returning id`)
+
+  // Nega configuracoes.ver E configuracoes.editar para o gerente, mantendo
+  // financeiro.consultar. Sem nenhuma permissão de configurações, o RLS de
+  // `filiais` esconde a filial inteira (o JOIN INNER antigo descartava o
+  // título; o LEFT JOIN da 35 o mantém).
+  await db.exec(`
+    insert into public.user_permissions (user_id, permission_id, allowed)
+    select '${MANAGER}', id, false from public.permissions
+     where module_key = 'configuracoes' and action_key in ('ver', 'editar')
+    on conflict (user_id, permission_id) do update set allowed = false`)
+
+  const filiaisVisiveis = await leComo(
+    MANAGER,
+    `select count(*)::int as n from public.filiais where organization_id = '${ORG}'`,
+  )
+  const titulosVisiveis = await leComo(
+    MANAGER,
+    `select count(*)::int as n from public.vw_titulos_financeiros where numero = 'TIT-35-REGRESSAO'`,
+  )
+
+  await db.exec(`delete from public.user_permissions where user_id = '${MANAGER}'`)
+  await db.exec(`delete from public.titulos_financeiros where numero = 'TIT-35-REGRESSAO'`)
+
+  if (
+    !filiaisVisiveis.erro && filiaisVisiveis.n === 0 &&
+    !titulosVisiveis.erro && titulosVisiveis.n === 1
+  ) {
+    ok('o título segue visível sem configuracoes.ver (LEFT JOIN da 35)')
+  } else {
+    podeFalhar(
+      'view de títulos com permissão parcial',
+      filiaisVisiveis.erro?.message ?? titulosVisiveis.erro?.message ??
+        `filiais visíveis ${filiaisVisiveis.n}, títulos visíveis ${titulosVisiveis.n}`,
+    )
+  }
+}
+
 log('\n== Reversão ==')
 for (const arquivo of readdirSync(PASTA)
   .filter((nome) => /^reverter_.*\.sql$/i.test(nome))
