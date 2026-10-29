@@ -204,6 +204,34 @@ node neon/aplicar.mjs 32
 npx neon data-api refresh-schema
 ```
 
+As migrações `33` (ERP empresas/filiais/financeiro) e `34` (demonstração
+protegida) **não estão aplicadas em produção**. A 33 é a única que muda o
+schema de produção; até ela ser aplicada, a tela Financeiro mostra `—` nos
+cartões de títulos e avisa que a migração falta, em vez de exibir os valores de
+exemplo. Para aplicar em um banco validado:
+
+```bash
+npm run validar:migracoes
+npm run testar:demonstracao
+node neon/aplicar.mjs 33
+node neon/aplicar.mjs 34
+npx neon data-api refresh-schema
+```
+
+A demonstração nunca roda no deploy. Ela exige uma branch descartável, sem
+vendas nem compras, e recusa o host de produção:
+
+```bash
+$env:DEMO_DATABASE_URL="postgresql://...@ep-branch-descartavel.../neondb?sslmode=require"
+$env:DEMO_CONFIRMAR="SIM"
+npm run carregar:demonstracao
+```
+
+Para reiniciar a branch descartável antes da carga, use
+`npm run zerar:operacional` com `RESET_CONFIRMAR=SIM`, `RESET_BACKUP_OK=SIM`,
+`RESET_BRANCH_DESCARTAVEL=SIM` e `RESET_HOST` igual ao host da URL. O detalhe
+das travas e da lista de tabelas está em `neon/README.md`.
+
 O diagnóstico somente leitura de RLS, privilégios e chaves compostas é
 `neon/diagnostico_seguranca.sql`.
 
@@ -213,7 +241,7 @@ O diagnóstico somente leitura de RLS, privilégios e chaves compostas é
 O banco é criado por **um arquivo só**: `neon/00_banco_neon.sql`
 (tabelas, índices, funções, views, GRANTs, RLS e os dados de exemplo).
 Depois dele, cada mudança veio numa migração numerada (`neon/01_…` até
-`neon/32_…`; a `12` é dados de estudo e não entra na aplicação padrão, a `16`
+`neon/34_…`; a `12` é dados de estudo e não entra na aplicação padrão, a `16`
 é Compras, a `17` aplica permissões de clientes/financeiro, a `18` acrescenta
 canais e pagamentos, a `19` habilita fotos persistentes de produtos, a `20` cria
 o catálogo de categorias, a `21` categoriza os tipos de venda, as `22`–`25`
@@ -221,8 +249,10 @@ tratam locais, baixas por produto, operações do Estoque Buffet e reconciliaç�
 por turno, a `26`/`28` reservam códigos sequenciais de produto/cliente, a `29`
 aplica o isolamento por organização, a `30` indexa as chaves estrangeiras
 simples, a `31` versiona a RPC de permissões por perfil e os dois índices de
-chave estrangeira compostos que faltavam e a `32` torna códigos e idempotência
-únicos por organização). A aplicação é por prefixo, **um arquivo por vez**:
+chave estrangeira compostos que faltavam, a `32` torna códigos e idempotência
+únicos por organização, a `33` acrescenta empresas/filiais/depósitos e o
+financeiro integrado (títulos, baixas, caixa) e a `34` instala a carga de
+demonstração protegida). A aplicação é por prefixo, **um arquivo por vez**:
 
 ```bash
 node neon/aplicar.mjs 11     # só a que começa com "11"
@@ -335,6 +365,7 @@ diagnóstico.
 ```bash
 npm test                  # unitários (Vitest + jsdom), sem tocar no banco
 npm run validar:migracoes # a cadeia de migrações num Postgres em memória
+npm run testar:demonstracao # carga DEMO, travas, idempotência e consistência em PGlite
 ```
 
 O pacote compartilhado tem a própria suíte (Node, sem dependências externas):

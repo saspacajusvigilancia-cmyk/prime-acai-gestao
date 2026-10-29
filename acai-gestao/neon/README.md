@@ -38,6 +38,9 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `30_indices_chaves_estrangeiras.sql` | Índices nas 25 colunas de chave estrangeira que ainda faziam varredura completa no lado filho; só cria índices, sem tocar em dados, RLS ou funções |
 | `31_permissoes_perfil_e_indices_compostos.sql` | Versiona a RPC `definir_permissao_perfil()` (antes só existia em produção), restringe a execução a `authenticated` e cria os dois índices das FKs compostas restantes; idempotente |
 | `32_codigos_idempotencia_por_organizacao.sql` | Código de venda, código de cliente e chave de idempotência únicos por organização; contador atômico em `private.organization_counters`; `registrar_venda()` filtra cliente/produto/recipiente/chave pela organização; remove políticas antigas `usuario_*`; idempotente |
+| `33_erp_empresas_filiais_financeiro.sql` | ERP aditivo: empresas → filiais → depósitos; filial/depósito nas operações; recebimentos de compra rastreáveis; contas a pagar/receber, parcelas, baixas, pagamentos de venda, caixas e sessões; plano de contas, fichas técnicas e views de leitura. `registrar_venda()` e `confirmar_recebimento_compra()` continuam sendo as portas transacionais |
+| `34_demonstracao_protegida.sql` | Instala `demo_carregar(token)`, que só roda com `app.demo_isolada=true`, token explícito, administrador ativo e base sem vendas/compras. Não carrega nada sozinha e não entra no deploy |
+| `reverter_33_…` / `reverter_34_…` | A reverter 33 remove as tabelas/colunas/triggers/views que a 33 criou, preservando as tabelas antigas e os dados; a reverter 34 remove apenas a função de demonstração |
 | `reverter_08_…` até `reverter_32_…` (e as anteriores) | Reversões conservadoras; a 21 bloqueia categorias personalizadas em uso, a 22 bloqueia movimentos do estoque geral, a 23 impede remover WhatsApps cadastrados, a 24 preserva os novos metadados, a 26 não remove códigos gravados, a 27 bloqueia reversão quando já há operações/snapshots/autorizações, a 28 devolve a edição manual do código do cliente, a 29 volta as políticas ao formato sem organização sem apagar linhas, a 30 remove apenas os índices que criou, a 31 remove a RPC e os dois índices e a 32 restaura as chaves globais somente se não houver repetição entre organizações |
 | `garantir_perfil_novo.sql` | Versão de `garantir_perfil()` que lê e-mail e convite — conta sem convite nasce **inativa** (aprovação pelo administrador) e convite define papel/ativação. **Passo manual**, não é `NN_*.sql`; o app usa `aprovacaoManual: true` |
 | `classificar_produtos_buffet.sql` | Classificação inicial do Estoque Buffet: `Acai self-service` vira `buffet`, granola/leite em pó/morango/banana viram `insumo` e o retorno é ligado só em granola e leite em pó. **Passo manual**, não é `NN_*.sql`; a reversão está em `classificar_produtos_buffet_reverter.sql` |
@@ -51,6 +54,9 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `verificar-compras.mjs` | Confere compra total e parcial, estoque, custo médio, lote, bloqueio de duplicidade e permissão do caixa **na base real**, sem gravar nada (`npm run verificar:compras`) |
 | `verificar-vendas.mjs` | Confere a venda transacional **na base real**, sem gravar nada (`npm run verificar:vendas`) |
 | `testar-estoque-api.mjs` | Testa as RPCs do estoque **pelo Neon Data API**, como o navegador faz (`npm run testar:estoque:api`) |
+| `testar-demonstracao.mjs` | Aplica a cadeia inteira em PGlite e testa as travas, a carga, a idempotência e as regras de consistência da demonstração (`npm run testar:demonstracao`) |
+| `carregar-demonstracao.mjs` | Carrega a demonstração numa branch **descartável** já migrada; exige `DEMO_DATABASE_URL`, `DEMO_CONFIRMAR=SIM`, zero vendas/compras e recusa o host de produção (`npm run carregar:demonstracao`) |
+| `zerar-operacional.mjs` | Zera as tabelas operacionais de uma branch **descartável**, com lista explícita, backup declarado e host de produção recusado (`npm run zerar:operacional`) |
 
 > A numeração pula **13, 14 e 15**: esses arquivos não fazem parte da cadeia
 > aplicada por este projeto. O `aplicar.mjs` segue a ordem alfabética dos nomes e
@@ -242,6 +248,61 @@ A migração é idempotente e tem reversão em
 se houver códigos/chaves repetidos entre organizações, para não perder dados.
 Ela foi aplicada em `production` em 28/10/2026 após conferir a branch de backup
 `backup-riscos-20261028`.
+
+### ERP, financeiro e demonstração protegida (migrações 33 e 34)
+
+A `33` é **aditiva**: cria `empresas`, `filiais`, `depositos`, recebimentos de
+compra, `plano_contas`, títulos/parcelas/baixas, pagamentos de venda, caixas e
+sessões, fichas técnicas e as views `vw_titulos_financeiros`,
+`vw_financeiro_resumo`, `vw_resultado_mensal` e `vw_saldos_por_filial_deposito`.
+As colunas de filial entram anuláveis e são preenchidas por trigger, para não
+quebrar o app antigo. `registrar_venda()` e `confirmar_recebimento_compra()`
+continuam sendo as portas transacionais; a 33 acrescenta o rastro financeiro.
+
+A 33 **não deve ser aplicada em produção** sem backup restaurável e janela de
+validação. O frontend trata a ausência das views: os cartões “A receber” e
+“A pagar” mostram `—` e a tabela avisa que falta a migração 33, em vez de exibir
+os valores de exemplo como se fossem reais.
+
+A `34` instala `public.demo_carregar(token)` e não carrega nada sozinha. A
+função exige, na mesma chamada:
+
+1. `app.demo_isolada = 'true'` na sessão;
+2. o token `PRIME-ACAI-DEMO-2026`;
+3. um administrador ativo com `configuracoes.editar`;
+4. zero vendas e zero compras na organização — ou seja, uma branch
+   descartável recém-criada, nunca a produção.
+
+O fluxo seguro é sempre em branch nova:
+
+```bash
+# 1. aplique a cadeia na branch descartável
+node neon/aplicar.mjs
+
+# 2. aponte só a URL da branch (nunca DATABASE_URL/VITE_NEON_URL)
+$env:DEMO_DATABASE_URL="postgresql://...@ep-branch-descartavel.../neondb?sslmode=require"
+$env:DEMO_CONFIRMAR="SIM"
+npm run carregar:demonstracao
+```
+
+Os scripts recusam o host de produção por SHA-256 e nunca aceitam
+`DATABASE_URL`. A demonstração cria dados fictícios com prefixos `[DEMO]`/`DEMO-`
+e `#DEMO-`: 2 empresas, 2 filiais, 10 depósitos, 8 produtos, 20 clientes, 4
+fornecedores, 6 compras (uma parcial), 6 recebimentos, 60 vendas, 66 títulos,
+62 baixas, 62 lançamentos de caixa e 1 ficha técnica inativa. Nada dispara
+pagamento, mensagem ou documento fiscal real.
+
+Para recomeçar do zero, use `npm run zerar:operacional` na mesma branch
+descartável. Ele exige `RESET_CONFIRMAR=SIM`, `RESET_BACKUP_OK=SIM`,
+`RESET_BRANCH_DESCARTAVEL=SIM`, confere `RESET_HOST` e usa uma lista explícita de
+tabelas, preservando autenticação, perfis/permissões, auditoria, empresas,
+filiais, depósitos e plano de contas.
+
+A validação automatizada da demonstração (sem banco real) é:
+
+```bash
+npm run testar:demonstracao
+```
 
 O diagnóstico somente leitura `diagnostico_seguranca.sql` confere RLS, políticas
 abertas, privilégios diretos e os índices compostos.

@@ -5,13 +5,20 @@ import {
   lancamentos as lancamentosExemplo,
 } from '../data.js'
 import { abrirFormulario } from '../formulario.js'
-import { observar, hoje } from '../services/base.js'
+import { observar, hoje, neonConfigurado } from '../services/base.js'
 import {
   carregarComparativoMensal,
   carregarFluxoMensal,
   criarLancamento,
   listarLancamentos,
 } from '../services/lancamentos.js'
+import {
+  baixarParcela,
+  carregarResumoFinanceiro,
+  listarFormasPagamento,
+  listarTitulos,
+  exemploResumoFinanceiro,
+} from '../services/financeiro.js'
 import {
   atualizarKpi,
   atualizarTabela,
@@ -62,6 +69,56 @@ const filtrar = (dados, termo) => {
     [l.id, l.descricao, l.categoria, l.forma, l.tipo].join(' ').toLowerCase().includes(busca),
   )
 }
+
+const statusTitulo = (titulo) => {
+  const vencido =
+    titulo.status !== 'liquidado' &&
+    titulo.status !== 'cancelado' &&
+    titulo.vencimento &&
+    titulo.vencimento < hoje()
+
+  if (vencido && titulo.saldo > 0) return badge('Vencido', 'danger')
+  if (titulo.status === 'liquidado') return badge('Liquidado', 'success')
+  if (titulo.status === 'parcial') return badge('Parcial', 'warning')
+  if (titulo.status === 'cancelado') return badge('Cancelado', 'danger')
+  return badge('Aberto', 'warning')
+}
+
+const colunasTitulos = [
+  {
+    key: 'descricao',
+    label: 'Título',
+    render: (t) => `
+      <span class="cell-main">${esc(t.descricao)}</span>
+      <span class="cell-sub mono">${esc(t.numero)}</span>
+    `,
+  },
+  { key: 'pessoa', label: 'Pessoa', render: (t) => `<span class="muted">${esc(t.pessoa)}</span>` },
+  {
+    key: 'vencimento',
+    label: 'Vencimento',
+    render: (t) => `<span class="muted">${t.vencimento ? formatData(t.vencimento) : '—'}</span>`,
+  },
+  { key: 'status', label: 'Status', render: statusTitulo },
+  {
+    key: 'saldo',
+    label: 'Saldo',
+    align: 'right',
+    render: (t) => `<strong>${formatBRL(t.saldo)}</strong>`,
+  },
+  {
+    key: 'acao',
+    label: '',
+    align: 'right',
+    render: (t) =>
+      t.saldo > 0.001 && t.status !== 'cancelado'
+        ? `<button class="btn btn--ghost btn--sm" type="button" data-baixar="${esc(t.parcelaId)}"
+             data-titulo="${esc(t.descricao)}" data-saldo="${t.saldo}">
+             Baixar
+           </button>`
+        : '',
+  },
+]
 
 /** Indicadores do mês mais recente presente na série. */
 function indicadores(fluxo) {
@@ -123,6 +180,20 @@ export function financeiroPage() {
           icon: 'chart-line',
           hint: 'Sobre o faturamento',
         })}
+        ${statCard({
+          kpi: 'aReceber',
+          label: 'A receber',
+          valor: neonConfigurado ? '—' : formatBRL(exemploResumoFinanceiro.a_receber),
+          icon: 'hand-coins',
+          hint: neonConfigurado ? 'Carregando…' : 'Títulos em aberto',
+        })}
+        ${statCard({
+          kpi: 'aPagar',
+          label: 'A pagar',
+          valor: neonConfigurado ? '—' : formatBRL(exemploResumoFinanceiro.a_pagar),
+          icon: 'receipt',
+          hint: neonConfigurado ? 'Carregando…' : 'Títulos em aberto',
+        })}
       </section>
 
       <section class="card">
@@ -142,6 +213,25 @@ export function financeiroPage() {
         ${toolbar({ buscaId: 'busca-financeiro', placeholder: 'Buscar por descrição, categoria ou tipo...' })}
         <p class="table__count" id="contagem-financeiro"></p>
         ${tabela({ colunas, linhas: lancamentosExemplo, id: 'tabela-financeiro' })}
+      </section>
+
+      <section class="card">
+        ${cardHead({
+          titulo: 'Contas a receber e a pagar',
+          descricao: 'Títulos gerados pelas vendas e pelos recebimentos de compra',
+        })}
+        <div class="financeiro-duas-colunas">
+          <div>
+            <h3 class="financeiro-titulos__titulo">A receber</h3>
+            <p class="table__count" id="contagem-receber"></p>
+            ${tabela({ colunas: colunasTitulos, linhas: [], id: 'tabela-receber' })}
+          </div>
+          <div>
+            <h3 class="financeiro-titulos__titulo">A pagar</h3>
+            <p class="table__count" id="contagem-pagar"></p>
+            ${tabela({ colunas: colunasTitulos, linhas: [], id: 'tabela-pagar' })}
+          </div>
+        </div>
       </section>
     `,
 
@@ -221,6 +311,126 @@ export function financeiroPage() {
         aplicar(input.value)
       }
 
+      let receber = []
+      let pagar = []
+      let formas = []
+
+      const contagemReceber = root.querySelector('#contagem-receber')
+      const contagemPagar = root.querySelector('#contagem-pagar')
+
+      const aplicarTitulos = (tipo, remotos) => {
+        if (tipo === 'receber') {
+          receber = remotos
+          atualizarTabela(root, 'tabela-receber', colunasTitulos, remotos)
+          contagemReceber.textContent = `${remotos.length} título(s) em aberto`
+        } else {
+          pagar = remotos
+          atualizarTabela(root, 'tabela-pagar', colunasTitulos, remotos)
+          contagemPagar.textContent = `${remotos.length} título(s) em aberto`
+        }
+      }
+
+      const aplicarHint = (kpi, texto) => {
+        const alvo = root.querySelector(`[data-kpi="${kpi}"] .stat__hint`)
+        if (alvo) alvo.textContent = texto
+      }
+
+      const aplicarResumo = (resumo) => {
+        atualizarKpi(root, 'aReceber', { valor: formatBRL(resumo.a_receber) })
+        aplicarHint(
+          'aReceber',
+          resumo.a_receber_vencido > 0
+            ? `${formatBRL(resumo.a_receber_vencido)} vencido`
+            : 'Títulos em aberto',
+        )
+
+        atualizarKpi(root, 'aPagar', { valor: formatBRL(resumo.a_pagar) })
+        aplicarHint(
+          'aPagar',
+          resumo.a_pagar_vencido > 0
+            ? `${formatBRL(resumo.a_pagar_vencido)} vencido`
+            : 'Títulos em aberto',
+        )
+      }
+
+      /**
+       * As views de títulos chegam na migração 33. Enquanto ela não estiver
+       * aplicada, a tela não pode exibir os valores de exemplo como se fossem
+       * reais: zera os indicadores e diz o que falta.
+       */
+      const financeiroIndisponivel = () => {
+        atualizarKpi(root, 'aReceber', { valor: '—' })
+        atualizarKpi(root, 'aPagar', { valor: '—' })
+        aplicarHint('aReceber', 'Indisponível neste banco')
+        aplicarHint('aPagar', 'Indisponível neste banco')
+        atualizarTabela(root, 'tabela-receber', colunasTitulos, [])
+        atualizarTabela(root, 'tabela-pagar', colunasTitulos, [])
+        contagemReceber.textContent = 'Indisponível — recurso ainda não ativado neste ambiente'
+        contagemPagar.textContent = 'Indisponível — recurso ainda não ativado neste ambiente'
+      }
+
+      const abrirBaixa = (parcelaId, descricao, saldo) => {
+        abrirFormulario({
+          titulo: 'Baixar título',
+          descricao: descricao,
+          campos: [
+            {
+              nome: 'valor',
+              label: 'Valor',
+              tipo: 'moeda',
+              obrigatorio: true,
+              largo: true,
+            },
+            {
+              nome: 'data',
+              label: 'Data',
+              tipo: 'data',
+              obrigatorio: true,
+            },
+            {
+              nome: 'forma_pagamento_id',
+              label: 'Forma',
+              tipo: 'select',
+              opcoes: formas.map((f) => ({ valor: f.id, rotulo: f.nome })),
+            },
+            {
+              nome: 'observacoes',
+              label: 'Observações',
+              tipo: 'texto',
+              largo: true,
+            },
+          ],
+          valores: {
+            valor: Number(saldo).toFixed(2).replace('.', ','),
+            data: hoje(),
+            forma_pagamento_id: formas[0]?.id ?? '',
+          },
+          aoSalvar: async (valores) => {
+            const { origem } = await baixarParcela({
+              parcelaId,
+              valor: valores.valor,
+              data: valores.data,
+              formaPagamentoId: valores.forma_pagamento_id,
+              observacoes: valores.observacoes,
+            })
+
+            if (origem === 'exemplo') {
+              return 'A baixa ficou só nesta sessão — o Neon não está configurado.'
+            }
+
+            await recarregar()
+            return 'Baixa registrada no caixa.'
+          },
+        })
+      }
+
+      const aoClicar = (evento) => {
+        const botao = evento.target.closest('[data-baixar]')
+        if (!botao) return
+        abrirBaixa(botao.dataset.baixar, botao.dataset.titulo, botao.dataset.saldo)
+      }
+      root.addEventListener('click', aoClicar)
+
       const aplicarFluxo = (fluxo) => {
         grafico.data.labels = fluxo.labels
         grafico.data.datasets[0].data = fluxo.entradas
@@ -257,17 +467,49 @@ export function financeiroPage() {
         aplicarComparativo(comparativoDe(resultado)),
       )
 
+      const pararReceber = observar(
+        listarTitulos('receber'),
+        ({ dados: remotos }) => aplicarTitulos('receber', remotos),
+        financeiroIndisponivel,
+      )
+      const pararPagar = observar(
+        listarTitulos('pagar'),
+        ({ dados: remotos }) => aplicarTitulos('pagar', remotos),
+        financeiroIndisponivel,
+      )
+      const pararResumo = observar(
+        carregarResumoFinanceiro(),
+        ({ dados: resumo }) => aplicarResumo(resumo),
+        financeiroIndisponivel,
+      )
+      const pararFormas = observar(listarFormasPagamento({ somenteAtivos: true }), ({ dados }) => {
+        formas = dados
+      })
+
       /** Busca de novo no banco e redesenha — usado depois de gravar. */
       const recarregar = async () => {
-        const [{ dados: remotos }, { dados: fluxo }, comparativo] = await Promise.all([
+        const [
+          { dados: remotos },
+          { dados: fluxo },
+          comparativo,
+          { dados: contasReceber },
+          { dados: contasPagar },
+          { dados: resumo },
+        ] = await Promise.all([
           listarLancamentos(),
           carregarFluxoMensal(),
           carregarComparativoMensal(),
+          listarTitulos('receber'),
+          listarTitulos('pagar'),
+          carregarResumoFinanceiro(),
         ])
 
         aplicarLancamentos(remotos)
         aplicarFluxo(fluxo)
         aplicarComparativo(comparativoDe(comparativo))
+        aplicarTitulos('receber', contasReceber)
+        aplicarTitulos('pagar', contasPagar)
+        aplicarResumo(resumo)
       }
 
       root.querySelector('[data-acao="novo-lancamento"]').addEventListener('click', () => {
@@ -322,9 +564,14 @@ export function financeiroPage() {
       return () => {
         grafico.destroy()
         window.removeEventListener('busca-global', aoBuscarGlobal)
+        root.removeEventListener('click', aoClicar)
         pararLancamentos()
         pararFluxo()
         pararComparativo()
+        pararReceber()
+        pararPagar()
+        pararResumo()
+        pararFormas()
       }
     },
   }
