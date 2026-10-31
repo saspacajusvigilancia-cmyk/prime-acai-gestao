@@ -259,8 +259,22 @@ financeiro integrado (títulos, baixas, caixa), a `34` instala a carga de
 demonstração protegida, a `36` reforça a idempotência do estoque e a `37` habilita
 o gerenciamento protegido do cadastro de filiais. A lista de filiais não muda,
 por si só, a filial usada nas operações: essa integração exige adaptação dos
-módulos operacionais e não deve ser simulada no frontend. A aplicação é por
-prefixo, **um arquivo por vez**:
+módulos operacionais e não deve ser simulada no frontend.
+
+Na auditoria somente leitura de 31/10/2026, a produção tinha uma organização,
+uma empresa e uma matriz. As vendas, compras e registros financeiros auditados
+estavam vinculados a essa filial, mas 29 movimentos de estoque ainda estavam
+sem `filial_id`: dois têm vínculo com venda cuja filial pode ser comprovada; os
+outros 27 não têm vínculo documental. Os quatro perfis existentes também
+estavam sem filial ativa. As 25 políticas RLS encontradas nas tabelas
+operacionais auditadas filtravam por organização, não por filial. Portanto,
+cadastro de filiais está disponível, mas troca operacional, permissão por
+filial e isolamento de ponta a ponta ainda não estão implementados. Não crie
+uma segunda filial operacional nem atribua os movimentos ambíguos à matriz
+antes de resolver essas pendências. O diagnóstico reproduzível está em
+`neon/diagnostico_seguranca.sql`; ele não altera dados.
+
+A aplicação de migrations é por prefixo, **um arquivo por vez**:
 
 ```bash
 node neon/aplicar.mjs 11     # só a que começa com "11"

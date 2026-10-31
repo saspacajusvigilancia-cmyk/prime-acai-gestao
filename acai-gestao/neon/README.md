@@ -50,7 +50,7 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `garantir_perfil_novo.sql` | Versão de `garantir_perfil()` que lê e-mail e convite — conta sem convite nasce **inativa** (aprovação pelo administrador) e convite define papel/ativação. **Passo manual**, não é `NN_*.sql`; o app usa `aprovacaoManual: true` |
 | `classificar_produtos_buffet.sql` | Classificação inicial do Estoque Buffet: `Acai self-service` vira `buffet`, granola/leite em pó/morango/banana viram `insumo` e o retorno é ligado só em granola e leite em pó. **Passo manual**, não é `NN_*.sql`; a reversão está em `classificar_produtos_buffet_reverter.sql` |
 | `testar-base.mjs` | Testa a base real de ponta a ponta (`npm run testar:base`) |
-| `diagnostico_seguranca.sql` | Diagnóstico somente leitura de RLS, políticas abertas, privilégios diretos, tabelas internas sem política e unicidade composta por organização |
+| `diagnostico_seguranca.sql` | Diagnóstico somente leitura de RLS, permissões, vínculos de filial ausentes e políticas sem escopo operacional por filial |
 | `limpar_dados_demonstracao.sql` | Limpeza guardada de vendas de seed, por organização e corte, com recálculo do estoque e confirmação explícita; não roda sozinha |
 | `limpar_financeiro_demonstracao.sql` | Limpeza guardada dos lançamentos financeiros de seed, com quantidade esperada e confirmação explícita; não toca em vendas, clientes, produtos nem estoque |
 | `testar-permissoes.mjs` | Testa o banco de permissões contra a base real |
