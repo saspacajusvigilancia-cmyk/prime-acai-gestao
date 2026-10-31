@@ -1,11 +1,10 @@
 # Prime Açaí · Gestão
 
 App web (SPA) para gestão da loja: dashboard, produtos, clientes, vendas,
-lançamentos, financeiro, estoque e configurações da empresa.
+lançamentos, financeiro, estoque, configurações da empresa e cadastro de filiais.
 
-O backend é o **Neon**: Postgres + **Neon Data API** (REST) + **Neon Auth**
-(login/cadastro), e a **logomarca** fica guardada no próprio Postgres (não há
-Storage no Neon).
+O backend usa Postgres com Data API e autenticação do provedor; a **logomarca**
+fica guardada no próprio Postgres (não há Storage no banco).
 
 ## Requisitos
 
@@ -26,7 +25,7 @@ Copie `.env.example` para `.env` e preencha:
 
 | Variável | Para que serve |
 |---|---|
-| `VITE_NEON_URL` | URL HTTPS do Neon (host + database). Sem ela, o app roda em modo demonstração (dados de exemplo) |
+| `VITE_NEON_URL` | URL HTTPS do banco (host + database). Sem ela, o app roda em modo demonstração (dados de exemplo) |
 | `VITE_APP_URL` | Opcional; origem pública para os links de recuperação de senha |
 | `VITE_CADASTRO_PUBLICO` | `false` esconde o link "Criar conta" da tela de login |
 | `VITE_CADASTRO_POR_CONVITE` | Com a anterior em `false`, mantém a tela `#/cadastro` acessível por link direto — é assim que o convidado cria a própria conta |
@@ -65,7 +64,7 @@ O app no navegador **não** usa essa variável: ele fala com o Data API pela
 serve só para os roteiros locais — aplicar migrações e rodar
 `npm run verificar:*` — e é **segredo** (o `.env` já está no `.gitignore`).
 
-1. No Console do Neon, selecione o projeto e a branch e clique em **Connect**.
+1. No console do banco, selecione o projeto e a branch e clique em **Connect**.
 2. Desmarque **Connection pooling** e copie a string que começa com
    `postgresql://`. Para migração use o host **direto** (sem `-pooler`): o
    `aplicar.mjs` roda DDL e transações por arquivo, que não combinam com o
@@ -88,7 +87,8 @@ serve só para os roteiros locais — aplicar migrações e rodar
 5. Aplique a migração pendente e atualize o cache do Data API:
 
    ```powershell
-   node neon/aplicar.mjs 29
+   npm run validar:migracoes
+   node neon/aplicar.mjs 36
    npx neon data-api refresh-schema --database neondb
    ```
 
@@ -100,7 +100,7 @@ Nunca comite o `.env` nem cole a string em issue/chat. Se ela vazar, troque a
 senha do papel no Console (**Roles → Reset password**); a `VITE_NEON_URL` pode
 continuar a mesma.
 
-### Branches do projeto no Neon
+### Branches do projeto
 
 O projeto `Prime Açaí` (`nameless-tooth-87377816`, região `aws-sa-east-1`) usa
 as branches abaixo. Trocar de branch é trocar o host na `DATABASE_URL`; a
@@ -136,7 +136,7 @@ adicione política de `select` nessas tabelas sem revisar essas RPCs.
 
 Para gerar uma prévia isolada com registros de teste em produtos, categorias,
 tipos de venda, formas de pagamento e movimentações entre estoque geral e loja,
-faça o build sem Neon e ative explicitamente `VITE_DADOS_TESTE`:
+faça o build sem banco configurado e ative explicitamente `VITE_DADOS_TESTE`:
 
 ```powershell
 if (-not (Test-Path .env.demo)) { Copy-Item demo.env.example .env.demo }
@@ -147,7 +147,7 @@ Remove-Item Env:VITE_DADOS_TESTE -ErrorAction SilentlyContinue
 ```
 
 Confirme que `.env.demo` tem `VITE_NEON_URL=` vazio antes do build. O modo é
-ignorado se houver cliente Neon configurado. Os registros são somente em
+ignorado se houver cliente do banco configurado. Os registros são somente em
 memória, identificados com `TESTE` e nunca são enviados ao banco. Não publique
 esse build como produção.
 
@@ -155,8 +155,8 @@ esse build como produção.
 
 As telas, o serviço de autenticação e o estado da sessão são compartilhados
 pelo pacote local [`Login_projetos`](../Login_projetos/README.md), configurado
-em [`src/login-config.js`](./src/login-config.js). O app usa **Neon Auth +
-Neon Data API**; não usa Supabase Auth. O pacote não foi publicado: a aplicação
+em [`src/login-config.js`](./src/login-config.js). O app usa a autenticação e a
+API do banco; não usa Supabase Auth. O pacote não foi publicado: a aplicação
 consome a dependência local `file:../Login_projetos`.
 
 O módulo fornece login, cadastro, recuperação/redefinição de senha, observação
@@ -245,7 +245,7 @@ O diagnóstico somente leitura de RLS, privilégios e chaves compostas é
 O banco é criado por **um arquivo só**: `neon/00_banco_neon.sql`
 (tabelas, índices, funções, views, GRANTs, RLS e os dados de exemplo).
 Depois dele, cada mudança veio numa migração numerada (`neon/01_…` até
-`neon/34_…`; a `12` é dados de estudo e não entra na aplicação padrão, a `16`
+`neon/37_…`; a `12` é dados de estudo e não entra na aplicação padrão, a `16`
 é Compras, a `17` aplica permissões de clientes/financeiro, a `18` acrescenta
 canais e pagamentos, a `19` habilita fotos persistentes de produtos, a `20` cria
 o catálogo de categorias, a `21` categoriza os tipos de venda, as `22`–`25`
@@ -255,8 +255,12 @@ aplica o isolamento por organização, a `30` indexa as chaves estrangeiras
 simples, a `31` versiona a RPC de permissões por perfil e os dois índices de
 chave estrangeira compostos que faltavam, a `32` torna códigos e idempotência
 únicos por organização, a `33` acrescenta empresas/filiais/depósitos e o
-financeiro integrado (títulos, baixas, caixa) e a `34` instala a carga de
-demonstração protegida). A aplicação é por prefixo, **um arquivo por vez**:
+financeiro integrado (títulos, baixas, caixa), a `34` instala a carga de
+demonstração protegida, a `36` reforça a idempotência do estoque e a `37` habilita
+o gerenciamento protegido do cadastro de filiais. A lista de filiais não muda,
+por si só, a filial usada nas operações: essa integração exige adaptação dos
+módulos operacionais e não deve ser simulada no frontend. A aplicação é por
+prefixo, **um arquivo por vez**:
 
 ```bash
 node neon/aplicar.mjs 11     # só a que começa com "11"
@@ -272,12 +276,12 @@ a ordem de duas fases da venda — está em `neon/README.md`.
 
 ### Estoque Buffet e locais
 
-O ledger existente é a fonte única dos saldos. O recebimento de compras permite
-definir o destino por item; transferências e contagens são confirmadas por RPC
-com validação de filial e permissão. A tela **Estoque Buffet** oferece
-abastecimento do Estoque Normal/Geral, perdas auditáveis, retorno apenas para
-produtos explicitamente autorizados, histórico filtrável e fechamento por
-turno com snapshot e reconciliação de consumo/divergência. Fechamentos,
+O ledger existente é a fonte única dos saldos. Compras e entradas são recebidas no **Estoque Principal** (Loja ou Geral);
+abastecer o Buffet exige transferência rastreável, que reduz um local e aumenta
+o outro sem criar saldo. A tela **Estoque Buffet** oferece perdas auditáveis,
+retorno apenas para produtos explicitamente autorizados, histórico filtrável e
+fechamento por turno com snapshot e reconciliação de consumo/divergência. O
+saldo consolidado soma Principal + Buffet uma única vez. Fechamentos,
 movimentos e auditoria não são apagados. O custo histórico não é estimado,
 pois o sistema ainda não mantém snapshot de custo por fechamento.
 
@@ -348,7 +352,7 @@ Para repetir em outro banco, não apague nada por data sem revisar:
 1. `neon/diagnostico_dados_demonstracao.sql` — **somente leitura**, mostra vendas
    por período, divergências de total, produtos/clientes antigos, integridade do
    estoque e tabelas com RLS sem política;
-2. criar uma branch/backup do Neon e confirmar que ela abre;
+2. criar uma branch/backup do banco e confirmar que ela abre;
 3. `neon/limpar_dados_demonstracao.sql` — limpeza **guardada**, exige
    `acai.organization_id`, `acai.limpar_ate` e `acai.confirmar = 'SIM'`, roda em
    transação, recusa corte que não preserve nenhuma venda real, desliga os dois
@@ -478,17 +482,17 @@ Para habilitar esse deploy automático, configure no repositório GitHub:
 - **Actions secret** `CLOUDFLARE_API_TOKEN`, com permissão de editar Pages na
   conta Cloudflare.
 - **Actions variable** `CLOUDFLARE_ACCOUNT_ID`, com o identificador da conta.
-- **Actions variable** `VITE_NEON_URL`, com a URL pública HTTPS do Neon usada
+- **Actions variable** `VITE_NEON_URL`, com a URL pública HTTPS do banco usada
   pelo frontend.
 
 Sem o secret, a validação continua normalmente e o passo de deploy é ignorado
 com um aviso; nenhum token é armazenado no código. Até esse secret ser criado,
 publique manualmente com `npm run deploy:cloudflare`.
 
-### Autorizar o domínio no Neon Auth
+### Autorizar o domínio no provedor de autenticação
 
-O login só funciona se a origem estiver autorizada (senão o Neon Auth rejeita a
-requisição). O domínio vai **com o esquema** `https://`:
+O login só funciona se a origem estiver autorizada (senão o provedor de
+autenticação rejeita a requisição). O domínio vai **com o esquema** `https://`:
 
 ```bash
 npx neon@latest neon-auth domain add https://SEU-DOMINIO \
@@ -501,4 +505,4 @@ Por fim, abra o site publicado e teste o login com a sua conta de administrador.
 Para preparar a conta administrativa inicial `saspacajusvigilancia@gmail.com`,
 crie a conta no app, entre uma vez e execute
 [`neon/promover-administrador-inicial.sql`](./neon/promover-administrador-inicial.sql)
-no SQL Editor do Neon. O script não é executado automaticamente.
+no SQL Editor do banco. O script não é executado automaticamente.

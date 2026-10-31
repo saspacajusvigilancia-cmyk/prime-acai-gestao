@@ -43,6 +43,7 @@ import {
 } from '../services/empresa.js'
 import { esc, toast } from '../ui.js'
 import { pode } from '../services/permissoes.js'
+import { gerenciarFilial, listarFiliais } from '../services/filiais.js'
 import { permissoesPage } from './permissoes.js'
 import { usuariosPage } from './usuarios.js'
 import { configProdutosPage, configVendasPage } from './config-vendas.js'
@@ -240,12 +241,352 @@ const LOGOMARCA_HTML = `
   </section>
 `
 
+function painelFiliaisHtml(podeEditar) {
+  const bloqueado = podeEditar ? '' : ' disabled'
+  return `
+    <div class="config-filiais">
+      <header class="config-filiais__cabecalho">
+        <div>
+          <h2>Filiais e lojas</h2>
+          <p>Cadastre unidades da empresa. O número e o código são gerados pelo banco.</p>
+        </div>
+      </header>
+
+      <div id="filiais-aviso"></div>
+      <p class="config-filiais__feedback" id="filiais-feedback" role="status" aria-live="polite" hidden></p>
+
+      <form class="card config-filiais__form" id="filial-form" novalidate>
+        <div class="config__bloco-head">
+          <span class="config__bloco-icon"><i data-lucide="store"></i></span>
+          <div>
+            <h3 class="card__title" id="filial-form-titulo">Cadastrar filial</h3>
+            <p class="card__desc">Os campos fiscais e de contato são opcionais.</p>
+          </div>
+        </div>
+
+        <div class="config__campos">
+          <label class="campo">
+            <span class="campo__label">Nome da loja <span class="campo__req">*</span></span>
+            <input class="campo__input" name="nome" maxlength="120" required${bloqueado} />
+          </label>
+          <label class="campo">
+            <span class="campo__label">Nome fantasia</span>
+            <input class="campo__input" name="nome_fantasia" maxlength="120"${bloqueado} />
+          </label>
+          <label class="campo">
+            <span class="campo__label">CNPJ ou CPF</span>
+            <input class="campo__input" name="cnpj" maxlength="20"${bloqueado} />
+          </label>
+          <label class="campo">
+            <span class="campo__label">Responsável</span>
+            <input class="campo__input" name="responsavel" maxlength="120"${bloqueado} />
+          </label>
+          <label class="campo">
+            <span class="campo__label">Telefone</span>
+            <input class="campo__input" name="telefone" type="tel" maxlength="30"${bloqueado} />
+          </label>
+          <label class="campo">
+            <span class="campo__label">WhatsApp</span>
+            <input class="campo__input" name="whatsapp" type="tel" maxlength="30"${bloqueado} />
+          </label>
+          <label class="campo">
+            <span class="campo__label">E-mail</span>
+            <input class="campo__input" name="email" type="email" maxlength="254"${bloqueado} />
+          </label>
+          <label class="campo config-filiais__endereco">
+            <span class="campo__label">Endereço</span>
+            <textarea class="campo__input" name="endereco" rows="2" maxlength="500"${bloqueado}></textarea>
+          </label>
+        </div>
+
+        <div class="config-filiais__acoes">
+          <button class="btn btn--ghost" type="button" id="filial-cancelar" hidden${bloqueado}>
+            <i data-lucide="x"></i><span>Cancelar edição</span>
+          </button>
+          <button class="btn btn--primary" type="submit" id="filial-salvar"${bloqueado}>
+            <i data-lucide="save"></i><span>Salvar filial</span>
+          </button>
+        </div>
+      </form>
+
+      <section class="config-filiais__lista" aria-labelledby="filiais-titulo">
+        <header class="config-filiais__lista-head">
+          <div>
+            <h3 id="filiais-titulo">Unidades cadastradas</h3>
+            <p>Filiais inativas permanecem no histórico e não são excluídas.</p>
+          </div>
+        </header>
+        <div id="filiais-lista" aria-live="polite"></div>
+      </section>
+    </div>
+  `
+}
+
+function iniciarPainelFiliais(root, podeEditar) {
+  const form = root.querySelector('#filial-form')
+  const lista = root.querySelector('#filiais-lista')
+  const aviso = root.querySelector('#filiais-aviso')
+  const feedback = root.querySelector('#filiais-feedback')
+  const titulo = root.querySelector('#filial-form-titulo')
+  const botaoSalvar = root.querySelector('#filial-salvar')
+  const botaoCancelar = root.querySelector('#filial-cancelar')
+  const podeGravar = podeEditar && neonConfigurado
+  let filiais = []
+  let filialEditada = null
+  let salvando = false
+  let vivo = true
+  let consulta = 0
+
+  function mostrarFeedback(texto, tipo = 'erro') {
+    feedback.textContent = texto
+    feedback.classList.toggle('config-filiais__feedback--erro', tipo === 'erro')
+    feedback.hidden = !texto
+  }
+
+  function mostrarAviso() {
+    const texto = !neonConfigurado
+      ? 'Configure a conexão com o banco para consultar e salvar filiais. Nenhum dado de exemplo é usado nesta lista.'
+      : !podeEditar
+        ? 'Você pode consultar as unidades, mas não tem permissão para alterá-las.'
+        : ''
+    aviso.innerHTML = texto
+      ? `<div class="alert alert--info"><i data-lucide="info"></i><div><strong>Filiais</strong><p>${esc(texto)}</p></div></div>`
+      : ''
+    renderIcons(aviso)
+  }
+
+  function renderizarLista() {
+    if (!filiais.length) {
+      lista.innerHTML = '<div class="card config-filiais__vazio">Nenhuma filial foi encontrada para esta empresa.</div>'
+      return
+    }
+
+    lista.innerHTML = filiais
+      .map((filial) => {
+        const numero = String(filial.numero ?? '').padStart(2, '0')
+        const descricao = filial.tipo === 'matriz' ? 'Matriz' : 'Filial'
+        const acoes = podeGravar
+          ? `
+              <button class="btn btn--ghost btn--sm" type="button" data-filial-editar="${esc(filial.id)}">
+                <i data-lucide="pencil"></i><span>Editar</span>
+              </button>
+              ${
+                filial.tipo === 'matriz'
+                  ? '<span class="config-filiais__principal"><i data-lucide="star"></i>Matriz</span>'
+                  : filial.ativo
+                    ? `<button class="btn btn--ghost btn--sm" type="button" data-filial-matriz="${esc(filial.id)}"><i data-lucide="star"></i><span>Definir matriz</span></button>`
+                    : ''
+              }
+              <button class="btn btn--ghost btn--sm" type="button" data-filial-status="${esc(filial.id)}" data-ativo="${String(Boolean(filial.ativo))}">
+                <i data-lucide="${filial.ativo ? 'ban' : 'check'}"></i><span>${filial.ativo ? 'Desativar' : 'Ativar'}</span>
+              </button>
+            `
+          : ''
+        return `
+          <article class="card config-filiais__item">
+            <div class="config-filiais__item-info">
+              <div class="config-filiais__item-title">
+                <span class="config-filiais__codigo">LOJA ${esc(numero)}</span>
+                <span class="config-filiais__tipo">${esc(descricao)}</span>
+                <span class="badge ${filial.ativo ? 'badge--success' : 'badge--neutral'}">${filial.ativo ? 'Ativa' : 'Inativa'}</span>
+              </div>
+              <h4>${esc(filial.nome)}</h4>
+              ${filial.nome_fantasia ? `<p>${esc(filial.nome_fantasia)}</p>` : ''}
+              <div class="config-filiais__detalhes">
+                ${filial.cnpj ? `<span>${esc(filial.cnpj)}</span>` : ''}
+                ${filial.telefone ? `<span>${esc(filial.telefone)}</span>` : ''}
+                ${filial.email ? `<span>${esc(filial.email)}</span>` : ''}
+                ${filial.endereco ? `<span>${esc(filial.endereco)}</span>` : ''}
+              </div>
+            </div>
+            <div class="config-filiais__item-acoes">${acoes}</div>
+          </article>
+        `
+      })
+      .join('')
+    renderIcons(lista)
+  }
+
+  function limparFormulario() {
+    filialEditada = null
+    form.reset()
+    titulo.textContent = 'Cadastrar filial'
+    botaoSalvar.querySelector('span').textContent = 'Salvar filial'
+    botaoCancelar.hidden = true
+    mostrarFeedback('')
+  }
+
+  function prepararEdicao(filial) {
+    filialEditada = filial.id
+    for (const campo of form.elements) {
+      if (campo.name) campo.value = filial[campo.name] ?? ''
+    }
+    titulo.textContent = 'Editar filial'
+    botaoSalvar.querySelector('span').textContent = 'Salvar alterações'
+    botaoCancelar.hidden = false
+    mostrarFeedback('')
+    form.querySelector('[name="nome"]')?.focus()
+  }
+
+  async function carregarLista() {
+    const idConsulta = ++consulta
+    lista.innerHTML = '<div class="card config-filiais__vazio" role="status">Carregando filiais...</div>'
+    mostrarFeedback('')
+
+    try {
+      const resultado = await listarFiliais()
+      if (!vivo || idConsulta !== consulta) return
+      filiais = resultado.origem === 'neon' ? resultado.dados ?? [] : []
+      renderizarLista()
+    } catch (erro) {
+      if (!vivo || idConsulta !== consulta) return
+      console.error('[configuracoes] Falha ao carregar filiais.', {
+        code: erro?.code ?? 'sem código',
+        name: erro?.name ?? 'Error',
+      })
+      lista.innerHTML = ''
+      mostrarFeedback('Não foi possível carregar as filiais. Verifique a conexão e tente novamente.')
+    }
+  }
+
+  async function salvar(evento) {
+    evento.preventDefault()
+    if (salvando || !podeGravar) return
+
+    const dados = Object.fromEntries(new FormData(form).entries())
+    for (const chave of Object.keys(dados)) dados[chave] = String(dados[chave]).trim()
+
+    if (!dados.nome) {
+      mostrarFeedback('Informe o nome da loja.')
+      form.elements.nome.focus()
+      return
+    }
+    const digitosDocumento = apenasDigitos(dados.cnpj)
+    if (digitosDocumento && ![11, 14].includes(digitosDocumento.length)) {
+      mostrarFeedback('CNPJ ou CPF deve conter 11 ou 14 dígitos.')
+      form.elements.cnpj.focus()
+      return
+    }
+    if (dados.email && !emailValido(dados.email)) {
+      mostrarFeedback('Informe um e-mail válido ou deixe o campo em branco.')
+      form.elements.email.focus()
+      return
+    }
+
+    salvando = true
+    const editando = Boolean(filialEditada)
+    botaoSalvar.disabled = true
+    botaoSalvar.querySelector('span').textContent = 'Salvando...'
+    mostrarFeedback('')
+    try {
+      await gerenciarFilial(filialEditada ? 'editar' : 'criar', filialEditada, dados)
+      limparFormulario()
+      await carregarLista()
+      toast(editando ? 'Filial atualizada.' : 'Filial cadastrada.')
+    } catch (erro) {
+      console.error('[configuracoes] Falha ao salvar filial.', {
+        code: erro?.code ?? 'sem código',
+        name: erro?.name ?? 'Error',
+      })
+      mostrarFeedback(
+        erro?.code === '23505'
+          ? 'Não foi possível gerar um código único para a filial. Atualize a lista e tente novamente.'
+          : 'Não foi possível salvar a filial. Confira os dados, sua permissão e a conexão.',
+      )
+    } finally {
+      salvando = false
+      botaoSalvar.disabled = !podeGravar
+      botaoSalvar.querySelector('span').textContent = filialEditada
+        ? 'Salvar alterações'
+        : 'Salvar filial'
+    }
+  }
+
+  async function executarAcao(operacao, filial) {
+    if (!podeGravar || salvando) return
+    if (operacao === 'desativar') {
+      const confirmado = await confirmar({
+        titulo: `Desativar ${filial.nome}?`,
+        descricao: 'A unidade deixa de receber novas operações, mas seus registros históricos serão preservados.',
+        textoBotao: 'Desativar filial',
+      })
+      if (!confirmado) return
+    }
+
+    try {
+      await gerenciarFilial(operacao, filial.id)
+      if (filialEditada === filial.id) limparFormulario()
+      await carregarLista()
+      toast(
+        operacao === 'definir_matriz'
+          ? 'Matriz atualizada.'
+          : operacao === 'desativar'
+            ? 'Filial desativada.'
+            : operacao === 'ativar'
+              ? 'Filial ativada.'
+              : 'Filial atualizada.',
+      )
+    } catch (erro) {
+      console.error('[configuracoes] Falha ao alterar filial.', {
+        code: erro?.code ?? 'sem código',
+        name: erro?.name ?? 'Error',
+        operacao,
+      })
+      mostrarFeedback(
+        'Não foi possível alterar a filial. Confirme se ela pode receber esta operação e tente novamente.',
+      )
+    }
+  }
+
+  function acionarLista(evento) {
+    const editar = evento.target.closest('[data-filial-editar]')
+    const matriz = evento.target.closest('[data-filial-matriz]')
+    const status = evento.target.closest('[data-filial-status]')
+    if (editar) {
+      const filial = filiais.find((item) => item.id === editar.dataset.filialEditar)
+      if (filial) prepararEdicao(filial)
+    } else if (matriz) {
+      const filial = filiais.find((item) => item.id === matriz.dataset.filialMatriz)
+      if (filial) executarAcao('definir_matriz', filial)
+    } else if (status) {
+      const filial = filiais.find((item) => item.id === status.dataset.filialStatus)
+      if (filial) executarAcao(status.dataset.ativo === 'true' ? 'desativar' : 'ativar', filial)
+    }
+  }
+
+  function aoCancelar() {
+    limparFormulario()
+  }
+
+  form.addEventListener('submit', salvar)
+  botaoCancelar.addEventListener('click', aoCancelar)
+  lista.addEventListener('click', acionarLista)
+  root.recarregarFiliais = carregarLista
+  mostrarAviso()
+  if (!podeGravar) {
+    form.querySelectorAll('input, textarea, button').forEach((el) => {
+      el.disabled = true
+    })
+  }
+  carregarLista()
+
+  return () => {
+    vivo = false
+    consulta += 1
+    form.removeEventListener('submit', salvar)
+    botaoCancelar.removeEventListener('click', aoCancelar)
+    lista.removeEventListener('click', acionarLista)
+    delete root.recarregarFiliais
+  }
+}
+
 export function configuracoesPage() {
   // Gerenciar contas e permissões é restrito por permissão própria (o RPC do
   // banco também exige administrador). Mostrar a seção para quem não pode
   // usá-la só produzia uma tela que falha em todo clique.
   const podeUsuarios = pode('usuarios', 'ver')
   const podePermissoes = pode('permissoes', 'ver')
+  const podeEditarFiliais = pode('configuracoes', 'editar')
 
   return {
     html: `
@@ -257,6 +598,11 @@ export function configuracoesPage() {
               <li>
                 <button class="config__secao is-active" id="btn-empresa" type="button" data-painel="empresa" aria-controls="painel-empresa" aria-pressed="true">
                   <i data-lucide="building-2"></i><span>Configuração da Empresa</span>
+                </button>
+              </li>
+              <li>
+                <button class="config__secao" id="btn-filiais" type="button" data-painel="filiais" aria-controls="painel-filiais" aria-pressed="false">
+                  <i data-lucide="store"></i><span>Filiais e lojas</span>
                 </button>
               </li>
               ${podeUsuarios ? `<li>
@@ -311,6 +657,9 @@ export function configuracoesPage() {
               </div>
             </form>
           </section>
+          <section class="config__painel" id="painel-filiais" aria-labelledby="btn-filiais" hidden>
+            ${painelFiliaisHtml(podeEditarFiliais)}
+          </section>
           ${podeUsuarios ? '<section class="config__painel" id="painel-usuarios" aria-labelledby="btn-usuarios" hidden></section>' : ''}
           ${podePermissoes ? '<section class="config__painel" id="painel-permissoes" aria-labelledby="btn-permissoes" hidden></section>' : ''}
           <section class="config__painel" id="painel-produtos" aria-labelledby="btn-produtos" hidden></section>
@@ -334,9 +683,24 @@ export function configuracoesPage() {
       const painelProdutos = root.querySelector('#painel-produtos')
       const painelVendas = root.querySelector('#painel-vendas')
       const painelEmpresa = root.querySelector('#painel-empresa')
+      const painelFiliais = root.querySelector('#painel-filiais')
       let pgUsuarios = null, pgPermissoes = null, pgProdutos = null, pgVendas = null
       let limparUsuarios = () => {}, limparPermissoes = () => {}, limparProdutos = () => {}, limparVendas = () => {}
       let montadoUsuarios = false, montadoPermissoes = false, montadoProdutos = false, montadoVendas = false
+      let limparFiliais = () => {}
+      let montadoFiliais = false
+
+      function montarFiliais() {
+        if (montadoFiliais || !painelFiliais) return
+        montadoFiliais = true
+        limparFiliais = iniciarPainelFiliais(painelFiliais, podeEditarFiliais)
+      }
+
+      function abrirFiliais() {
+        const jaMontado = montadoFiliais
+        montarFiliais()
+        if (jaMontado) painelFiliais?.recarregarFiliais?.()
+      }
 
       function montarUsuarios() {
         if (montadoUsuarios || !painelUsuarios) return
@@ -399,13 +763,15 @@ export function configuracoesPage() {
         if (nome === 'permissoes') abrirPermissoes()
         if (nome === 'produtos') abrirProdutos()
         if (nome === 'vendas') abrirVendas()
+        if (nome === 'filiais') abrirFiliais()
         if (painelEmpresa) painelEmpresa.hidden = (nome !== 'empresa')
+        if (painelFiliais) painelFiliais.hidden = (nome !== 'filiais')
         if (painelUsuarios) painelUsuarios.hidden = (nome !== 'usuarios')
         if (painelPermissoes) painelPermissoes.hidden = (nome !== 'permissoes')
         if (painelProdutos) painelProdutos.hidden = (nome !== 'produtos')
         if (painelVendas) painelVendas.hidden = (nome !== 'vendas')
       }
-      ;['empresa', 'usuarios', 'permissoes', 'produtos', 'vendas'].forEach((nome) => {
+      ;['empresa', 'filiais', 'usuarios', 'permissoes', 'produtos', 'vendas'].forEach((nome) => {
         const btn = root.querySelector(`#btn-${nome}`)
         if (btn) btn.addEventListener('click', () => mostrarPainel(nome))
       })
@@ -910,6 +1276,7 @@ export function configuracoesPage() {
         limparPermissoes()
         limparProdutos()
         limparVendas()
+        limparFiliais()
       }
     },
   }

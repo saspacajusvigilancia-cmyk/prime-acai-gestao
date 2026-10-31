@@ -82,10 +82,11 @@ const tomTipo = (tipo) => ({ peso: 'info', receita: 'warning' })[tipo] ?? 'neutr
 
 /** Situação do item conforme a quantidade em relação ao mínimo definido. */
 function situacao(produto) {
+  const principal = produto.quantidadePrincipal ?? produto.quantidade
   if (!produto.ativo) return { texto: 'Inativo', tom: 'neutral' }
   if (!produto.controlaEstoque) return { texto: 'Sem controle', tom: 'neutral' }
-  if (produto.quantidade < produto.minimo) return { texto: 'Repor', tom: 'danger' }
-  if (produto.quantidade < produto.minimo * 1.25) return { texto: 'Atenção', tom: 'warning' }
+  if (principal < produto.minimo) return { texto: 'Repor', tom: 'danger' }
+  if (principal < produto.minimo * 1.25) return { texto: 'Atenção', tom: 'warning' }
   return { texto: 'Normal', tom: 'success' }
 }
 
@@ -157,13 +158,14 @@ const colunasProdutos = ({ podeEditar = false, podeMovimentar = false, podeConta
   },
   { key: 'categoria', label: 'Categoria', render: (p) => esc(p.categoria) },
   {
-    key: 'quantidade',
-    label: 'Loja',
+    key: 'quantidadePrincipal',
+    label: 'Estoque Principal',
     align: 'right',
     render: (p) =>
       p.controlaEstoque
         ? `
-      <span class="cell-main">${formatNumero(p.quantidade)} ${esc(p.unidade)}</span>
+      <span class="cell-main">${formatNumero(p.quantidadePrincipal ?? p.quantidade)} ${esc(p.unidade)}</span>
+      <span class="cell-sub">Loja ${formatNumero(p.quantidade)} + Geral ${formatNumero(p.quantidadeGeral ?? 0)}</span>
       <span class="cell-sub">mínimo ${formatNumero(p.minimo)}</span>
     `
         : '<span class="muted">—</span>',
@@ -177,11 +179,11 @@ const colunasProdutos = ({ podeEditar = false, podeMovimentar = false, podeConta
         : '<span class="muted">—</span>',
   },
   {
-    key: 'quantidadeGeral',
-    label: 'Geral',
+    key: 'quantidadeConsolidada',
+    label: 'Total consolidado',
     align: 'right',
     render: (p) => p.controlaEstoque
-      ? `<span class="cell-main">${formatNumero(p.quantidadeGeral ?? 0)} ${esc(p.unidade)}</span>`
+      ? `<span class="cell-main">${formatNumero(p.quantidadeConsolidada ?? p.quantidade)} ${esc(p.unidade)}</span>`
       : '<span class="muted">—</span>',
   },
   {
@@ -189,8 +191,9 @@ const colunasProdutos = ({ podeEditar = false, podeMovimentar = false, podeConta
     label: 'Nível',
     render: (p) => {
       if (!p.controlaEstoque || !p.minimo) return '<span class="muted">—</span>'
-      const percentual = Math.min(100, Math.round((p.quantidade / (p.minimo * 2)) * 100))
-      const critico = p.quantidade < p.minimo
+      const principal = p.quantidadePrincipal ?? p.quantidade
+      const percentual = Math.min(100, Math.round((principal / (p.minimo * 2)) * 100))
+      const critico = principal < p.minimo
       return `
         <div class="progress" title="${percentual}% do nível ideal">
           <span class="${critico ? 'is-critico' : ''}" style="width:${Math.max(4, percentual)}%"></span>
@@ -338,16 +341,18 @@ const filtrar = (dados, termo) => {
 function indicadores(listaDeItens) {
   const ativos = listaDeItens.filter((p) => p.ativo)
   const controlados = ativos.filter((p) => p.controlaEstoque)
+  const principal = (p) => p.quantidadePrincipal ?? p.quantidade
+  const consolidado = (p) => p.quantidadeConsolidada ?? p.quantidade
 
   return {
     total: ativos.length,
     valorEstoque: centavosParaReais(
-      somarValoresCentavos(ativos.map((p) => multiplicarMoedaPorQuantidade(p.custo, p.quantidade))),
+      somarValoresCentavos(ativos.map((p) => multiplicarMoedaPorQuantidade(p.custo, consolidado(p)))),
     ),
     potencial: centavosParaReais(
-      somarValoresCentavos(ativos.map((p) => multiplicarMoedaPorQuantidade(p.preco, p.quantidade))),
+      somarValoresCentavos(ativos.map((p) => multiplicarMoedaPorQuantidade(p.preco, consolidado(p)))),
     ),
-    criticos: controlados.filter((p) => p.minimo > 0 && p.quantidade < p.minimo),
+    criticos: controlados.filter((p) => p.minimo > 0 && principal(p) < p.minimo),
   }
 }
 
@@ -358,7 +363,7 @@ function htmlAlerta(criticos) {
       <i data-lucide="alert-triangle"></i>
       <div>
         <strong>${criticos.length} ${criticos.length === 1 ? 'item precisa' : 'itens precisam'} de reposição</strong>
-        <p>${criticos.map((p) => esc(p.nome)).join(' · ')}</p>
+        <p>${criticos.map((p) => `${esc(p.nome)} (${formatNumero(p.quantidadePrincipal ?? p.quantidade)} ${esc(p.unidade)} no Principal)`).join(' · ')}</p>
       </div>
     </div>
   `
@@ -421,7 +426,7 @@ export function estoquePage() {
       <section class="card">
         ${cardHead({
           titulo: 'Produtos e insumos',
-          descricao: 'Saldos separados para o estoque geral e o estoque da loja. Transferências são registradas no histórico.',
+          descricao: 'Estoque Principal reúne Loja + Geral; Buffet fica separado. O total consolidado soma os saldos atuais sem contar transferências como novas entradas.',
           acoes: podeCriar
             ? botaoPrimario({ label: 'Novo item', icon: 'plus', acao: 'novo-produto' })
             : '',
@@ -463,6 +468,8 @@ export function estoquePage() {
           ...produto,
           quantidadeGeral: saldosLocais.get(produto.uuid ?? produto.id)?.geral ?? 0,
           quantidadeBuffet: saldosLocais.get(produto.uuid ?? produto.id)?.buffet ?? 0,
+          quantidadePrincipal: saldosLocais.get(produto.uuid ?? produto.id)?.principal ?? produto.quantidade,
+          quantidadeConsolidada: saldosLocais.get(produto.uuid ?? produto.id)?.total ?? produto.quantidade,
         }))
       }
 
@@ -543,6 +550,8 @@ export function estoquePage() {
               ...produto,
               quantidadeGeral: null,
               quantidadeBuffet: null,
+              quantidadePrincipal: null,
+              quantidadeConsolidada: null,
             }))
             aplicar()
             root.querySelector('#aviso-saldos-locais').hidden = false
@@ -830,16 +839,19 @@ export function estoquePage() {
         (p.quantidadeBuffet ?? 0) +
         (destino === 'buffet' ? quantidade : 0) -
         (origem === 'buffet' ? quantidade : 0)
+      const consolidarSaldos = (p) => {
+        p.quantidadePrincipal = p.quantidade + (p.quantidadeGeral ?? 0)
+        p.quantidadeConsolidada = p.quantidadePrincipal + (p.quantidadeBuffet ?? 0)
+      }
 
       function movimentarProduto(id) {
         const p = achar(id)
         if (!p) return
-        const chaveIdempotencia = globalThis.crypto?.randomUUID?.()
-          ?? `transfer-${Date.now()}-${Math.random().toString(16).slice(2)}`
+        const chavesPorPayload = new Map()
 
         abrirFormulario({
           titulo: `Movimentar ${p.nome}`,
-          descricao: `Loja: ${formatNumero(p.quantidade)} ${p.unidade}. Geral: ${formatNumero(p.quantidadeGeral ?? 0)} ${p.unidade}. Buffet: ${formatNumero(p.quantidadeBuffet ?? 0)} ${p.unidade}.`,
+          descricao: `Principal: ${formatNumero(p.quantidadePrincipal ?? p.quantidade)} ${p.unidade} (Loja ${formatNumero(p.quantidade)} + Geral ${formatNumero(p.quantidadeGeral ?? 0)}). Buffet: ${formatNumero(p.quantidadeBuffet ?? 0)} ${p.unidade}. Total: ${formatNumero(p.quantidadeConsolidada ?? p.quantidade)} ${p.unidade}.`,
           campos: [
             {
               nome: 'operacao',
@@ -890,6 +902,13 @@ export function estoquePage() {
             const origem = atalho.origem || valores.origem
             const destino = atalho.destino || valores.destino
             const quantidade = Number(valores.quantidade)
+            const payload = JSON.stringify({ produtoId: p.uuid ?? p.id, quantidade, origem, destino, motivo: valores.motivo })
+            if (!chavesPorPayload.has(payload)) {
+              chavesPorPayload.set(
+                payload,
+                globalThis.crypto?.randomUUID?.() ?? `mov-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+              )
+            }
 
             const { dados: movimento, origem: deOnde } = await registrarMovimentacao({
               produtoId: p.uuid ?? p.id,
@@ -897,13 +916,14 @@ export function estoquePage() {
               origem,
               destino,
               motivo: valores.motivo,
-              chaveIdempotencia,
+              chaveIdempotencia: chavesPorPayload.get(payload),
             })
 
             if (deOnde === 'exemplo') {
               p.quantidade = saldoAposMovimento(p, { quantidade, origem, destino })
               p.quantidadeGeral = saldoGeralAposMovimento(p, { quantidade, origem, destino })
               p.quantidadeBuffet = saldoBuffetAposMovimento(p, { quantidade, origem, destino })
+              consolidarSaldos(p)
               aplicar()
               return `${formatNumero(quantidade)} ${p.unidade} movimentado só nesta sessão — o Neon não está configurado.`
             }
@@ -928,7 +948,7 @@ export function estoquePage() {
 
         abrirFormulario({
           titulo: `Contagem de ${p.nome}`,
-          descricao: `O sistema diz ${formatNumero(p.quantidade)} ${p.unidade}. Informe o que foi contado: o banco registra só a diferença.`,
+          descricao: `O Estoque Principal tem ${formatNumero(p.quantidadePrincipal ?? p.quantidade)} ${p.unidade}; Loja ${formatNumero(p.quantidade)} e Geral ${formatNumero(p.quantidadeGeral ?? 0)}. Buffet tem ${formatNumero(p.quantidadeBuffet ?? 0)}. A contagem altera somente o local selecionado.`,
           campos: [
             {
               nome: 'contado',
@@ -984,6 +1004,7 @@ export function estoquePage() {
                 buffet: 'quantidadeBuffet',
               }[valores.estoqueLocal]
               p[chaveSaldo] = Number(valores.contado)
+              consolidarSaldos(p)
               aplicar()
               return `${p.nome}: saldo ajustado só nesta sessão — o Neon não está configurado.`
             }

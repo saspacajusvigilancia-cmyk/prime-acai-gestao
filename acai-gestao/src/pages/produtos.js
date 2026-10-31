@@ -7,7 +7,7 @@ import {
   formatarEntradaMoeda,
   paraCentavos,
 } from '../numeros.js'
-import { ajustarSaldo } from '../services/movimentacoes.js'
+import { ajustarSaldo, listarSaldosEstoqueLocais } from '../services/movimentacoes.js'
 import { listarCategorias } from '../services/categorias.js'
 import { pode } from '../services/permissoes.js'
 import {
@@ -68,7 +68,7 @@ const formatarProduto = (produto) => ({
 function statusProduto(produto) {
   if (!produto.ativo) return badge('Inativo', 'neutral')
   if (!produto.controlaEstoque) return badge('Sem controle', 'neutral')
-  if (produto.quantidade < produto.minimo) return badge('Repor', 'danger')
+  if ((produto.quantidadePrincipal ?? produto.quantidade) < produto.minimo) return badge('Repor', 'danger')
   return badge('Ativo', 'success')
 }
 
@@ -131,7 +131,9 @@ function colunasProdutos({ podeEditar }) {
       label: 'Estoque',
       align: 'right',
       render: (produto) => produto.controlaEstoque
-        ? `${formatNumero(produto.quantidade)} ${esc(produto.unidade)}<span class="cell-sub">mínimo ${formatNumero(produto.minimo)} ${esc(produto.unidade)}</span>`
+        ? produto.quantidadePrincipal == null
+          ? `${formatNumero(produto.quantidade)} ${esc(produto.unidade)}<span class="cell-sub">mínimo ${formatNumero(produto.minimo)} ${esc(produto.unidade)}</span>`
+          : `<span class="cell-main">${formatNumero(produto.quantidadePrincipal)} ${esc(produto.unidade)} · Principal</span><span class="cell-sub">Buffet ${formatNumero(produto.quantidadeBuffet)} ${esc(produto.unidade)} · Total ${formatNumero(produto.quantidadeConsolidada)} ${esc(produto.unidade)}</span><span class="cell-sub">mínimo ${formatNumero(produto.minimo)} ${esc(produto.unidade)} no Principal</span>`
         : '<span class="muted">Sem controle</span>',
     },
     { key: 'situacao', label: 'Situação', render: statusProduto },
@@ -632,6 +634,27 @@ export function produtosPage() {
         const resultado = await listarProdutos({ incluirInativos: true })
         itens = resultado.dados
         neonOrigem = resultado.origem
+        if (pode('estoque', 'consultar')) {
+          try {
+            const resultadoSaldos = await listarSaldosEstoqueLocais()
+            const saldosPorProduto = new Map(resultadoSaldos.dados.map((saldo) => [saldo.produtoId, saldo]))
+            itens = itens.map((produto) => {
+              const saldo = saldosPorProduto.get(produto.uuid ?? produto.id)
+              const principal = saldo?.principal ?? produto.quantidade
+              const buffet = saldo?.buffet ?? 0
+              return {
+                ...produto,
+                quantidadePrincipal: principal,
+                quantidadeBuffet: buffet,
+                quantidadeConsolidada: principal + buffet,
+              }
+            })
+          } catch (erro) {
+            erroLista.textContent = `Não foi possível consultar os saldos por local. ${erro?.message ?? erro}`
+            erroLista.hidden = false
+            console.error('[produtos] Não foi possível consultar saldos por local.', erro)
+          }
+        }
         await categoriasCarregadas
         try {
           const imagens = await listarImagensProdutos(itens.map((produto) => produto.uuid).filter(Boolean))

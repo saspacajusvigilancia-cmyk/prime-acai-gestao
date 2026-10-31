@@ -435,6 +435,155 @@
   flex-wrap: wrap;
 }
 
+/* ---------- Cadastro de filiais ---------- */
+
+.config-filiais {
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+  min-width: 0;
+}
+
+.config-filiais__cabecalho h2 {
+  font-size: 19px;
+  letter-spacing: -0.02em;
+}
+
+.config-filiais__cabecalho p,
+.config-filiais__lista-head p {
+  margin-top: 5px;
+  color: var(--texto-suave);
+  font-size: 13.5px;
+}
+
+.config-filiais__form {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 20px;
+}
+
+.config-filiais__form .config__bloco-head {
+  align-items: center;
+  margin: 0;
+}
+
+.config-filiais__endereco {
+  grid-column: 1 / -1;
+}
+
+.config-filiais__acoes,
+.config-filiais__item-acoes {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.config-filiais__lista {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-width: 0;
+}
+
+.config-filiais__lista-head h3 {
+  font-size: 16px;
+}
+
+.config-filiais__item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+}
+
+.config-filiais__item-info {
+  min-width: 0;
+}
+
+.config-filiais__item-title {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-bottom: 7px;
+}
+
+.config-filiais__codigo {
+  color: var(--primaria-clara);
+  font-size: 11px;
+  font-weight: 800;
+  letter-spacing: 0.06em;
+}
+
+.config-filiais__tipo {
+  color: var(--texto-fraco);
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.config-filiais__item h4 {
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+
+.config-filiais__item-info > p {
+  margin-top: 3px;
+  color: var(--texto-suave);
+  font-size: 13px;
+}
+
+.config-filiais__detalhes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 14px;
+  margin-top: 7px;
+  color: var(--texto-fraco);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.config-filiais__item-acoes {
+  align-items: center;
+  flex-shrink: 0;
+}
+
+.config-filiais__principal {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--marca-dourado);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.config-filiais__principal svg {
+  width: 14px;
+  height: 14px;
+}
+
+.config-filiais__vazio {
+  padding: 18px;
+  color: var(--texto-suave);
+  font-size: 13px;
+}
+
+.config-filiais__feedback {
+  padding: 10px 12px;
+  border: 1px solid var(--borda);
+  border-radius: 10px;
+  background: var(--perigo-fundo);
+  color: var(--perigo);
+  font-size: 13px;
+}
+
+.config-filiais__feedback[hidden] {
+  display: none;
+}
+
 /* ---------- Responsivo ---------- */
 
 @media (max-width: 900px) {
@@ -517,6 +666,20 @@
 
   .config__campos {
     grid-template-columns: 1fr;
+  }
+
+  .config-filiais__endereco {
+    grid-column: auto;
+  }
+
+  .config-filiais__item {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .config-filiais__item-acoes {
+    justify-content: flex-start;
   }
 
   .logo {

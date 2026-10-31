@@ -198,13 +198,13 @@ function pintarOrigemDados() {
       pill.classList.add('status-pill--erro')
       texto.textContent = 'Falha ao carregar'
       pill.title =
-        'A consulta ao Neon falhou. Os números na tela podem ser de demonstração — recarregue para tentar de novo.'
+        'A consulta ao banco falhou. Os números na tela podem ser de demonstração — recarregue para tentar de novo.'
       return
     }
 
     pill.classList.add('status-pill--ok')
-    texto.textContent = 'Neon'
-    pill.title = 'Lendo dados do seu banco no Neon.'
+    texto.textContent = 'Banco'
+    pill.title = 'Lendo dados do seu banco.'
   } else {
     pill.classList.add('status-pill--exemplo')
     texto.textContent = dadosTesteHabilitados ? 'Teste fictício' : 'Dados de exemplo'

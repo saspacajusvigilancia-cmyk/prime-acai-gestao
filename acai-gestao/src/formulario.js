@@ -165,6 +165,7 @@ export function abrirFormulario({
   campos,
   valores = {},
   textoBotao = 'Salvar',
+  protegerDescarte = false,
   aoSalvar,
 }) {
   fechar()
@@ -172,7 +173,7 @@ export function abrirFormulario({
   const overlay = document.createElement('div')
   overlay.className = 'modal'
   overlay.innerHTML = `
-    <div class="modal__scrim" data-fechar></div>
+    <div class="modal__scrim" ${protegerDescarte ? '' : 'data-fechar'}></div>
     <div class="modal__caixa" role="dialog" aria-modal="true" aria-labelledby="modal-titulo">
       <header class="modal__head">
         <div>
@@ -212,6 +213,23 @@ export function abrirFormulario({
   const erroGeral = overlay.querySelector('.modal__erro')
   const campoDeItens = campos.find((c) => c.tipo === 'itens')
   let salvando = false
+  let confirmandoDescarte = false
+
+  const camposAlterados = new Set()
+  const valoresIniciais = new Map(
+    [...form.elements]
+      .filter((elemento) => elemento.name)
+      .map((elemento) => [elemento.name, elemento.value]),
+  )
+
+  const acompanharAlteracoes = (evento) => {
+    const elemento = evento.target
+    if (!(elemento instanceof HTMLElement) || !elemento.name) return
+    if (elemento.value === valoresIniciais.get(elemento.name)) camposAlterados.delete(elemento.name)
+    else camposAlterados.add(elemento.name)
+  }
+  form.addEventListener('input', acompanharAlteracoes)
+  form.addEventListener('change', acompanharAlteracoes)
 
   // Liga ajuda e mensagem de erro ao campo pelo aria-describedby: leitores de
   // tela anunciam a explicação junto do input, e não como texto solto.
@@ -241,11 +259,30 @@ export function abrirFormulario({
     )].filter((el) => el.offsetParent !== null)
   }
 
+  async function solicitarFechamento() {
+    if (salvando || confirmandoDescarte) return
+    if (protegerDescarte && camposAlterados.size) {
+      confirmandoDescarte = true
+      try {
+        const descartar = await confirmar({
+          titulo: 'Existem dados não salvos. Deseja realmente sair e descartar as alterações?',
+          textoBotao: 'Descartar alterações',
+        })
+        if (!descartar) return
+      } finally {
+        confirmandoDescarte = false
+      }
+    }
+    fechar()
+  }
+
   function aoTeclar(evento) {
     if (evento.key === 'Escape') {
-      // Fechar durante o salvamento deixaria a requisição em voo e o usuário
-      // sem saber se gravou. O botão também fica travado enquanto salva.
-      if (!salvando) fechar()
+      if (!salvando && overlay.contains(document.activeElement)) {
+        evento.preventDefault()
+        evento.stopPropagation()
+        void solicitarFechamento()
+      }
       return
     }
     if (evento.key !== 'Tab') return
@@ -266,7 +303,7 @@ export function abrirFormulario({
 
   overlay.querySelectorAll('[data-fechar]').forEach((el) =>
     el.addEventListener('click', () => {
-      if (!salvando) fechar()
+      void solicitarFechamento()
     }),
   )
   document.addEventListener('keydown', aoTeclar)

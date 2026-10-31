@@ -250,6 +250,7 @@ export function clientesPage() {
         abrirFormulario({
           titulo: 'Novo cliente',
           descricao: 'O código é gerado automaticamente e o cliente já pode ser vinculado aos pedidos.',
+          protegerDescarte: true,
           campos: [
             {
               nome: 'codigo',
@@ -284,7 +285,15 @@ export function clientesPage() {
               return `${criado.nome} (${criado.id}) entrou só nesta sessão — o Neon não está configurado.`
             }
 
-            await recarregar()
+            dados = [criado, ...dados.filter((cliente) => (cliente.uuid ?? cliente.id) !== (criado.uuid ?? criado.id))]
+            aplicar(input.value)
+            aplicarIndicadores()
+            try {
+              await recarregar()
+            } catch (erro) {
+              console.error('[clientes] Cliente salvo, mas a lista não pôde ser recarregada.', erro)
+              return `${criado.nome} foi salvo na base de clientes com o código ${criado.id}. A lista foi atualizada localmente, mas os indicadores não puderam ser recarregados.`
+            }
             return `${criado.nome} salvo na base de clientes com o código ${criado.id}.`
           },
         })

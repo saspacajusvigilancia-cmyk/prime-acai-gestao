@@ -125,10 +125,11 @@ export function registrarMovimentacao({
   if (origem === destino) throw new Error('A origem e o destino precisam ser diferentes.')
   if (!Number.isFinite(qtd) || qtd <= 0) throw new Error('A quantidade precisa ser maior que zero.')
   if (!texto) throw new Error('Informe o motivo da movimentação.')
+  const chave = chaveIdempotencia || novaChave()
 
   return gravar({
     nome: 'movimentação de estoque',
-    registro: { produtoId, quantidade: qtd, origem, destino, motivo: texto },
+    registro: { produtoId, quantidade: qtd, origem, destino, motivo: texto, chaveIdempotencia: chave },
     escrever: async (neon) => {
       if (LOCAL_ESTOQUE[origem] && LOCAL_ESTOQUE[destino]) {
         const { data, error } = await neon.rpc('transferir_estoque_local_v2', {
@@ -137,7 +138,7 @@ export function registrarMovimentacao({
           p_origem: LOCAL_ESTOQUE[origem],
           p_destino: LOCAL_ESTOQUE[destino],
           p_motivo: texto,
-          p_chave_idempotencia: chaveIdempotencia || novaChave(),
+          p_chave_idempotencia: chave,
         })
         if (error) throw error
         const transferencia = Array.isArray(data) ? data[0] : data
@@ -158,16 +159,21 @@ export function registrarMovimentacao({
           saldoGeral: Number(transferencia.saldo_geral),
           saldoLoja: Number(transferencia.saldo_loja),
           saldoBuffet: Number(transferencia.saldo_buffet),
+          saldoPrincipal: Number(transferencia.saldo_geral) + Number(transferencia.saldo_loja),
+          saldoTotal: Number(transferencia.saldo_geral)
+            + Number(transferencia.saldo_loja)
+            + Number(transferencia.saldo_buffet),
           transferenciaId: transferencia.id,
         }
       }
 
-      const { data, error } = await neon.rpc('registrar_movimentacao_local_v2', {
+      const { data, error } = await neon.rpc('registrar_movimentacao_local_v3', {
         p_produto_id: produtoId,
         p_qtd: qtd,
         p_origem: origem,
         p_destino: destino,
         p_motivo: texto,
+        p_chave_idempotencia: chave,
       })
 
       if (error) throw error
@@ -179,6 +185,8 @@ export function registrarMovimentacao({
         saldoGeral: optionalNumber(linha.saldo_geral),
         saldoLoja: optionalNumber(linha.saldo_loja ?? linha.saldo),
         saldoBuffet: optionalNumber(linha.saldo_buffet),
+        saldoPrincipal: optionalNumber(linha.saldo_principal),
+        saldoTotal: optionalNumber(linha.saldo_total),
       }
     },
   })
@@ -204,7 +212,11 @@ export function listarSaldosEstoqueLocais() {
         if (linha.local in saldo) saldo[linha.local] = Number(linha.saldo)
         porProduto.set(linha.produto_id, saldo)
       }
-      return [...porProduto.values()]
+      return [...porProduto.values()].map((saldo) => ({
+        ...saldo,
+        principal: saldo.loja + saldo.geral,
+        total: saldo.loja + saldo.geral + saldo.buffet,
+      }))
     },
   })
 }

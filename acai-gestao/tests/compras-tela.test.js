@@ -150,6 +150,107 @@ describe('tela de Compras', () => {
     expect(documento.value.replace(/\D/g, '')).toHaveLength(14)
   })
 
+  it('bloqueia o fundo e confirma o descarte no cadastro de fornecedor', async () => {
+    root.querySelector('[data-acao="novo-fornecedor"]').click()
+    document.querySelector('.modal__x').click()
+    expect(document.querySelectorAll('.modal')).toHaveLength(0)
+
+    root.querySelector('[data-acao="novo-fornecedor"]').click()
+
+    const nome = document.querySelector('[name="nome"]')
+    nome.value = 'Fornecedor protegido'
+    nome.dispatchEvent(new Event('input', { bubbles: true }))
+
+    document.querySelector('.modal__scrim').click()
+    expect(document.querySelectorAll('.modal')).toHaveLength(1)
+    expect(nome.value).toBe('Fornecedor protegido')
+
+    document.querySelector('.modal__x').click()
+    await tick()
+    expect(document.querySelectorAll('.modal')).toHaveLength(2)
+    document.querySelector('.modal [data-cancelar].btn--ghost').click()
+    await tick()
+    expect(document.querySelectorAll('.modal')).toHaveLength(1)
+    expect(nome.value).toBe('Fornecedor protegido')
+
+    nome.focus()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }))
+    await tick()
+    expect(document.querySelectorAll('.modal')).toHaveLength(2)
+    document.querySelector('.modal [data-cancelar].btn--ghost').click()
+    await tick()
+    expect(document.querySelectorAll('.modal')).toHaveLength(1)
+    expect(nome.value).toBe('Fornecedor protegido')
+
+    document.querySelector('.modal__form [data-fechar]').click()
+    await tick()
+    expect(document.querySelectorAll('.modal')).toHaveLength(2)
+    document.querySelector('.modal [data-confirmar]').click()
+    await tick()
+    expect(document.querySelector('.modal')).toBeNull()
+  })
+
+  it('preserva a compra, mantém dados em falha e associa o fornecedor após salvar', async () => {
+    const servico = await import('../src/services/compras.js')
+    const criarFornecedorMock = vi.spyOn(servico, 'criarFornecedor')
+    const fornecedor = {
+      id: 'fornecedor-criado',
+      nome: 'Fornecedor da compra',
+      cnpj: '',
+      telefone: '',
+      whatsapp: '',
+      email: '',
+      observacoes: '',
+      ativo: true,
+    }
+
+    root.querySelector('[data-acao="nova-compra"]').click()
+    root.querySelector('#compra-data').value = '2026-10-25'
+    root.querySelector('#compra-documento').value = 'com_nota'
+    root.querySelector('#compra-nota').value = 'NF-123'
+    root.querySelector('#compra-frete').value = '5,00'
+    root.querySelector('#compra-observacoes').value = 'Rascunho preservado'
+    root.querySelector('#item-produto').value = 'P001'
+    root.querySelector('#item-produto').dispatchEvent(new Event('change'))
+    root.querySelector('#item-qtd').value = '2'
+    root.querySelector('#item-custo').value = '10,00'
+    root.querySelector('#item-adicionar').click()
+
+    root.querySelector('[data-painel="nova"] [data-acao="novo-fornecedor"]').click()
+    const nome = document.querySelector('[name="nome"]')
+    nome.value = 'Fornecedor da compra'
+    nome.dispatchEvent(new Event('input', { bubbles: true }))
+    document.querySelector('.modal__scrim').click()
+    expect(nome.value).toBe('Fornecedor da compra')
+
+    criarFornecedorMock
+      .mockRejectedValueOnce(new Error('Falha temporária ao salvar.'))
+      .mockResolvedValueOnce({ dados: fornecedor, origem: 'neon' })
+    const enviar = () => document.querySelector('.modal__form').dispatchEvent(
+      new Event('submit', { bubbles: true, cancelable: true }),
+    )
+
+    enviar()
+    await tick()
+    expect(document.querySelector('.modal')).not.toBeNull()
+    expect(document.querySelector('[name="nome"]').value).toBe('Fornecedor da compra')
+    expect(document.querySelector('.modal__erro').textContent).toContain('Falha temporária')
+
+    enviar()
+    await tick()
+    await tick()
+    expect(document.querySelector('.modal')).toBeNull()
+    expect(root.querySelector('[data-painel="nova"]').hidden).toBe(false)
+    expect(root.querySelector('#compra-fornecedor').value).toBe(fornecedor.id)
+    expect(root.querySelector('#compra-data').value).toBe('2026-10-25')
+    expect(root.querySelector('#compra-documento').value).toBe('com_nota')
+    expect(root.querySelector('#compra-nota').value).toBe('NF-123')
+    expect(root.querySelector('#compra-frete').value).toBe('5,00')
+    expect(root.querySelector('#compra-observacoes').value).toBe('Rascunho preservado')
+    expect(linhasDe('tabela-itens-novos')).toHaveLength(1)
+    expect(criarFornecedorMock).toHaveBeenCalledTimes(2)
+  })
+
   it('salva o fornecedor com CPF, telefone e WhatsApp formatados', async () => {
     root.querySelector('[data-tab="fornecedores"]').click()
     root.querySelector('[data-acao="novo-fornecedor"]').click()

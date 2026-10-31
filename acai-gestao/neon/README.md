@@ -41,7 +41,11 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `33_erp_empresas_filiais_financeiro.sql` | ERP aditivo: empresas → filiais → depósitos; filial/depósito nas operações; recebimentos de compra rastreáveis; contas a pagar/receber, parcelas, baixas, pagamentos de venda, caixas e sessões; plano de contas, fichas técnicas e views de leitura. `registrar_venda()` e `confirmar_recebimento_compra()` continuam sendo as portas transacionais |
 | `34_demonstracao_protegida.sql` | Instala `demo_carregar(token)`, que só roda com `app.demo_isolada=true`, token explícito, administrador ativo e base sem vendas/compras. Não carrega nada sozinha e não entra no deploy |
 | `35_corrige_vw_titulos_financeiros_join.sql` | Troca o `JOIN` INNER por LEFT em `filiais` na view `vw_titulos_financeiros`, para que um usuário com `financeiro.consultar` sem `configuracoes.ver` não veja a lista "Contas a receber e a pagar" vazia; idempotente |
+| `36_integridade_estoque_principal_buffet.sql` | Estoque Principal = Loja + Geral e Buffet separado; bloqueia recebimento fornecedor → Buffet e transferências acima do saldo; adiciona chaves de idempotência para movimentos/recebimentos, fecha as RPCs antigas sem chave e corrige valor/alerta no `vw_resumo`; aditiva, mantém o ledger |
+| `37_gerenciamento_filiais.sql` | Numeração sequencial e dados de contato das filiais; cria a matriz de novas organizações; cadastro/edição/ativação/definição de matriz por RPC com `configuracoes.editar`; bloqueia escrita direta e exclusão física |
 | `reverter_33_…` / `reverter_34_…` / `reverter_35_…` | A reverter 33 remove as tabelas/colunas/triggers/views que a 33 criou, preservando as tabelas antigas e os dados; a reverter 34 remove apenas a função de demonstração; a reverter 35 restaura o JOIN INNER da view de títulos |
+| `reverter_36_integridade_estoque_principal_buffet.sql` | Remove RPCs/triggers da 36, restaura permissões e `vw_resumo`, e preserva as chaves idempotentes já gravadas |
+| `reverter_37_gerenciamento_filiais.sql` | Remove a extensão da 37 somente quando os novos dados de contato estão vazios; aborta para não descartar dados cadastrados |
 | `reverter_08_…` até `reverter_32_…` (e as anteriores) | Reversões conservadoras; a 21 bloqueia categorias personalizadas em uso, a 22 bloqueia movimentos do estoque geral, a 23 impede remover WhatsApps cadastrados, a 24 preserva os novos metadados, a 26 não remove códigos gravados, a 27 bloqueia reversão quando já há operações/snapshots/autorizações, a 28 devolve a edição manual do código do cliente, a 29 volta as políticas ao formato sem organização sem apagar linhas, a 30 remove apenas os índices que criou, a 31 remove a RPC e os dois índices e a 32 restaura as chaves globais somente se não houver repetição entre organizações |
 | `garantir_perfil_novo.sql` | Versão de `garantir_perfil()` que lê e-mail e convite — conta sem convite nasce **inativa** (aprovação pelo administrador) e convite define papel/ativação. **Passo manual**, não é `NN_*.sql`; o app usa `aprovacaoManual: true` |
 | `classificar_produtos_buffet.sql` | Classificação inicial do Estoque Buffet: `Acai self-service` vira `buffet`, granola/leite em pó/morango/banana viram `insumo` e o retorno é ligado só em granola e leite em pó. **Passo manual**, não é `NN_*.sql`; a reversão está em `classificar_produtos_buffet_reverter.sql` |
@@ -58,6 +62,25 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `testar-demonstracao.mjs` | Aplica a cadeia inteira em PGlite e testa as travas, a carga, a idempotência e as regras de consistência da demonstração (`npm run testar:demonstracao`) |
 | `carregar-demonstracao.mjs` | Carrega a demonstração numa branch **descartável** já migrada; exige `DEMO_DATABASE_URL`, `DEMO_CONFIRMAR=SIM`, zero vendas/compras e recusa o host de produção (`npm run carregar:demonstracao`) |
 | `zerar-operacional.mjs` | Zera as tabelas operacionais de uma branch **descartável**, com lista explícita, backup declarado e host de produção recusado (`npm run zerar:operacional`) |
+
+### Erro de função não encontrada ao receber compra
+
+A confirmação usa a RPC idempotente criada pela migração
+`36_integridade_estoque_principal_buffet.sql`, com os argumentos
+`p_compra_id` (uuid), `p_itens` (jsonb) e `p_chave_idempotencia` (text).
+Se a função não existir no banco, atualizar somente o cache não resolve: aplique
+a migration 36 no banco/branch correto após validar o destino. Depois atualize o
+cache da Data API:
+
+```bash
+node neon/aplicar.mjs 36
+npx neon data-api refresh-schema --database neondb
+```
+
+Também é possível atualizar pelo painel do provedor em **Postgres database →
+Data API → Refresh schema cache**. Se a função já existir no banco e mesmo
+assim não for localizada, faça apenas a atualização do cache; não aplique a
+migração novamente sem verificar o estado e o destino.
 
 > A numeração pula **13, 14 e 15**: esses arquivos não fazem parte da cadeia
 > aplicada por este projeto. O `aplicar.mjs` segue a ordem alfabética dos nomes e
@@ -187,6 +210,39 @@ nem aparecem como opções operacionais até serem habilitados e configurados.
 O Buffet não é atualizado pela baixa de venda direta, que continua restrita ao
 local configurado para cada produto.
 
+### Principal e Buffet (migração 36)
+
+Para compatibilidade com os saldos históricos, o **Estoque Principal** é a soma
+dos locais Loja (`estoque`) e Geral (`estoque_geral`); o **Estoque Buffet** é
+mantido separado. O total consolidado é Principal + Buffet. A interface mantém
+os dois sublocais do Principal visíveis para que contagens e transferências
+continuem escolhendo a origem física exata.
+
+Recebimentos de fornecedor no Buffet são recusados tanto pela tela/RPC quanto
+por trigger no ledger. Receba em Loja ou Geral e transfira depois: transferência
+não é compra nem consumo e sempre precisa respeitar o saldo da origem, mesmo
+quando venda negativa estiver autorizada para o produto. Movimentos genéricos e
+recebimentos têm chave de idempotência por organização, usuário e payload; um
+reenvio igual devolve o resultado anterior e uma chave com payload diferente é
+recusada. As RPCs antigas sem chave deixam de ser executáveis por
+`authenticated`. As tabelas internas têm RLS e nenhum privilégio DML direto;
+use apenas as RPCs autorizadas.
+
+A `vw_resumo` calcula o valor a custo com os saldos atuais de Loja, Geral e
+Buffet, e o alerta de mínimo considera o Principal. Valide antes de aplicar:
+
+```bash
+npm run validar:migracoes
+node neon/aplicar.mjs 36
+npx neon data-api refresh-schema
+```
+
+Não aplique em produção sem confirmar o banco/branch, autorização, backup
+restaurável e janela de implantação. A reversão da 36 não apaga movimentos nem
+recebimentos; mantém as tabelas de idempotência como histórico e restaura a
+view/resumo e as RPCs anteriores. A migration 36 não foi aplicada pelo fluxo de
+desenvolvimento local.
+
 Valide antes de aplicar em qualquer base. Para reverter a migração 25, use
 `node neon/aplicar.mjs reverter_25`. A reversão bloqueia se as operações novas
 já tiverem criado movimentos, transferências com Buffet ou configuração de
@@ -307,6 +363,30 @@ npm run testar:demonstracao
 
 O diagnóstico somente leitura `diagnostico_seguranca.sql` confere RLS, políticas
 abertas, privilégios diretos e os índices compostos.
+
+### Cadastro de filiais (migração 37)
+
+A tela **Configurações → Filiais e lojas** lista a matriz e permite cadastrar,
+editar, ativar/desativar unidades e definir a matriz. O banco gera o número e o
+código em transação; somente a RPC `gerenciar_filial()` grava, exige
+`configuracoes.editar` e rejeita identificadores de outra organização. A
+exclusão física não é oferecida nem autorizada diretamente. A reversão protege
+os dados de contato inseridos depois da migração.
+
+Valide e aplique primeiro em uma branch de teste autorizada:
+
+```powershell
+npm run validar:migracoes
+node neon/aplicar.mjs 37
+npx neon data-api refresh-schema
+```
+
+**Limite importante:** a migração 33 preenche operações sem filial com a matriz
+padrão. O cadastro da migração 37 ainda não troca o contexto operacional nem
+filtra vendas, compras, estoque e financeiro por uma filial selecionada. Por
+segurança, a aplicação não apresenta um seletor que sugira essa troca até que
+as consultas e RPCs desses módulos sejam adaptadas e validadas em conjunto.
+Não trate a lista de filiais como isolamento operacional completo.
 
 ### Dados de demonstração na branch de produção
 

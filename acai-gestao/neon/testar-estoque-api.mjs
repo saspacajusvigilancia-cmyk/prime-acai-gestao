@@ -170,15 +170,15 @@ ok(
 )
 ok('contar o mesmo saldo não cria movimento', mesmoLinha?.movimentacao_id === null, `movimentacao_id=${mesmoLinha?.movimentacao_id}`)
 
-// 5) a RPC de movimento é alcançável (o erro prova que ela rodou: a checagem de
-//    permissão e o casamento dos nomes dos argumentos vêm ANTES do saldo)
-console.log('\n4) registrar_movimentacao: o navegador chega até ela')
-const saida = await rpc('registrar_movimentacao', {
+// 5) a RPC idempotente é alcançável e a porta antiga sem chave foi fechada.
+console.log('\n4) registrar_movimentacao_local_v3: a porta idempotente do navegador')
+const saida = await rpc('registrar_movimentacao_local_v3', {
   p_produto_id: idItem,
   p_qtd: 999999,
   p_origem: 'estoque',
   p_destino: 'perda',
   p_motivo: 'Teste de API: saída maior que o saldo',
+  p_chave_idempotencia: `api-${stamp}-saldo`,
 })
 ok('saída maior que o saldo é recusada', saida.status >= 400, `HTTP ${saida.status}`)
 ok(
@@ -187,33 +187,45 @@ ok(
   String(saida.json?.message ?? saida.texto).slice(0, 78),
 )
 
-const semMotivo = await rpc('registrar_movimentacao', {
+const rpcLegada = await rpc('registrar_movimentacao', {
+  p_produto_id: idItem,
+  p_qtd: 1,
+  p_origem: 'fornecedor',
+  p_destino: 'estoque',
+  p_motivo: 'Teste de API: RPC antiga sem chave',
+})
+ok('a RPC antiga sem chave não permanece acessível', rpcLegada.status >= 400, `HTTP ${rpcLegada.status}`)
+
+const semMotivo = await rpc('registrar_movimentacao_local_v3', {
   p_produto_id: idItem,
   p_qtd: 1,
   p_origem: 'fornecedor',
   p_destino: 'estoque',
   p_motivo: '   ',
+  p_chave_idempotencia: `api-${stamp}-motivo`,
 })
 ok('movimento sem motivo é recusado', semMotivo.status >= 400 && /motivo/i.test(semMotivo.json?.message ?? ''), String(semMotivo.json?.message ?? '').slice(0, 60))
 
-const origemIgual = await rpc('registrar_movimentacao', {
+const origemIgual = await rpc('registrar_movimentacao_local_v3', {
   p_produto_id: idItem,
   p_qtd: 1,
   p_origem: 'estoque',
   p_destino: 'estoque',
   p_motivo: 'Teste de API: origem igual ao destino',
+  p_chave_idempotencia: `api-${stamp}-local`,
 })
-ok('origem igual ao destino é recusada', origemIgual.status >= 400 && /mesmo local/i.test(origemIgual.json?.message ?? ''), String(origemIgual.json?.message ?? '').slice(0, 60))
+ok('origem igual ao destino é recusada', origemIgual.status >= 400 && /mesmo local|diferentes/i.test(origemIgual.json?.message ?? ''), String(origemIgual.json?.message ?? '').slice(0, 60))
 
 // 6) e o caixa comum?
 console.log('\n5) O caixa comum')
 await virar('cashier')
-const caixaMov = await rpc('registrar_movimentacao', {
+const caixaMov = await rpc('registrar_movimentacao_local_v3', {
   p_produto_id: idItem,
   p_qtd: 1,
   p_origem: 'fornecedor',
   p_destino: 'estoque',
   p_motivo: 'Teste de API: caixa tentando movimentar',
+  p_chave_idempotencia: `api-${stamp}-caixa`,
 })
 ok('não movimenta estoque', caixaMov.status >= 400, `HTTP ${caixaMov.status}`)
 ok(

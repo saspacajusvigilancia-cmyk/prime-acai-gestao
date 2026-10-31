@@ -924,7 +924,7 @@ export function excluirCompra(id) {
  * O banco converte para a unidade de estoque, movimenta, calcula o custo médio
  * e decide entre `recebimento_parcial` e `recebido_confirmado`.
  */
-export function receberCompra(compraId, itens = []) {
+export function receberCompra(compraId, itens = [], chaveIdempotencia) {
   const linhas = itens
     .map((item) => ({
       item_id: item.itemId ?? item.id,
@@ -937,17 +937,24 @@ export function receberCompra(compraId, itens = []) {
 
   if (!compraId) throw new Error('Compra não informada.')
   if (!linhas.length) throw new Error('Informe a quantidade recebida de pelo menos um item.')
-  if (linhas.some((item) => !['loja', 'geral', 'buffet'].includes(item.local))) {
+  if (linhas.some((item) => !['loja', 'geral'].includes(item.local))) {
     throw new Error('Escolha um destino de estoque válido para cada item recebido.')
   }
+  const chave = String(
+    chaveIdempotencia ??
+      globalThis.crypto?.randomUUID?.() ??
+      `receb-${Date.now()}-${Math.random().toString(16).slice(2)}`,
+  ).trim()
+  if (!chave || chave.length > 200) throw new Error('A chave do recebimento é inválida.')
 
   return gravar({
     nome: 'recebimento da compra',
-    registro: { compraId, itens: linhas },
+    registro: { compraId, itens: linhas, chaveIdempotencia: chave },
     escrever: async (neon) => {
-      const { data, error } = await neon.rpc('confirmar_recebimento_compra', {
+      const { data, error } = await neon.rpc('confirmar_recebimento_compra_idempotente', {
         p_compra_id: compraId,
         p_itens: linhas,
+        p_chave_idempotencia: chave,
       })
 
       if (error) throw error

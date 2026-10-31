@@ -153,24 +153,34 @@ describe('registrarMovimentacao', () => {
           origem: 'fornecedor',
           destino: 'estoque',
           motivo: 'Compra da semana',
-          saldo: '31',
+          chave_idempotencia: 'move-key',
+          saldo_geral: '0',
+          saldo_loja: '31',
+          saldo_buffet: '0',
+          saldo_principal: '31',
+          saldo_total: '31',
           criado_em: '2026-10-19T10:00:00.000Z',
         },
       ],
       error: null,
     }
 
-    const { dados, origem } = await registrarMovimentacao({ ...movimentoValido, motivo: '  Compra da semana  ' })
+    const { dados, origem } = await registrarMovimentacao({
+      ...movimentoValido,
+      motivo: '  Compra da semana  ',
+      chaveIdempotencia: 'move-key',
+    })
 
     expect(origem).toBe('neon')
     expect(estado.rpc.at(-1)).toEqual({
-      nome: 'registrar_movimentacao_local_v2',
+      nome: 'registrar_movimentacao_local_v3',
       params: {
         p_produto_id: 'p1',
         p_qtd: 10,
         p_origem: 'fornecedor',
         p_destino: 'estoque',
         p_motivo: 'Compra da semana',
+        p_chave_idempotencia: 'move-key',
       },
     })
     expect(dados.quantidade).toBe(10)
@@ -287,6 +297,8 @@ describe('registrarMovimentacao', () => {
       geral: 8.5,
       loja: 12,
       buffet: 2,
+      principal: 20.5,
+      total: 22.5,
       locais: { geral: 8.5, loja: 12, buffet: 2 },
     }])
   })

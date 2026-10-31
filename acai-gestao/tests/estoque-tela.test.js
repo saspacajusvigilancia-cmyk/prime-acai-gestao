@@ -51,6 +51,18 @@ describe('tela de Estoque — produtos', () => {
     expect(root.textContent).toContain('Repor') // P003, abaixo do minimo
   })
 
+  it('apresenta Principal, Buffet e total sem duplicar transferências', async () => {
+    const root = montar()
+    await tick()
+    await tick()
+
+    const cabecalhos = [...root.querySelectorAll('#tabela-estoque thead th')].map((th) => th.textContent.trim())
+    expect(cabecalhos).toContain('Estoque Principal')
+    expect(cabecalhos).toContain('Buffet')
+    expect(cabecalhos).toContain('Total consolidado')
+    expect(root.textContent).toContain('O total consolidado soma os saldos atuais')
+  })
+
   it('os indicadores contam só item ativo e com ponto de reposição definido', () => {
     const root = montar()
 

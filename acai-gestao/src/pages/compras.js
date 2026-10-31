@@ -33,6 +33,7 @@ import {
   tomStatus,
 } from '../services/compras.js'
 import { pode } from '../services/permissoes.js'
+import { listarSaldosEstoqueLocais } from '../services/movimentacoes.js'
 import { listarProdutos } from '../services/produtos.js'
 import {
   atualizarKpi,
@@ -348,6 +349,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
       produtos = []
       itensNovos = []
       editandoKey = null
+      let saldosEstoquePorProduto = null
 
       const el = (seletor) => root.querySelector(seletor)
       const lerMoedaOpcional = (campo, rotulo) => {
@@ -443,9 +445,14 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
         atualizarKpi(root, 'comprasMes', { valor: formatBRL(resumo.totalMes) })
         atualizarKpi(root, 'comprasValidade', { valor: String(resumo.validadeProxima.length) })
 
-        const criticos = produtos.filter(
-          (p) => p.ativo && p.controlaEstoque && Number(p.minimo) > 0 && Number(p.quantidade) < Number(p.minimo),
-        )
+        const criticos = saldosEstoquePorProduto
+          ? produtos.filter((produto) => {
+              const principal = saldosEstoquePorProduto.get(produto.uuid ?? produto.id)?.principal
+              return produto.ativo && produto.controlaEstoque &&
+                Number(produto.minimo) > 0 && Number.isFinite(principal) &&
+                principal < Number(produto.minimo)
+            })
+          : []
 
         const partes = []
 
@@ -466,7 +473,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
         if (criticos.length) {
           const nomes = criticos
             .slice(0, 4)
-            .map((p) => `<strong>${esc(p.nome)}</strong> (${qtd(p.quantidade)} ${esc(p.unidade)})`)
+            .map((p) => `<strong>${esc(p.nome)}</strong> (${qtd(saldosEstoquePorProduto.get(p.uuid ?? p.id).principal)} ${esc(p.unidade)} no Principal)`)
             .join(' · ')
           partes.push(`<p>Estoque abaixo do mínimo: ${nomes}${criticos.length > 4 ? ' · ...' : ''}. <a href="#/estoque">Abrir estoque</a></p>`)
         }
@@ -959,7 +966,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
       /* --------------------------------------------------------- modal -- */
       const modaisAbertos = new Set()
 
-      function abrirModal({ titulo, descricao = '', corpo, acoes = [] }) {
+      function abrirModal({ titulo, descricao = '', corpo, acoes = [], permitirFechar = () => true }) {
         const overlay = document.createElement('div')
         overlay.className = 'modal'
 
@@ -992,6 +999,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
         renderIcons(overlay)
 
         const fechar = () => {
+          if (!permitirFechar()) return
           overlay.remove()
           modaisAbertos.delete(overlay)
           if (!document.querySelector('.modal')) document.body.classList.remove('sem-scroll')
@@ -999,7 +1007,10 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
         }
 
         const aoTeclar = (evento) => {
-          if (evento.key === 'Escape') fechar()
+          if (evento.key === 'Escape') {
+            evento.preventDefault()
+            fechar()
+          }
         }
 
         overlay.querySelectorAll('[data-fechar]').forEach((botao) => botao.addEventListener('click', fechar))
@@ -1189,9 +1200,8 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
                 </td>
                 <td>
                   <select class="campo__input" data-receber-local="${esc(item.id)}">
-                    <option value="loja">Estoque Normal (loja)</option>
-                    <option value="geral">Estoque Geral</option>
-                    <option value="buffet">Estoque Buffet</option>
+                    <option value="loja">Estoque Principal — loja</option>
+                    <option value="geral">Estoque Principal — geral</option>
                   </select>
                 </td>
               </tr>
@@ -1221,13 +1231,31 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
             </table>
           </div>
 
-          <p class="compras-erro" id="erro-recebimento" hidden></p>
+          <div class="compras-alerta" id="erro-recebimento" role="alert" aria-live="assertive" hidden>
+            <i class="compras-alerta__icone" data-lucide="alert-triangle" aria-hidden="true"></i>
+            <div class="compras-alerta__conteudo">
+              <h3 data-alerta-titulo></h3>
+              <p data-alerta-mensagem></p>
+              <div class="compras-alerta__acoes">
+                <button class="btn btn--ghost btn--sm" type="button" data-alerta-entendi>Entendi</button>
+                <button class="btn btn--primary btn--sm" type="button" data-verificar-situacao hidden>Verificar situação</button>
+                <button class="btn btn--primary btn--sm" type="button" data-tentar-novamente hidden>Tentar novamente</button>
+              </div>
+            </div>
+          </div>
         `
 
+        let resultadoIncerto = false
+        let tentativaIncerta = null
+        const statusInicialCompra = compra.status
+        const recebidosIniciais = new Map(
+          compra.itens.map((item) => [item.id, Number(item.quantidadeRecebida)]),
+        )
         const { overlay, fechar } = abrirModal({
           titulo: `Receber compra ${compra.numero}`,
           descricao: `${compra.fornecedorNome} · ${rotuloDocumento(compra)}`,
           corpo,
+          permitirFechar: () => !resultadoIncerto,
           acoes: [
             { acao: 'confirmar', label: 'Confirmar recebimento', icone: 'check-circle-2', classe: 'btn--primary' },
           ],
@@ -1235,8 +1263,114 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
 
         const botao = overlay.querySelector('[data-modal-acao="confirmar"]')
         const erroEl = overlay.querySelector('#erro-recebimento')
+        const tituloErroEl = erroEl.querySelector('[data-alerta-titulo]')
+        const mensagemErroEl = erroEl.querySelector('[data-alerta-mensagem]')
+        const botaoEntendi = erroEl.querySelector('[data-alerta-entendi]')
+        const botaoVerificar = erroEl.querySelector('[data-verificar-situacao]')
+        const botaoTentarNovamente = erroEl.querySelector('[data-tentar-novamente]')
+        const chavesPorPayload = new Map()
+        let recebimentoEmCurso = false
+        let erroTecnicoAtivo = false
+
+        const camposRecebimento = [...overlay.querySelectorAll(
+          '[data-receber-qtd], [data-receber-lote], [data-receber-validade], [data-receber-local]',
+        )]
+
+        const mostrarAlerta = ({ titulo, mensagem, tipo = 'erro', verificar = false, tentarNovamente = false }) => {
+          erroEl.classList.toggle('compras-alerta--info', tipo === 'info')
+          erroEl.querySelector('.compras-alerta__icone').dataset.lucide =
+            tipo === 'info' ? 'info' : 'alert-triangle'
+          tituloErroEl.textContent = titulo
+          mensagemErroEl.textContent = mensagem
+          botaoVerificar.hidden = !verificar
+          botaoTentarNovamente.hidden = !tentarNovamente
+          botaoEntendi.hidden = verificar || tentarNovamente
+          erroEl.hidden = false
+          renderIcons(erroEl)
+        }
+
+        const erroDaRpc = (erro) => {
+          const codigo = String(erro?.code ?? '')
+          const detalhe = `${erro?.message ?? ''} ${erro?.details ?? ''}`
+          if (codigo === 'PGRST202' || /could not find function.*confirmar_recebimento_compra_idempotente/i.test(detalhe)) {
+            return {
+              incerto: false,
+              indisponivel: true,
+              titulo: 'Não foi possível confirmar o recebimento',
+              mensagem: 'A confirmação não foi realizada. Nenhum item foi lançado por esta tentativa. A integração precisa ser atualizada antes de uma nova tentativa. Recarregue a tela e, se o problema continuar, entre em contato com o suporte.',
+            }
+          }
+          if (/^[0-9A-Z]{5}$/.test(codigo) && !codigo.startsWith('PGRST')) {
+            return {
+              incerto: false,
+              indisponivel: false,
+              titulo: 'Não foi possível confirmar o recebimento',
+              mensagem: 'Não conseguimos concluir o recebimento desta compra. Nenhuma confirmação foi concluída por esta tentativa. Verifique os dados e tente novamente. Se o problema continuar, entre em contato com o suporte.',
+            }
+          }
+          return {
+            incerto: true,
+            indisponivel: false,
+            titulo: 'Confirme a situação antes de tentar novamente',
+            mensagem: 'Não foi possível confirmar o resultado do recebimento. Atualize a situação da compra antes de tentar novamente.',
+          }
+        }
+
+        const enviarRecebimento = async (itens, chaveIdempotencia) => {
+          if (recebimentoEmCurso) return
+          recebimentoEmCurso = true
+          erroEl.hidden = true
+          botao.disabled = true
+          botao.innerHTML = '<span>Recebendo...</span>'
+          botaoTentarNovamente.disabled = true
+
+          try {
+            const { dados, origem } = await receberCompra(compra.id, itens, chaveIdempotencia)
+
+            toast(
+              origem === 'exemplo'
+                ? 'Modo demonstração: recebimento simulado.'
+                : dados?.status === 'recebido_confirmado'
+                  ? 'Recebimento confirmado. Estoque e custo médio atualizados.'
+                  : 'Recebimento parcial registrado. A compra continua aberta.',
+            )
+
+            resultadoIncerto = false
+            fechar()
+            await carregarDados()
+          } catch (erro) {
+            console.error('[compras] Falha técnica no recebimento.', {
+              code: erro?.code ?? 'sem código',
+              name: erro?.name ?? 'Error',
+            })
+            const classificacao = erroDaRpc(erro)
+            erroTecnicoAtivo = classificacao.indisponivel
+
+            if (classificacao.incerto) {
+              resultadoIncerto = true
+              tentativaIncerta = { itens, chaveIdempotencia }
+              camposRecebimento.forEach((campo) => { campo.disabled = true })
+              mostrarAlerta({ ...classificacao, verificar: true })
+              botao.disabled = true
+            } else {
+              resultadoIncerto = false
+              tentativaIncerta = null
+              camposRecebimento.forEach((campo) => { campo.disabled = false })
+              mostrarAlerta(classificacao)
+              botao.disabled = classificacao.indisponivel
+            }
+          } finally {
+            recebimentoEmCurso = false
+            botaoTentarNovamente.disabled = false
+            if (overlay.isConnected) {
+              botao.innerHTML = '<i data-lucide="check-circle-2"></i><span>Confirmar recebimento</span>'
+              renderIcons(botao)
+            }
+          }
+        }
 
         botao.addEventListener('click', async () => {
+          if (recebimentoEmCurso || resultadoIncerto || erroTecnicoAtivo) return
           erroEl.hidden = true
           const itens = []
 
@@ -1246,13 +1380,17 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
             const quantidade = Number.isFinite(valor) ? valor : 0
 
             if (quantidade < 0) {
-              erroEl.textContent = `A quantidade de "${item.nome}" não pode ser negativa.`
-              erroEl.hidden = false
+              mostrarAlerta({
+                titulo: 'Revise a quantidade informada',
+                mensagem: `A quantidade de "${item.nome}" não pode ser negativa.`,
+              })
               return
             }
             if (quantidade > item.pendente + 0.0005) {
-              erroEl.textContent = `A quantidade de "${item.nome}" passa do pendente (${qtd(item.pendente)} ${item.unidadeCompra}).`
-              erroEl.hidden = false
+              mostrarAlerta({
+                titulo: 'Revise a quantidade informada',
+                mensagem: `A quantidade de "${item.nome}" não pode ultrapassar o pendente (${qtd(item.pendente)} ${item.unidadeCompra}).`,
+              })
               return
             }
             if (quantidade <= 0) continue
@@ -1267,38 +1405,84 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
           }
 
           if (!itens.length) {
-            erroEl.textContent = 'Informe pelo menos uma quantidade recebida.'
-            erroEl.hidden = false
+            mostrarAlerta({
+              titulo: 'Informe os itens recebidos',
+              mensagem: 'Preencha uma quantidade maior que zero para pelo menos um item.',
+            })
             return
           }
 
-          const rotulo = botao.innerHTML
-          botao.disabled = true
-          botao.innerHTML = '<span>Recebendo...</span>'
+          const payload = JSON.stringify(itens)
+          if (!chavesPorPayload.has(payload)) chavesPorPayload.set(payload, idChave())
+          const chaveIdempotencia = chavesPorPayload.get(payload)
+          await enviarRecebimento(itens, chaveIdempotencia)
+        })
 
+        botaoEntendi.addEventListener('click', () => {
+          erroEl.hidden = true
+        })
+
+        botaoVerificar.addEventListener('click', async () => {
+          if (!tentativaIncerta || recebimentoEmCurso) return
+          recebimentoEmCurso = true
+          botaoVerificar.disabled = true
+          botaoVerificar.textContent = 'Verificando...'
           try {
-            const { dados, origem } = await receberCompra(compra.id, itens)
+            const { dados } = await listarCompras({ id: compra.id })
+            const atualizada = dados.find((registro) => registro.id === compra.id)
+            if (!atualizada) throw new Error('A compra não foi localizada na consulta de situação.')
 
-            toast(
-              origem === 'exemplo'
-                ? 'Modo demonstração: recebimento simulado.'
-                : dados?.status === 'recebido_confirmado'
-                  ? 'Recebimento confirmado. Estoque e custo médio atualizados.'
-                  : 'Recebimento parcial registrado. A compra continua aberta.',
-            )
+            const houveAlteracao = atualizada.status !== statusInicialCompra ||
+              pendentes.some((item) => {
+                const itemAtualizado = atualizada.itens.find((linha) => linha.id === item.id)
+                return !itemAtualizado ||
+                  Number(itemAtualizado.quantidadeRecebida) !== recebidosIniciais.get(item.id)
+              })
 
-            fechar()
+            if (houveAlteracao) {
+              resultadoIncerto = false
+              tentativaIncerta = null
+              fechar()
+              toast('A situação da compra mudou. Os dados foram atualizados.')
+              await carregarDados()
+              return
+            }
+
+            resultadoIncerto = false
             await carregarDados()
+            mostrarAlerta({
+              titulo: 'Situação atualizada',
+              mensagem: 'Não encontramos alterações no recebimento. Você pode tentar novamente; os mesmos dados serão enviados com a mesma chave de segurança.',
+              tipo: 'info',
+              tentarNovamente: true,
+            })
+            botao.disabled = true
+            camposRecebimento.forEach((campo) => { campo.disabled = true })
           } catch (erro) {
-            console.error('[compras] Falha no recebimento.', erro)
-            erroEl.textContent = mensagemErro(erro)
-            erroEl.hidden = false
+            console.error('[compras] Falha ao verificar a situação do recebimento.', {
+              code: erro?.code ?? 'sem código',
+              name: erro?.name ?? 'Error',
+            })
+            mostrarAlerta({
+              titulo: 'Não foi possível verificar a situação',
+              mensagem: 'Mantenha esta janela aberta e tente atualizar a situação novamente antes de reenviar o recebimento.',
+              verificar: true,
+            })
           } finally {
-            botao.disabled = false
-            botao.innerHTML = rotulo
-            renderIcons(botao)
+            recebimentoEmCurso = false
+            botaoVerificar.disabled = false
+            botaoVerificar.textContent = 'Verificar situação'
           }
         })
+
+        botaoTentarNovamente.addEventListener('click', async () => {
+          if (!tentativaIncerta || recebimentoEmCurso) return
+          await enviarRecebimento(tentativaIncerta.itens, tentativaIncerta.chaveIdempotencia)
+        })
+
+        botaoVerificar.hidden = true
+        botaoTentarNovamente.hidden = true
+        botaoEntendi.hidden = false
       }
 
       /* ------------------------------------------------------ fornecedores -- */
@@ -1363,9 +1547,11 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
 
       function abrirFornecedor(fornecedor = null) {
         const editando = Boolean(fornecedor)
+        const associarACompra = !el('[data-painel="nova"]').hidden
 
         abrirFormulario({
           titulo: editando ? 'Editar fornecedor' : 'Novo fornecedor',
+          protegerDescarte: true,
           descricao: 'O fornecedor é quem entrega a mercadoria. Não é usuário do sistema.',
           valores: fornecedor
             ? {
@@ -1418,6 +1604,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
             fornecedores.sort((a, b) => a.nome.localeCompare(b.nome))
             renderFornecedores()
             atualizarSelectFornecedores()
+            if (!editando && associarACompra) el('#compra-fornecedor').value = dados.id
 
             const mensagem = origem === 'neon'
               ? editando
@@ -1517,6 +1704,18 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
           compras = respostaCompras.dados ?? []
           fornecedores = respostaFornecedores.dados ?? []
           produtos = respostaProdutos.dados ?? []
+          saldosEstoquePorProduto = null
+          if (pode('estoque', 'consultar')) {
+            try {
+              const resultadoSaldos = await listarSaldosEstoqueLocais()
+              saldosEstoquePorProduto = new Map(
+                resultadoSaldos.dados.map((saldo) => [saldo.produtoId, saldo]),
+              )
+            } catch (erroSaldos) {
+              console.error('[compras] Não foi possível consultar os saldos por local.', erroSaldos)
+              toast('Os alertas de estoque por local estão indisponíveis. Consulte a tela Estoque.')
+            }
+          }
 
           atualizarSelectFornecedores()
           atualizarSelectProdutos()

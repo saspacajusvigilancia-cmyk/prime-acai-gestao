@@ -62,7 +62,7 @@ afterEach(() => {
 })
 
 describe('fornecedores no histórico de compras', () => {
-  it('envia o destino escolhido por item ao RPC de recebimento', async () => {
+  it('envia o destino Principal e a chave idempotente ao RPC de recebimento', async () => {
     neonMock.rpc.mockResolvedValue({
       data: [{ compra_id: 'compra-1', status: 'recebimento_parcial' }],
       error: null,
@@ -71,24 +71,30 @@ describe('fornecedores no histórico de compras', () => {
     await receberCompra('compra-1', [{
       itemId: 'item-1',
       quantidade: 2,
-      local: 'buffet',
+      local: 'geral',
       lote: 'L-1',
       validade: '2027-01-01',
-    }])
+    }], 'receb-key')
 
-    expect(neonMock.rpc).toHaveBeenCalledWith('confirmar_recebimento_compra', {
+    expect(neonMock.rpc).toHaveBeenCalledWith('confirmar_recebimento_compra_idempotente', {
       p_compra_id: 'compra-1',
       p_itens: [{
         item_id: 'item-1',
         quantidade: 2,
-        local: 'buffet',
+        local: 'geral',
         lote: 'L-1',
         validade: '2027-01-01',
       }],
+      p_chave_idempotencia: 'receb-key',
     })
   })
 
-  it('recusa destinos de recebimento que não sejam locais operacionais configurados', () => {
+  it('recusa Buffet e locais inativos como destino de compra', () => {
+    expect(() => receberCompra('compra-1', [{
+      itemId: 'item-1',
+      quantidade: 2,
+      local: 'buffet',
+    }])).toThrow(/destino de estoque válido/i)
     expect(() => receberCompra('compra-1', [{
       itemId: 'item-1',
       quantidade: 2,

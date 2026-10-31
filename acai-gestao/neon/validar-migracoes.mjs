@@ -252,6 +252,135 @@ await autenticar(ADMIN)
   else podeFalhar('catálogos por organização', `${tipos} tipos e ${formas} formas`)
 }
 
+log('\n== Gerenciamento de filiais (migração 37) ==')
+{
+  const matrizInicial = await um(`
+    select id, numero, tipo, ativo
+      from public.filiais
+     where organization_id = '${ORG}' and codigo = 'MATRIZ'
+  `)
+  if (matrizInicial && Number(matrizInicial.numero) === 1 && matrizInicial.tipo === 'matriz') {
+    ok('a unidade existente recebe número 01 e permanece matriz')
+  } else {
+    podeFalhar('matriz inicial', JSON.stringify(matrizInicial))
+  }
+
+  const documentoInvalido = await rpcComo(
+    ADMIN,
+    `select * from public.gerenciar_filial('criar', null, '{"nome":"Documento inválido","cnpj":"123"}'::jsonb)`,
+  )
+  const emailInvalido = await rpcComo(
+    ADMIN,
+    `select * from public.gerenciar_filial('criar', null, '{"nome":"E-mail inválido","email":"sem-email"}'::jsonb)`,
+  )
+  if (
+    documentoInvalido.erro && /11 ou 14 digitos/i.test(documentoInvalido.erro.message) &&
+    emailInvalido.erro && /e-mail valido/i.test(emailInvalido.erro.message)
+  ) {
+    ok('RPC valida documento e e-mail mesmo em chamadas diretas')
+  } else {
+    podeFalhar(
+      'validação de campos da filial',
+      documentoInvalido.erro?.message ?? emailInvalido.erro?.message ?? 'entrada inválida aceita',
+    )
+  }
+
+  const segunda = await rpcComo(
+    ADMIN,
+    `select * from public.gerenciar_filial('criar', null, '{"nome":"Loja Centro","nome_fantasia":"Prime Centro"}'::jsonb)`,
+  )
+  const filial2 = segunda.linhas[0]
+  const terceira = await rpcComo(
+    ADMIN,
+    `select * from public.gerenciar_filial('criar', null, '{"nome":"Loja Bairro"}'::jsonb)`,
+  )
+  const quarta = await rpcComo(
+    ADMIN,
+    `select * from public.gerenciar_filial('criar', null, '{"nome":"Loja Shopping"}'::jsonb)`,
+  )
+  const filial3 = terceira.linhas[0]
+  const filial4 = quarta.linhas[0]
+
+  if (
+    !segunda.erro && !terceira.erro && !quarta.erro &&
+    filial2 && filial3 && filial4 &&
+    [filial2, filial3, filial4].map((f) => Number(f.numero)).join(',') === '2,3,4' &&
+    [filial2, filial3, filial4].map((f) => f.codigo).join(',') === 'LOJA 02,LOJA 03,LOJA 04' &&
+    [filial2, filial3, filial4].every((f) => f.tipo === 'filial')
+  ) {
+    ok('cria varias unidades com números sequenciais e código automático')
+  } else {
+    podeFalhar(
+      'criação sequencial de filiais',
+      segunda.erro?.message ?? terceira.erro?.message ?? quarta.erro?.message ??
+        JSON.stringify([filial2, filial3, filial4]),
+    )
+  }
+
+  const editada = await rpcComo(
+    ADMIN,
+    `select * from public.gerenciar_filial('editar', '${filial2?.id}', '{"nome":"Centro Atualizada","telefone":"85999990000"}'::jsonb)`,
+  )
+  const desativada = await rpcComo(
+    ADMIN,
+    `select * from public.gerenciar_filial('desativar', '${filial4?.id}', '{}'::jsonb)`,
+  )
+  const ativada = await rpcComo(
+    ADMIN,
+    `select * from public.gerenciar_filial('ativar', '${filial4?.id}', '{}'::jsonb)`,
+  )
+  if (
+    !editada.erro && editada.linhas[0]?.nome === 'Centro Atualizada' &&
+    !desativada.erro && desativada.linhas[0]?.ativo === false &&
+    !ativada.erro && ativada.linhas[0]?.ativo === true
+  ) {
+    ok('edita dados, desativa e reativa sem apagar o histórico')
+  } else {
+    podeFalhar(
+      'edição e situação da filial',
+      editada.erro?.message ?? desativada.erro?.message ?? ativada.erro?.message ??
+        JSON.stringify([editada.linhas[0], desativada.linhas[0], ativada.linhas[0]]),
+    )
+  }
+
+  const mudouMatriz = await rpcComo(
+    ADMIN,
+    `select * from public.gerenciar_filial('definir_matriz', '${filial2?.id}', '{}'::jsonb)`,
+  )
+  if (!mudouMatriz.erro && mudouMatriz.linhas[0]?.tipo === 'matriz') {
+    ok('define uma única unidade principal por empresa')
+  } else {
+    podeFalhar('definir matriz', mudouMatriz.erro?.message ?? 'a RPC não retornou a matriz')
+  }
+  const quantidadeMatrizes = await contar(
+    `select count(*)::int as n from public.filiais where organization_id = '${ORG}' and tipo = 'matriz'`,
+  )
+  if (quantidadeMatrizes === 1) ok('restrição mantém uma única matriz')
+  else podeFalhar('unicidade da matriz', `${quantidadeMatrizes} matrizes`)
+
+  const cashierTentaCriar = await rpcComo(
+    CASHIER,
+    `select * from public.gerenciar_filial('criar', null, '{"nome":"Loja Sem Permissao"}'::jsonb)`,
+  )
+  if (cashierTentaCriar.erro && /permiss/i.test(cashierTentaCriar.erro.message)) {
+    ok('usuário sem permissão não consegue criar filial pela RPC')
+  } else {
+    podeFalhar('autorização da RPC de filiais', cashierTentaCriar.erro?.message ?? 'o caixa criou uma filial')
+  }
+
+  const escritaDireta = await escreveComo(
+    ADMIN,
+    `delete from public.filiais where id = '${filial3?.id}'`,
+  )
+  if (escritaDireta.erro) ok('a exclusão física direta é negada')
+  else podeFalhar('bloqueio da exclusão física', 'o delete direto foi permitido')
+
+  await rpcComo(
+    ADMIN,
+    `select * from public.gerenciar_filial('definir_matriz', '${matrizInicial?.id}', '{}'::jsonb)`,
+  )
+}
+
 log('\n== Código automático de cliente ==')
 {
   const sugerido = await um('select public.proximo_codigo_cliente() as codigo')
@@ -618,6 +747,32 @@ log('\n== Categorias de produtos: unicidade e isolamento por organização ==')
     insert into public.profiles (id, full_name, organization_id, role)
       values ('${ADMIN2}', 'Admin da Segunda Loja', '${ORG2}', 'admin');
   `)
+  const filialNovaOrg = await um(`
+      select id, numero, tipo
+        from public.filiais
+       where organization_id = '${ORG2}' and codigo = 'MATRIZ'
+  `)
+  if (filialNovaOrg && Number(filialNovaOrg.numero) === 1 && filialNovaOrg.tipo === 'matriz') {
+      ok('nova organização recebe automaticamente sua matriz')
+  } else {
+      podeFalhar('matriz de nova organização', JSON.stringify(filialNovaOrg))
+  }
+  const branchOrg2 = await rpcComo(
+      ADMIN2,
+      `select * from public.gerenciar_filial('criar', null, '{"nome":"Segunda unidade"}'::jsonb)`,
+  )
+  const acessoCruzado = await rpcComo(
+      ADMIN,
+      `select * from public.gerenciar_filial('editar', '${filialNovaOrg?.id}', '{"nome":"Acesso cruzado"}'::jsonb)`,
+  )
+  if (!branchOrg2.erro && Number(branchOrg2.linhas[0]?.numero) === 2) {
+      ok('a organização recém-criada pode cadastrar sua própria segunda filial')
+  } else {
+      podeFalhar('criação na segunda organização', branchOrg2.erro?.message ?? JSON.stringify(branchOrg2.linhas))
+  }
+  if (acessoCruzado.erro) ok('RPC impede alterar filial pertencente a outra organização')
+  else podeFalhar('isolamento entre organizações', 'a edição entre organizações foi permitida')
+
   const tiposNovaLoja = await contar(
     `select count(*)::int as n from public.tipos_venda where organization_id = '${ORG2}'`,
   )
@@ -982,13 +1137,15 @@ log('\n== Segurança: RLS e privilégios diretos ==')
   `)).rows.map((r) => r.relname)
   const esperadas = [
     'audit_logs',
+    'estoque_operacoes_idempotencia',
     'estoque_operacoes_locais_v2',
     'invite_permissions',
     'invites',
+    'recebimentos_compra_idempotencia',
     'user_permissions',
   ]
   if (JSON.stringify(semPolitica) === JSON.stringify(esperadas)) {
-    ok('as cinco tabelas internas continuam com RLS e sem política direta')
+    ok('as tabelas internas continuam com RLS e sem política direta')
   } else {
     podeFalhar('tabelas sem política', JSON.stringify(semPolitica))
   }
@@ -1007,11 +1164,31 @@ log('\n== Segurança: RLS e privilégios diretos ==')
       from information_schema.role_table_grants
      where table_schema = 'public'
        and grantee = 'authenticated'
-       and table_name in ('audit_logs','invites','invite_permissions','user_permissions','estoque_operacoes_locais_v2')
+       and table_name in ('audit_logs','invites','invite_permissions','user_permissions',
+                          'estoque_operacoes_locais_v2','estoque_operacoes_idempotencia',
+                          'recebimentos_compra_idempotencia')
        and privilege_type in ('SELECT','INSERT','UPDATE','DELETE')
   `)
   if (privilegiosInternos === 0) ok('as tabelas internas não têm DML direto para authenticated')
   else podeFalhar('DML direto nas tabelas internas', `${privilegiosInternos} concessão(ões)`)
+
+  const rpcMovimentacao = await um(`
+    select has_function_privilege(
+      'authenticated',
+      'public.registrar_movimentacao(uuid, numeric, text, text, text)',
+      'execute'
+    ) as legado,
+    has_function_privilege(
+      'authenticated',
+      'public.registrar_movimentacao_local_v3(uuid, numeric, text, text, text, text)',
+      'execute'
+    ) as idempotente
+  `)
+  if (!rpcMovimentacao.legado && rpcMovimentacao.idempotente) {
+    ok('somente a RPC de movimentação idempotente fica exposta ao navegador')
+  } else {
+    podeFalhar('privilégios das RPCs de movimentação', JSON.stringify(rpcMovimentacao))
+  }
 }
 
 log('\n== P2 · Saldos iniciais: o que já existia entrou no livro ==')
@@ -1037,16 +1214,18 @@ log('\n== P2 · Saldos iniciais: o que já existia entrou no livro ==')
 
 log('\n== P2 · Compra pela RPC (o caminho do navegador) ==')
 {
+  await db.exec('begin')
   const antes = await saldoDe('P008')
   const r = await rpcComo(
     ADMIN,
-    `select * from public.registrar_movimentacao(
+    `select * from public.registrar_movimentacao_local_v3(
        (select id from public.produtos where codigo = 'P008'),
-       10, 'fornecedor', 'estoque', 'Compra de 10 kg de banana')`,
+       10, 'fornecedor', 'estoque', 'Compra de 10 kg de banana',
+       'teste-compra-movimento-36')`,
   )
   if (r.erro) podeFalhar('compra de 10 kg', r.erro.message)
-  else if (Number(r.linhas[0].saldo) === antes + 10) ok(`banana: ${antes} -> ${antes + 10} kg`)
-  else podeFalhar('saldo depois da compra', `veio ${r.linhas[0].saldo}, esperado ${antes + 10}`)
+  else if (Number(r.linhas[0].saldo_loja) === antes + 10) ok(`banana: ${antes} -> ${antes + 10} kg`)
+  else podeFalhar('saldo depois da compra', `veio ${r.linhas[0].saldo_loja}, esperado ${antes + 10}`)
 
   const doCache = Number(
     (await um(`select quantidade from public.produtos where codigo = 'P008'`)).quantidade,
@@ -1054,7 +1233,6 @@ log('\n== P2 · Compra pela RPC (o caminho do navegador) ==')
   if (doCache === antes + 10) ok('o cache `produtos.quantidade` acompanhou o movimento')
   else podeFalhar('cache após a compra', `cache ${doCache}, livro ${antes + 10}`)
 
-  await db.exec('begin')
   const fornecedor = await um(`
     insert into public.fornecedores (organization_id, nome)
     values ('${ORG}', 'Fornecedor destino Buffet')
@@ -1080,13 +1258,14 @@ log('\n== P2 · Compra pela RPC (o caminho do navegador) ==')
       (select id from public.produtos where codigo = 'P008'), 'buffet') as s`)).s,
   )
   const lojaAntesCompra = await saldoDe('P008')
-  const recebimento = await rpcComo(
+  const recebimento = await rpcComoEmSavepoint(
     ADMIN,
-    `select * from public.confirmar_recebimento_compra(
+    `select * from public.confirmar_recebimento_compra_idempotente(
       '${compra.id}',
       jsonb_build_array(jsonb_build_object(
         'item_id', '${itemCompra.id}', 'quantidade', 1, 'local', 'buffet'
-      ))
+      )),
+      'teste-recebimento-no-buffet-36'
     )`,
   )
   const buffetDepoisCompra = Number(
@@ -1094,14 +1273,43 @@ log('\n== P2 · Compra pela RPC (o caminho do navegador) ==')
       (select id from public.produtos where codigo = 'P008'), 'buffet') as s`)).s,
   )
   const lojaDepoisCompra = await saldoDe('P008')
-  if (!recebimento.erro && buffetDepoisCompra === buffetAntesCompra + 1 &&
-      lojaDepoisCompra === lojaAntesCompra) {
-    ok('recebimento de compra permite destino Buffet sem alterar o saldo Normal')
+  if (recebimento.erro && /estoque principal|transfira para o buffet/i.test(recebimento.erro.message) &&
+      buffetDepoisCompra === buffetAntesCompra && lojaDepoisCompra === lojaAntesCompra) {
+    ok('recebimento direto no Buffet é recusado sem alterar os saldos')
   } else {
     podeFalhar(
-      'recebimento direcionado do Buffet',
+      'bloqueio de compra direta no Buffet',
       recebimento.erro?.message ??
-        `Buffet ${buffetDepoisCompra}/${buffetAntesCompra + 1}, Normal ${lojaDepoisCompra}/${lojaAntesCompra}`,
+        `Buffet ${buffetDepoisCompra}/${buffetAntesCompra}, Principal ${lojaDepoisCompra}/${lojaAntesCompra}`,
+    )
+  }
+
+  const recebimentoPrincipalSql = `select * from public.confirmar_recebimento_compra_idempotente(
+    '${compra.id}',
+    jsonb_build_array(jsonb_build_object(
+      'item_id', '${itemCompra.id}', 'quantidade', 1, 'local', 'geral'
+    )),
+    'teste-recebimento-principal-36'
+  )`
+  const recebimentoPrincipal = await rpcComoEmSavepoint(ADMIN, recebimentoPrincipalSql)
+  const repeticaoRecebimentoPrincipal = await rpcComoEmSavepoint(ADMIN, recebimentoPrincipalSql)
+  const saldoGeralDepoisRecebimento = Number(
+    (await um(`select public.saldo_estoque_local_v2(
+      (select id from public.produtos where codigo = 'P008'), 'geral') as s`)).s,
+  )
+  if (
+    !recebimentoPrincipal.erro &&
+    !repeticaoRecebimentoPrincipal.erro &&
+    recebimentoPrincipal.linhas[0]?.status === repeticaoRecebimentoPrincipal.linhas[0]?.status &&
+    saldoGeralDepoisRecebimento === 1
+  ) {
+    ok('recebimento idempotente entra no Principal e repetição não cria novo movimento')
+  } else {
+    podeFalhar(
+      'idempotência do recebimento de compra',
+      recebimentoPrincipal.erro?.message ??
+        repeticaoRecebimentoPrincipal.erro?.message ??
+        `saldo geral ${saldoGeralDepoisRecebimento}, esperado 1`,
     )
   }
   await db.exec('rollback')
@@ -1133,8 +1341,9 @@ log('\n== P2 · Estoque geral e transferências ==')
   const geralAntes = Number(saldosAntes.linhas[0]?.saldo_geral ?? 0)
   const entrada = await rpcComoEmSavepoint(
     ADMIN,
-    `select * from public.registrar_movimentacao_local(
-       ${produto}, 10, 'fornecedor', 'estoque_geral', 'Entrada no estoque geral')`,
+    `select * from public.registrar_movimentacao_local_v3(
+       ${produto}, 10, 'fornecedor', 'estoque_geral', 'Entrada no estoque geral',
+       'teste-entrada-estoque-geral-36')`,
   )
 
   if (!saldosAntes.erro && !entrada.erro &&
@@ -1182,6 +1391,25 @@ log('\n== P2 · Estoque geral e transferências ==')
     ok('transferência acima do saldo geral é recusada')
   } else {
     podeFalhar('transferência sem saldo', saldoInsuficiente.erro?.message ?? 'a RPC deixou passar!')
+  }
+
+  await db.exec(`update public.produtos set permitir_estoque_negativo = true where codigo = 'P008'`)
+  const transferenciaNegativaPermitida = await rpcComoEmSavepoint(
+    ADMIN,
+    `select * from public.transferir_estoque_local_v2(
+       ${produto}, 999, 'geral', 'loja', 'Teste de transferência sem saldo', 'teste-saldo-negativo-36')`,
+  )
+  await db.exec(`update public.produtos set permitir_estoque_negativo = false where codigo = 'P008'`)
+  if (
+    transferenciaNegativaPermitida.erro &&
+    /saldo insuficiente/i.test(transferenciaNegativaPermitida.erro.message)
+  ) {
+    ok('transferência continua bloqueada mesmo com venda negativa explicitamente habilitada')
+  } else {
+    podeFalhar(
+      'transferência com política de venda negativa',
+      transferenciaNegativaPermitida.erro?.message ?? 'a transferência deixou o local de origem negativo',
+    )
   }
 
   const caixaTransfere = await rpcComoEmSavepoint(
@@ -1290,10 +1518,16 @@ log('\n== P2 · Estoque geral e transferências ==')
     )
   }
 
+  const entradaPrincipalBuffet = await rpcComoEmSavepoint(
+    ADMIN,
+    `select * from public.registrar_movimentacao_local_v3(
+      '${produtoBuffet.id}', 3, 'fornecedor', 'estoque', 'Entrada Principal para teste do Buffet',
+      'teste-entrada-buffet-principal-36')`,
+  )
   const entradaBuffet = await rpcComoEmSavepoint(
     ADMIN,
-    `select * from public.registrar_movimentacao_local_v2(
-      '${produtoBuffet.id}', 3, 'fornecedor', 'buffet', 'Saldo de teste do Buffet')`,
+    `select * from public.transferir_estoque_local_v2(
+      '${produtoBuffet.id}', 3, 'loja', 'buffet', 'Abastecimento de teste', 'teste-transferencia-buffet-entrada-36')`,
   )
   const caixaPerda = await rpcComoEmSavepoint(
     CASHIER,
@@ -1518,9 +1752,10 @@ log('\n== P2 · Saldo não se edita: só se movimenta ==')
   // Saída maior que o saldo: recusada, e sem deixar saldo negativo.
   const exagero = await rpcComo(
     ADMIN,
-    `select * from public.registrar_movimentacao(
+    `select * from public.registrar_movimentacao_local_v3(
        (select id from public.produtos where codigo = 'P010'),
-       999999, 'estoque', 'perda', 'teste de saldo insuficiente')`,
+       999999, 'estoque', 'perda', 'teste de saldo insuficiente',
+       'teste-excesso-estoque-36')`,
   )
   const saldoColher = await saldoDe('P010')
   if (exagero.erro && /saldo insuficiente/i.test(exagero.erro.message) && saldoColher > 0) {
@@ -1532,28 +1767,30 @@ log('\n== P2 · Saldo não se edita: só se movimenta ==')
   // O operador de caixa não movimenta estoque — pelo banco, não pela tela.
   const caixaMove = await rpcComo(
     CASHIER,
-    `select * from public.registrar_movimentacao(
+    `select * from public.registrar_movimentacao_local_v3(
        (select id from public.produtos where codigo = 'P008'),
-       1, 'fornecedor', 'estoque', 'tentativa do caixa')`,
+       1, 'fornecedor', 'estoque', 'tentativa do caixa', 'teste-caixa-movimento-36')`,
   )
   if (caixaMove.erro && /permiss/i.test(caixaMove.erro.message)) ok('caixa NÃO movimenta estoque')
   else podeFalhar('permissão do caixa para movimentar', caixaMove.erro?.message ?? 'a RPC deixou passar!')
 
+  await db.exec('begin')
   const gerenteMove = await rpcComo(
     MANAGER,
-    `select * from public.registrar_movimentacao(
+    `select * from public.registrar_movimentacao_local_v3(
        (select id from public.produtos where codigo = 'P008'),
-       2, 'fornecedor', 'estoque', 'Compra conferida pelo gerente')`,
+       2, 'fornecedor', 'estoque', 'Compra conferida pelo gerente', 'teste-gerente-movimento-36')`,
   )
   if (!gerenteMove.erro) ok('gerente movimenta estoque')
   else podeFalhar('movimento do gerente', gerenteMove.erro.message)
+  await db.exec('rollback')
 
   // Motivo em branco é recusado: movimento sem motivo não se audita.
   const semMotivo = await rpcComo(
     ADMIN,
-    `select * from public.registrar_movimentacao(
+    `select * from public.registrar_movimentacao_local_v3(
        (select id from public.produtos where codigo = 'P008'),
-       1, 'fornecedor', 'estoque', '   ')`,
+       1, 'fornecedor', 'estoque', '   ', 'teste-motivo-vazio-36')`,
   )
   if (semMotivo.erro && /motivo/i.test(semMotivo.erro.message)) ok('movimento sem motivo é recusado')
   else podeFalhar('motivo vazio', semMotivo.erro?.message ?? 'a RPC deixou passar!')
@@ -1561,9 +1798,9 @@ log('\n== P2 · Saldo não se edita: só se movimenta ==')
   // Origem igual ao destino não é movimento.
   const mesma = await rpcComo(
     ADMIN,
-    `select * from public.registrar_movimentacao(
+    `select * from public.registrar_movimentacao_local_v3(
        (select id from public.produtos where codigo = 'P008'),
-       1, 'estoque', 'estoque', 'teste')`,
+       1, 'estoque', 'estoque', 'teste', 'teste-origem-igual-36')`,
   )
   if (mesma.erro) ok('origem igual ao destino é recusada')
   else podeFalhar('origem = destino', 'a RPC deixou passar!')
@@ -1571,9 +1808,9 @@ log('\n== P2 · Saldo não se edita: só se movimenta ==')
   // 'abertura'/'contagem' não entram pela porta do dia a dia.
   const abertura = await rpcComo(
     ADMIN,
-    `select * from public.registrar_movimentacao(
+    `select * from public.registrar_movimentacao_local_v3(
        (select id from public.produtos where codigo = 'P008'),
-       1, 'abertura', 'estoque', 'tentativa de forjar abertura')`,
+       1, 'abertura', 'estoque', 'tentativa de forjar abertura', 'teste-abertura-36')`,
   )
   if (abertura.erro) ok('não dá para forjar um saldo de abertura pela movimentação comum')
   else podeFalhar('abertura pela RPC comum', 'a RPC deixou passar!')
@@ -2636,6 +2873,77 @@ log('\n== 35 · A view de títulos não esvazia com permissão financeira parcia
         `filiais visíveis ${filiaisVisiveis.n}, títulos visíveis ${titulosVisiveis.n}`,
     )
   }
+}
+
+log('\n== P3 · Idempotência de movimentos e saldos consolidados ==')
+{
+  await db.exec('begin')
+  const produto = `(select id from public.produtos where codigo = 'P008')`
+  const sql = `select * from public.registrar_movimentacao_local_v3(
+    ${produto}, 1, 'fornecedor', 'estoque', 'Entrada idempotente de teste',
+    'teste-movimento-principal-36'
+  )`
+  const primeiro = await rpcComoEmSavepoint(ADMIN, sql)
+  const repetido = await rpcComoEmSavepoint(ADMIN, sql)
+  const duplicados = await contar(`
+    select count(*)::int as n
+      from public.estoque_operacoes_idempotencia
+     where chave_idempotencia = 'teste-movimento-principal-36'
+  `)
+  const conflito = await rpcComoEmSavepoint(
+    ADMIN,
+    `select * from public.registrar_movimentacao_local_v3(
+      ${produto}, 2, 'fornecedor', 'estoque', 'Entrada idempotente de teste',
+      'teste-movimento-principal-36'
+    )`,
+  )
+
+  if (
+    !primeiro.erro &&
+    !repetido.erro &&
+    primeiro.linhas[0]?.id === repetido.linhas[0]?.id &&
+    Number(primeiro.linhas[0]?.saldo_principal) === Number(repetido.linhas[0]?.saldo_principal) &&
+    Number(primeiro.linhas[0]?.saldo_total) === Number(primeiro.linhas[0]?.saldo_principal)
+      + Number(primeiro.linhas[0]?.saldo_buffet) &&
+    duplicados === 1 &&
+    conflito.erro && /chave de idempotência/i.test(conflito.erro.message)
+  ) {
+    ok('reenvio reutiliza um único movimento, rejeita payload conflitante e separa Principal/total')
+  } else {
+    podeFalhar(
+      'movimento idempotente e saldos consolidados',
+      primeiro.erro?.message ??
+        repetido.erro?.message ??
+        conflito.erro?.message ??
+        `registros ${duplicados}, respostas ${JSON.stringify([primeiro.linhas[0], repetido.linhas[0]])}`,
+    )
+  }
+  await db.exec('rollback')
+}
+
+log('\n== Reversão conservadora da migração 37 ==')
+{
+  const arquivo = 'reverter_37_gerenciamento_filiais.sql'
+  await db.exec('begin')
+  let protegeuDados = false
+  try {
+    await db.exec(readFileSync(join(PASTA, arquivo), 'utf8'))
+  } catch (erro) {
+    protegeuDados = /dados cadastrais de filiais/i.test(erro.message)
+  } finally {
+    await db.exec('rollback').catch(() => {})
+  }
+
+  if (protegeuDados) ok('reversão recusa descartar dados cadastrais de filiais')
+  else podeFalhar('proteção da reversão 37', 'a reversão não preservou os dados cadastrados')
+
+  // Este banco é descartável e todos os registros são fixtures do validador;
+  // limpamos os campos novos somente para testar a reversão da cadeia antiga.
+  await db.exec(`
+    update public.filiais
+       set nome_fantasia = null, telefone = null, whatsapp = null,
+           email = null, responsavel = null
+  `)
 }
 
 log('\n== Reversão ==')

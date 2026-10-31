@@ -117,6 +117,8 @@ export function buffetPage() {
         saldos.get(produto.uuid ?? produto.id)?.buffet ?? 0
       const saldoLocal = (produto, local) =>
         saldos.get(produto.uuid ?? produto.id)?.[local] ?? 0
+      const saldoPrincipal = (produto) =>
+        saldoLocal(produto, 'loja') + saldoLocal(produto, 'geral')
 
       const itensElegiveis = () =>
         produtos.filter((produto) =>
@@ -222,20 +224,20 @@ export function buffetPage() {
             </div>
             <div class="table-wrap"><table class="table"><thead><tr><th>Indicador</th><th>Resultado</th></tr></thead>
               <tbody><tr><td>Produtos controlados com saldo no Buffet</td><td>${comSaldoBuffet.length}</td></tr>
-              <tr><td>Produtos autorizados para retorno ao Estoque Normal</td><td>${autorizadosRetorno.length}</td></tr></tbody></table></div>
+              <tr><td>Produtos autorizados para retorno ao Estoque Principal</td><td>${autorizadosRetorno.length}</td></tr></tbody></table></div>
             ${elegiveis.length ? `<div class="table-wrap"><table class="table">
-              <thead><tr><th>Produto</th><th>Unidade</th><th>Estoque da loja</th><th>Estoque geral</th><th>Buffet</th></tr></thead>
+              <thead><tr><th>Produto</th><th>Unidade</th><th>Estoque Principal</th><th>Buffet</th><th>Total consolidado</th></tr></thead>
               <tbody>${elegiveis.map((produto) => `<tr>
                 <td>${esc(produto.nome)}</td><td>${esc(produto.unidade)}</td>
-                <td>${formatNumero(saldoLocal(produto, 'loja'))}</td>
-                <td>${formatNumero(saldoLocal(produto, 'geral'))}</td>
-                <td>${formatNumero(saldoBuffet(produto))}</td></tr>`).join('')}</tbody>
+                <td>${formatNumero(saldoPrincipal(produto))}<span class="cell-sub">Loja ${formatNumero(saldoLocal(produto, 'loja'))} + Geral ${formatNumero(saldoLocal(produto, 'geral'))}</span></td>
+                <td>${formatNumero(saldoBuffet(produto))}</td>
+                <td>${formatNumero(saldoPrincipal(produto) + saldoBuffet(produto))}</td></tr>`).join('')}</tbody>
               </table></div>` : '<p class="muted">Cadastre produtos como Buffet ou insumos e habilite o controle de estoque para operar este local.</p>'}
             ${pode('estoque', 'criar') ? `
               <form data-form-operacao="abastecimento" class="buffet__form">
                 <label class="campo"><span class="campo__label">Produto a abastecer</span><select class="campo__input" name="produtoId" required>${disponiveisNormais.map((produto) => `
                   <option value="${esc(produto.uuid ?? produto.id)}">
-                    ${esc(produto.nome)} — loja ${formatNumero(saldoLocal(produto, 'loja'))} · geral ${formatNumero(saldoLocal(produto, 'geral'))} ${esc(produto.unidade)}
+                    ${esc(produto.nome)} — Principal ${formatNumero(saldoPrincipal(produto))} (loja ${formatNumero(saldoLocal(produto, 'loja'))} · geral ${formatNumero(saldoLocal(produto, 'geral'))}) ${esc(produto.unidade)}
                   </option>`).join('')}</select></label>
                 <label class="campo"><span class="campo__label">Origem</span><select class="campo__input" name="origem"><option value="estoque">Estoque da loja</option><option value="estoque_geral">Estoque geral</option></select></label>
                 <label class="campo"><span class="campo__label">Quantidade</span><input class="campo__input" name="quantidade" type="number" min="0.001" step="0.001" required /></label>
