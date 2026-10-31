@@ -388,6 +388,30 @@ svg {
   margin-left: auto;
 }
 
+.filial-atual {
+  display: grid;
+  gap: 2px;
+  min-width: 180px;
+  color: var(--texto-suave);
+  font-size: 11px;
+}
+
+.filial-atual select {
+  min-width: 180px;
+  max-width: 260px;
+  padding: 7px 28px 7px 10px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  background: var(--superficie);
+  color: var(--texto);
+  font: inherit;
+  font-size: 12px;
+}
+
+.filial-atual small {
+  min-height: 12px;
+}
+
 .topbar__menu {
   display: grid;
 }

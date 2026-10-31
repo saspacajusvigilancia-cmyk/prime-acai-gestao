@@ -36,7 +36,9 @@ vi.mock('../src/ui.js', () => ({
   toast: vi.fn(),
 }))
 vi.mock('../src/services/filiais.js', () => ({
+  gerenciarAcessoFilial: vi.fn(),
   gerenciarFilial: vi.fn(),
+  listarAcessosFiliais: vi.fn().mockResolvedValue([]),
   listarFiliais: vi.fn().mockResolvedValue({ dados: [], origem: 'neon' }),
 }))
 vi.mock('../src/pages/usuarios.js', () => ({
@@ -51,12 +53,19 @@ vi.mock('../src/pages/config-vendas.js', () => ({
 }))
 
 const { configuracoesPage } = await import('../src/pages/configuracoes.js')
-const { gerenciarFilial, listarFiliais } = await import('../src/services/filiais.js')
+const {
+  gerenciarAcessoFilial,
+  gerenciarFilial,
+  listarAcessosFiliais,
+  listarFiliais,
+} = await import('../src/services/filiais.js')
 const { confirmar } = await import('../src/formulario.js')
 
 beforeEach(() => {
   vi.clearAllMocks()
   listarFiliais.mockResolvedValue({ dados: [], origem: 'neon' })
+  listarAcessosFiliais.mockResolvedValue([])
+  gerenciarAcessoFilial.mockResolvedValue(undefined)
   gerenciarFilial.mockResolvedValue({})
   confirmar.mockResolvedValue(true)
 })
@@ -179,6 +188,43 @@ describe('navegação das configurações', () => {
     expect(confirmar).toHaveBeenCalledWith(expect.objectContaining({
       titulo: 'Desativar Loja Centro?',
     }))
+
+    desmontar()
+    document.body.innerHTML = ''
+  })
+
+  it('concede acesso a uma filial pela RPC autorizada', async () => {
+    listarFiliais.mockResolvedValue({
+      dados: [{ id: 'filial-2', numero: 2, nome: 'Loja Centro', tipo: 'filial', ativo: true }],
+      origem: 'neon',
+    })
+    listarAcessosFiliais.mockResolvedValue([
+      {
+        usuario_id: 'usuario-1',
+        nome_usuario: 'Pessoa de teste',
+        email: 'pessoa@teste.local',
+        filial_id: 'filial-2',
+        numero: 2,
+        nome_filial: 'Loja Centro',
+        ativo: false,
+      },
+    ])
+    document.body.innerHTML = '<div id="app"></div>'
+    const root = document.querySelector('#app')
+    const pagina = configuracoesPage()
+    root.innerHTML = pagina.html
+    const desmontar = pagina.mount(root)
+    root.querySelector('#btn-filiais').click()
+    await vi.waitFor(() => expect(root.querySelector('[data-acesso-usuario]')).not.toBeNull())
+    const acesso = root.querySelector('[data-acesso-usuario]')
+    acesso.checked = true
+    acesso.dispatchEvent(new Event('change', { bubbles: true }))
+
+    await vi.waitFor(() => expect(gerenciarAcessoFilial).toHaveBeenCalledWith(
+      'usuario-1',
+      'filial-2',
+      true,
+    ))
 
     desmontar()
     document.body.innerHTML = ''

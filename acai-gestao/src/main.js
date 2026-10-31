@@ -25,6 +25,7 @@ import { contarNaoLidas, listarNotificacoes, marcarLida, marcarTodasLidas } from
 import { estadoSessao, iniciais, logado } from 'login-projetos/sessao'
 import { initTheme } from './theme.js'
 import { dadosTesteHabilitados } from './demo-test-data.js'
+import { minhasFiliaisAutorizadas, selecionarFilial } from './services/filiais.js'
 
 const app = document.querySelector('#app')
 
@@ -278,6 +279,7 @@ function montarShellApp(raiz) {
   pintarUsuario()
   pintarMarca()
   pintarNomeEmpresa()
+  const limparSeletorFilial = instalarSeletorFilial(raiz)
 
   raiz.querySelector('#sidebar-open').addEventListener('click', alternarMenu)
   raiz.querySelector('#sidebar-close').addEventListener('click', fecharMenu)
@@ -421,12 +423,98 @@ function montarShellApp(raiz) {
   const intervalo = setInterval(atualizarBadge, 30000)
 
   limparShellApp = () => {
+    limparSeletorFilial()
     clearInterval(intervalo)
     document.removeEventListener('click', aoClicarFora)
     document.removeEventListener('keydown', aoTeclar)
     window.removeEventListener('logo-mudou', aoAtualizarEmpresa)
     window.removeEventListener('empresa-mudou', aoAtualizarEmpresa)
     window.removeEventListener('resize', aoRedimensionar)
+  }
+}
+
+function instalarSeletorFilial(raiz) {
+  const seletor = raiz.querySelector('#filial-atual')
+  const status = raiz.querySelector('#filial-atual-status')
+  if (!seletor || !status) return () => {}
+  const controle = seletor.closest('.filial-atual')
+
+  if (!neonConfigurado) {
+    if (controle) controle.hidden = true
+    return () => {}
+  }
+
+  let ativo = true
+  let filialAnterior = ''
+  let trocando = false
+
+  const aoSelecionar = async () => {
+    const filialId = seletor.value
+    if (!filialId || filialId === filialAnterior || trocando) return
+
+    trocando = true
+    seletor.disabled = true
+    status.textContent = 'Validando acesso...'
+    try {
+      await selecionarFilial(filialId)
+      window.location.reload()
+    } catch (erro) {
+      console.error('[filiais] Não foi possível atualizar o contexto operacional.', {
+        code: erro?.code ?? 'sem código',
+        name: erro?.name ?? 'Error',
+      })
+      seletor.value = filialAnterior
+      seletor.disabled = false
+      status.textContent = 'A filial não foi alterada.'
+      toast('Não foi possível selecionar essa filial. Verifique sua autorização e tente novamente.')
+    } finally {
+      trocando = false
+    }
+  }
+
+  seletor.addEventListener('change', aoSelecionar)
+
+  minhasFiliaisAutorizadas()
+    .then((filiais) => {
+      if (!ativo) return
+      seletor.replaceChildren()
+
+      if (!filiais.length) {
+        const opcao = document.createElement('option')
+        opcao.value = ''
+        opcao.textContent = 'Sem filial autorizada'
+        seletor.append(opcao)
+        seletor.disabled = true
+        status.textContent = 'Solicite acesso ao administrador.'
+        return
+      }
+
+      const atual = filiais.find((filial) => filial.atual)
+      filialAnterior = atual?.id ?? ''
+      for (const filial of filiais) {
+        const opcao = document.createElement('option')
+        opcao.value = filial.id
+        opcao.textContent = `LOJA ${String(filial.numero ?? '').padStart(2, '0')} — ${filial.nome_fantasia || filial.nome}`
+        opcao.selected = Boolean(filial.atual)
+        seletor.append(opcao)
+      }
+      seletor.disabled = filiais.length < 2 && Boolean(atual)
+      status.textContent = atual ? 'Unidade operacional' : 'Selecione sua unidade para continuar.'
+    })
+    .catch((erro) => {
+      if (!ativo) return
+      console.error('[filiais] Não foi possível carregar as filiais autorizadas.', {
+        code: erro?.code ?? 'sem código',
+        name: erro?.name ?? 'Error',
+      })
+      seletor.innerHTML = '<option value="">Falha ao carregar filiais</option>'
+      seletor.disabled = true
+      status.textContent = 'Atualize a página ou verifique a conexão.'
+    })
+
+  return () => {
+    ativo = false
+    seletor.removeEventListener('change', aoSelecionar)
   }
 }
 

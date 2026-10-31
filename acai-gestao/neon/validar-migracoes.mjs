@@ -40,6 +40,7 @@ const ADMIN = 'a0000000-0000-4000-8000-000000000001'
 const CASHIER = 'a0000000-0000-4000-8000-000000000002'
 const MANAGER = 'a0000000-0000-4000-8000-000000000003'
 const ADMIN2 = 'a0000000-0000-4000-8000-000000000004'
+const ADMIN_FILIAL2 = 'a0000000-0000-4000-8000-000000000005'
 
 let falhas = 0
 const log = (texto = '') => console.log(texto)
@@ -211,6 +212,7 @@ if (migracoes.length === 0) {
 }
 for (const arquivo of migracoes) await aplicar(arquivo)
 await aplicar('24_baixa_automatica_venda_direta.sql')
+await aplicar('38_isolamento_operacional_filiais.sql')
 
 // Passo manual do projeto (não casa com `NN_*.sql`, então o aplicar.mjs não o
 // pega): a versão de garantir_perfil() que lê e-mail e convite.
@@ -239,8 +241,43 @@ await db.exec(`
     ('${ADMIN}',   'Admin de Teste',   '${ORG}', 'admin'),
     ('${CASHIER}', 'Caixa de Teste',   '${ORG}', 'cashier'),
     ('${MANAGER}', 'Gerente de Teste', '${ORG}', 'manager');
-`)
+  insert into public.acessos_filiais (
+    organization_id, filial_id, usuario_id, ativo, concedido_por
+  )
+  select p.organization_id, f.id, p.id, true, '${ADMIN}'
+    from public.profiles p
+    join public.filiais f
+      on f.organization_id = p.organization_id
+     and f.codigo = 'MATRIZ'
+   where p.id in ('${ADMIN}', '${CASHIER}', '${MANAGER}');
+  update public.profiles p
+     set filial_id = f.id
+    from public.filiais f
+   where f.organization_id = p.organization_id
+     and f.codigo = 'MATRIZ'
+     and p.id in ('${ADMIN}', '${CASHIER}', '${MANAGER}');
+  `)
+try {
+   const diagnostico = readFileSync(join(PASTA, 'diagnostico_seguranca.sql'), 'utf8')
+   await db.exec(diagnostico)
+   ok('diagnóstico de segurança é somente leitura e executa na estrutura migrada')
+} catch (erro) {
+   podeFalhar('diagnóstico de segurança', erro.message)
+}
 await autenticar(ADMIN)
+{
+  const rpcProduto = await um(`
+    select p.prosecdef as security_definer,
+           p.prosrc like '%public.pode(''estoque'', ''criar'')%' as valida_permissao
+      from pg_proc p
+     where p.oid = 'public.salvar_produto_com_imagem(jsonb, text, bytea, boolean)'::regprocedure
+  `)
+  if (rpcProduto.security_definer && rpcProduto.valida_permissao) {
+    ok('RPC de produto valida a permissão no backend sem expor o saldo legado')
+  } else {
+    podeFalhar('segurança da RPC de produto', JSON.stringify(rpcProduto))
+  }
+}
 {
   const tipos = await contar(
     `select count(*)::int as n from public.tipos_venda where organization_id = '${ORG}'`,
@@ -575,8 +612,8 @@ log('\n== Fotos de produto: armazenamento binário e salvamento atômico ==')
       '{"codigo":"IMG-NEGADO","nome":"Sem permissão","categoria":"Teste","tipo_venda":"unidade"}'::jsonb,
       'image/png', decode('${assinaturaPng}', 'hex'), false)`,
   )
-  if (caixaImagem.erro && /row-level security/i.test(caixaImagem.erro.message)) {
-    ok('o caixa não cria produto/foto sem permissão (RLS aplicado à RPC)')
+  if (caixaImagem.erro && /permission|row-level security|permiss[aã]o/i.test(caixaImagem.erro.message)) {
+    ok('o caixa não cria produto/foto sem permissão (autorização validada pela RPC)')
   } else {
     podeFalhar('RLS da foto de produto', caixaImagem.erro?.message ?? 'a chamada passou')
   }
@@ -761,6 +798,14 @@ log('\n== Categorias de produtos: unicidade e isolamento por organização ==')
       ADMIN2,
       `select * from public.gerenciar_filial('criar', null, '{"nome":"Segunda unidade"}'::jsonb)`,
   )
+  await db.exec(`
+    insert into public.acessos_filiais (
+      organization_id, filial_id, usuario_id, ativo, concedido_por
+    ) values ('${ORG2}', '${filialNovaOrg.id}', '${ADMIN2}', true, '${ADMIN2}');
+    update public.profiles
+       set filial_id = '${filialNovaOrg.id}'
+     where id = '${ADMIN2}';
+  `)
   const acessoCruzado = await rpcComo(
       ADMIN,
       `select * from public.gerenciar_filial('editar', '${filialNovaOrg?.id}', '{"nome":"Acesso cruzado"}'::jsonb)`,
@@ -879,6 +924,19 @@ log('\n== RLS de clientes e financeiro + perfil inativo ==')
     podeFalhar('consulta financeira pelo caixa', caixaLeFinanceiro.erro?.message ?? `visíveis ${caixaLeFinanceiro.n}`)
   }
 
+  const caixaConsultaSaldo = await rpcComo(
+    CASHIER,
+    `select public.saldo_estoque((select id from public.produtos limit 1))`,
+  )
+  if (caixaConsultaSaldo.erro && /permission/i.test(caixaConsultaSaldo.erro.message)) {
+    ok('caixa não chama diretamente a função interna de saldo')
+  } else {
+    podeFalhar(
+      'RPC de saldo exposta ao caixa',
+      caixaConsultaSaldo.erro?.message ?? 'a chamada direta foi permitida',
+    )
+  }
+
   const caixaCriaLancamento = await escreveComo(
     CASHIER,
     `insert into public.lancamentos (descricao, categoria, tipo, valor)
@@ -977,6 +1035,196 @@ log('\n== 29 · Multi-organização: dados não atravessam a fronteira ==')
   }
 }
 
+log('\n== 38 · Isolamento entre filiais da mesma organização ==')
+{
+  const filialMatriz = await um(`
+    select id from public.filiais where organization_id = '${ORG}' and codigo = 'MATRIZ'
+  `)
+  const filial2 = await rpcComo(
+    ADMIN,
+    `select * from public.gerenciar_filial('criar', null, '{"nome":"Loja 02 de teste"}'::jsonb)`,
+  )
+  await db.exec(`
+    insert into neon_auth.user (id, email)
+    values ('${ADMIN_FILIAL2}', 'admin-filial2@teste.local');
+    insert into public.profiles (id, full_name, organization_id, role)
+    values ('${ADMIN_FILIAL2}', 'Admin exclusivo da Loja 02', '${ORG}', 'admin');
+  `)
+  if (!filial2.erro && filial2.linhas[0]?.id) {
+    const filialId2 = filial2.linhas[0].id
+    const acesso = await rpcComo(
+      ADMIN,
+      `select public.gerenciar_acesso_filial('${ADMIN_FILIAL2}', '${filialId2}', true)`,
+    )
+    const acessoNaoAutorizado = await rpcComo(
+      ADMIN_FILIAL2,
+      `select * from public.selecionar_filial('${filialMatriz.id}')`,
+    )
+    const selecaoAutorizada = await rpcComo(
+      ADMIN_FILIAL2,
+      `select * from public.selecionar_filial('${filialId2}')`,
+    )
+    const removerUltimoAcesso = await rpcComo(
+      ADMIN,
+      `select public.gerenciar_acesso_filial('${ADMIN_FILIAL2}', '${filialId2}', false)`,
+    )
+    const produtoFilial = await um(`
+      insert into public.produtos (
+        organization_id, codigo, nome, categoria, tipo_venda, unidade, preco,
+        controla_estoque, metodo_estoque
+      ) values (
+        '${ORG}', 'FILIAL-38-ISOLAMENTO', 'Produto de teste multifilial',
+        'Teste', 'unidade', 'un', 1, true, 'movimentacoes'
+      )
+      returning id
+    `)
+    const entradaMatriz = await rpcComo(
+      ADMIN,
+      `select * from public.registrar_movimentacao_local_v3(
+        '${produtoFilial.id}', 5, 'fornecedor', 'estoque',
+        'Abertura teste Loja 01', 'filial-38-matriz')`,
+    )
+    const entradaFilial2 = await rpcComo(
+      ADMIN_FILIAL2,
+      `select * from public.registrar_movimentacao_local_v3(
+        '${produtoFilial.id}', 3, 'fornecedor', 'estoque',
+        'Abertura teste Loja 02', 'filial-38-loja2')`,
+    )
+    const leituraMatrizPorFilial2 = await leComo(
+      ADMIN_FILIAL2,
+      `select count(*)::int as n from public.movimentacoes_estoque
+        where produto_id = '${produtoFilial.id}' and filial_id = '${filialMatriz.id}'`,
+    )
+    const leituraFilial2 = await leComo(
+      ADMIN_FILIAL2,
+      `select count(*)::int as n from public.movimentacoes_estoque
+        where produto_id = '${produtoFilial.id}' and filial_id = '${filialId2}'`,
+    )
+    const saldoFilial2 = await leComo(
+      ADMIN_FILIAL2,
+      `select coalesce(sum(saldo), 0) as saldo
+         from public.listar_saldos_estoque_por_local()
+        where produto_id = '${produtoFilial.id}' and local = 'loja'`,
+    )
+    const escritaCruzada = await escreveComo(
+      ADMIN_FILIAL2,
+      `insert into public.movimentacoes_estoque (
+         organization_id, filial_id, produto_id, quantidade, origem, destino, motivo
+       ) values (
+         '${ORG}', '${filialMatriz.id}', '${produtoFilial.id}', 1,
+         'fornecedor', 'estoque', 'tentativa de escrita cruzada'
+       )`,
+    )
+    await autenticar(ADMIN)
+    const tituloMatriz = await um(`
+      insert into public.titulos_financeiros (
+        organization_id, filial_id, tipo, origem_tipo, numero, descricao,
+        data_vencimento, valor_original
+      ) values (
+        '${ORG}', '${filialMatriz.id}', 'pagar', 'manual', 'FILIAL-38-MATRIZ',
+        'Título da matriz', current_date, 10
+      )
+      returning id
+    `)
+    await autenticar(ADMIN_FILIAL2)
+    const tituloDaFilial2 = await um(`
+      insert into public.titulos_financeiros (
+        organization_id, filial_id, tipo, origem_tipo, numero, descricao,
+        data_vencimento, valor_original
+      ) values (
+        '${ORG}', '${filialId2}', 'pagar', 'manual', 'FILIAL-38-LOJA2',
+        'Título da Loja 02', current_date, 20
+      )
+      returning id
+    `)
+    await autenticar(ADMIN)
+    const parcelaDaMatriz = await um(`
+      select id
+        from public.parcelas_financeiras
+       where titulo_id = '${tituloMatriz.id}'
+         and filial_id = '${filialMatriz.id}'
+       order by numero
+       limit 1
+    `)
+    const baixaCruzada = await rpcComo(
+      ADMIN_FILIAL2,
+      `select * from public.baixar_parcela_financeira(
+        '${parcelaDaMatriz.id}', 10, current_date, null,
+        'Tentativa de baixa cruzada', 'filial-38-baixa-cruzada'
+      )`,
+    )
+    const baixaCruzadaRecusada =
+      baixaCruzada.erro?.code === '42501' &&
+      /filial/i.test(baixaCruzada.erro.message)
+    const baixasCruzadas = await contar(`
+      select count(*)::int as n from public.baixas_financeiras
+       where parcela_id = '${parcelaDaMatriz.id}'
+    `)
+    const financeiroCruzado = await leComo(
+      ADMIN_FILIAL2,
+      `select count(*)::int as n from public.titulos_financeiros
+        where id = '${tituloMatriz.id}'`,
+    )
+    const financeiroDaFilial = await leComo(
+      ADMIN_FILIAL2,
+      `select count(*)::int as n from public.titulos_financeiros
+        where id = '${tituloDaFilial2.id}'`,
+    )
+    const relatorioCruzado = await leComo(
+      ADMIN_FILIAL2,
+      `select count(*)::int as n from public.vw_titulos_financeiros
+        where id = '${tituloMatriz.id}'`,
+    )
+    const atualizarFinanceiroCruzado = await escreveComo(
+      ADMIN_FILIAL2,
+      `update public.titulos_financeiros
+          set descricao = 'Tentativa de alteração cruzada'
+        where id = '${tituloMatriz.id}'`,
+    )
+    if (
+      !acesso.erro &&
+      acessoNaoAutorizado.erro &&
+      !selecaoAutorizada.erro &&
+      removerUltimoAcesso.erro &&
+      /administrador precisa manter acesso/i.test(removerUltimoAcesso.erro.message) &&
+      !entradaMatriz.erro &&
+      !entradaFilial2.erro &&
+      !leituraMatrizPorFilial2.erro &&
+      leituraMatrizPorFilial2.n === 0 &&
+      !leituraFilial2.erro &&
+      leituraFilial2.n === 1 &&
+      !saldoFilial2.erro &&
+      Number(saldoFilial2.saldo) === 3 &&
+      escritaCruzada.erro &&
+      !financeiroCruzado.erro &&
+      financeiroCruzado.n === 0 &&
+      !financeiroDaFilial.erro &&
+      financeiroDaFilial.n === 1 &&
+      !relatorioCruzado.erro &&
+      relatorioCruzado.n === 0 &&
+      (atualizarFinanceiroCruzado.erro ||
+        atualizarFinanceiroCruzado.afetados === 0) &&
+      baixaCruzadaRecusada &&
+      baixasCruzadas === 0
+    ) {
+      ok('estoque, financeiro e relatório ficam restritos à filial autorizada; troca e escrita cruzadas são recusadas')
+    } else {
+      podeFalhar(
+        'isolamento entre filiais',
+        JSON.stringify({
+          acesso, acessoNaoAutorizado, selecaoAutorizada, removerUltimoAcesso,
+          entradaMatriz, entradaFilial2, leituraMatrizPorFilial2,
+          leituraFilial2, saldoFilial2, escritaCruzada, financeiroCruzado,
+          financeiroDaFilial, relatorioCruzado, atualizarFinanceiroCruzado,
+          baixaCruzada, baixasCruzadas,
+        }),
+      )
+    }
+  } else {
+    podeFalhar('criação de filial para teste', filial2.erro?.message ?? 'a RPC não retornou filial')
+  }
+}
+
 log('\n== 32 · Códigos e idempotência por organização ==')
 {
   await devePassar(
@@ -992,14 +1240,21 @@ log('\n== 32 · Códigos e idempotência por organização ==')
     'duplicate key|unique',
   )
 
+  await autenticar(ADMIN)
   await devePassar(
-    'o mesmo código de venda e a mesma chave de idempotência podem existir em duas organizações',
+    'o mesmo código de venda e a mesma chave de idempotência podem existir na organização matriz',
     `insert into public.vendas
        (organization_id, codigo, status, pagamento, total, chave_idempotencia)
-     values
-       ('${ORG}',  '#32-IGUAL', 'Concluída', 'Pix', 0, 'chave-32-igual'),
-       ('${ORG2}', '#32-IGUAL', 'Concluída', 'Pix', 0, 'chave-32-igual')`,
+     values ('${ORG}', '#32-IGUAL', 'Concluída', 'Pix', 0, 'chave-32-igual')`,
   )
+  await autenticar(ADMIN2)
+  await devePassar(
+    'a mesma chave de idempotência também pode existir em outra organização autorizada',
+    `insert into public.vendas
+       (organization_id, codigo, status, pagamento, total, chave_idempotencia)
+     values ('${ORG2}', '#32-IGUAL', 'Concluída', 'Pix', 0, 'chave-32-igual')`,
+  )
+  await autenticar(ADMIN)
   await deveFalhar(
     'o mesmo código de venda na MESMA organização é recusado',
     `insert into public.vendas
@@ -1072,12 +1327,27 @@ log('\n== 32 · Códigos e idempotência por organização ==')
     podeFalhar('próximo pedido por organização', `${proximoLoja1} / ${proximoLoja2}`)
   }
 
-  // Limpa os registros deste bloco para não interferir nas contagens seguintes.
+  // Limpa cada venda no contexto de filial em que foi criada. A migration 38
+  // aplica o mesmo limite de filial a DELETEs diretos usados pela suíte.
+  await autenticar(ADMIN)
   await db.exec(`
     delete from public.vendas
-     where chave_idempotencia = 'chave-32-igual'
-        or chave_idempotencia = 'idem-32'
-        or codigo in ('#32-IGUAL', '#32-ORG1', '#32-ORG2');
+     where organization_id = '${ORG}'
+       and (
+         chave_idempotencia in ('chave-32-igual', 'idem-32')
+         or codigo in ('#32-IGUAL', '#32-ORG1', '#32-ORG2')
+       );
+  `)
+  await autenticar(ADMIN2)
+  await db.exec(`
+    delete from public.vendas
+     where organization_id = '${ORG2}'
+       and (
+         chave_idempotencia in ('chave-32-igual', 'idem-32')
+         or codigo in ('#32-IGUAL', '#32-ORG1', '#32-ORG2')
+       );
+  `)
+  await db.exec(`
     delete from public.produtos where codigo in ('IDEM-32-1', 'IDEM-32-2');
     delete from public.clientes where codigo = 'C-32-IGUAL';
   `)
@@ -1136,12 +1406,10 @@ log('\n== Segurança: RLS e privilégios diretos ==')
      order by c.relname
   `)).rows.map((r) => r.relname)
   const esperadas = [
+    'acessos_filiais',
     'audit_logs',
-    'estoque_operacoes_idempotencia',
-    'estoque_operacoes_locais_v2',
     'invite_permissions',
     'invites',
-    'recebimentos_compra_idempotencia',
     'user_permissions',
   ]
   if (JSON.stringify(semPolitica) === JSON.stringify(esperadas)) {
@@ -1193,12 +1461,21 @@ log('\n== Segurança: RLS e privilégios diretos ==')
 
 log('\n== P2 · Saldos iniciais: o que já existia entrou no livro ==')
 {
+  await autenticar(ADMIN)
   const divergentes = await contar(
     `select count(*)::int as n from public.produtos p
       where p.quantidade is distinct from public.saldo_estoque(p.id)`,
   )
-  if (divergentes === 0) ok('o saldo do cache bate com o livro-razão em TODOS os itens')
-  else podeFalhar('cache x livro-razão', `${divergentes} item(ns) divergindo`)
+  const cacheLegadoOculto = await um(`
+    select not has_column_privilege(
+      'authenticated', 'public.produtos', 'quantidade', 'select'
+    ) as oculto
+  `)
+  if (cacheLegadoOculto.oculto) {
+    ok(`cache global não é exposto como saldo de filial (${divergentes} divergência(s) legada(s) preservada(s))`)
+  } else {
+    podeFalhar('exposição do cache global', 'authenticated ainda pode ler produtos.quantidade')
+  }
 
   const aberturas = await contar(
     `select count(*)::int as n from public.movimentacoes_estoque
@@ -1214,8 +1491,12 @@ log('\n== P2 · Saldos iniciais: o que já existia entrou no livro ==')
 
 log('\n== P2 · Compra pela RPC (o caminho do navegador) ==')
 {
+  await autenticar(ADMIN)
   await db.exec('begin')
   const antes = await saldoDe('P008')
+  const cacheAntes = Number(
+    (await um(`select quantidade from public.produtos where codigo = 'P008'`)).quantidade,
+  )
   const r = await rpcComo(
     ADMIN,
     `select * from public.registrar_movimentacao_local_v3(
@@ -1230,8 +1511,8 @@ log('\n== P2 · Compra pela RPC (o caminho do navegador) ==')
   const doCache = Number(
     (await um(`select quantidade from public.produtos where codigo = 'P008'`)).quantidade,
   )
-  if (doCache === antes + 10) ok('o cache `produtos.quantidade` acompanhou o movimento')
-  else podeFalhar('cache após a compra', `cache ${doCache}, livro ${antes + 10}`)
+  if (doCache === cacheAntes) ok('o cache global legado não é alterado por movimentação de filial')
+  else podeFalhar('cache global após a compra', `cache ${doCache}, antes ${cacheAntes}`)
 
   const fornecedor = await um(`
     insert into public.fornecedores (organization_id, nome)
@@ -1331,6 +1612,7 @@ log('\n== P2 · Compra pela RPC (o caminho do navegador) ==')
 
 log('\n== P2 · Estoque geral e transferências ==')
 {
+  await autenticar(ADMIN)
   await db.exec('begin')
   const produto = `(select id from public.produtos where codigo = 'P008')`
   const lojaAntes = await saldoDe('P008')
@@ -1467,11 +1749,20 @@ log('\n== P2 · Estoque geral e transferências ==')
     )
   }
 
+  await autenticar(ADMIN)
+  const localPreparacao = await um(`
+    select id from public.estoque_locais
+     where organization_id = '${ORG}'
+       and filial_id = (select public.filial_ativa())
+       and codigo = 'preparacao'
+  `)
+  await db.exec(`update public.estoque_locais set ativo = false where id = '${localPreparacao.id}'`)
   const localFuturo = await rpcComoEmSavepoint(
     ADMIN,
     `select * from public.transferir_estoque_local_v2(
       ${produto}, 1, 'loja', 'preparacao', 'Teste local inativo', 'teste-local-inativo-25')`,
   )
+  await db.exec(`update public.estoque_locais set ativo = true where id = '${localPreparacao.id}'`)
   if (localFuturo.erro && /inativo/i.test(localFuturo.erro.message)) {
     ok('local futuro inativo não recebe movimentação')
   } else {
@@ -1733,9 +2024,13 @@ log('\n== P2 · Estoque geral e transferências ==')
 
 log('\n== P2 · Saldo não se edita: só se movimenta ==')
 {
+  await autenticar(ADMIN)
   // O caso perigoso: um UPDATE no produto (trocar o preço, por exemplo) não
   // pode zerar nem sobrescrever o saldo.
   const antes = await saldoDe('P008')
+  const cacheAntes = Number(
+    (await um(`select quantidade from public.produtos where codigo = 'P008'`)).quantidade,
+  )
   const escreveu = await escreveComo(
     ADMIN,
     `update public.produtos set preco = preco + 1, quantidade = 999 where codigo = 'P008'`,
@@ -1743,13 +2038,19 @@ log('\n== P2 · Saldo não se edita: só se movimenta ==')
   const depois = await saldoDe('P008')
   const cache = Number((await um(`select quantidade from public.produtos where codigo = 'P008'`)).quantidade)
 
-  if (!escreveu.erro && depois === antes && cache === antes) {
-    ok(`UPDATE pedindo 999 no saldo foi ignorado: continua ${antes} kg (livro manda)`)
+  if (!escreveu.erro && depois === antes && cache === cacheAntes) {
+    ok(`UPDATE não alterou o saldo da filial nem o cache legado (${antes} kg na filial)`)
   } else {
-    podeFalhar('saldo digitado à mão', `livro ${depois}, cache ${cache}, esperado ${antes}`)
+    podeFalhar('saldo digitado à mão', `livro ${depois}/${antes}, cache ${cache}/${cacheAntes}`)
   }
 
   // Saída maior que o saldo: recusada, e sem deixar saldo negativo.
+  await rpcComo(
+    ADMIN,
+    `select * from public.ajustar_saldo(
+       (select id from public.produtos where codigo = 'P010'),
+       2, 'Saldo inicial local para teste de insuficiência', 'abertura')`,
+  )
   const exagero = await rpcComo(
     ADMIN,
     `select * from public.registrar_movimentacao_local_v3(
@@ -1835,9 +2136,31 @@ log('\n== P2 · Livro-razão é imutável ==')
 
 log('\n== P2 · Nem o caixa lê o livro por outro caminho ==')
 {
+  const movimentoLocal = await rpcComo(
+    ADMIN,
+    `select * from public.registrar_movimentacao_local_v3(
+       (select id from public.produtos where codigo = 'P008'),
+       1, 'fornecedor', 'estoque', 'Movimento local de teste de leitura',
+       'teste-leitura-caixa-38')`,
+  )
   const caixaLe = await leComo(CASHIER, `select count(*)::int as n from public.movimentacoes_estoque`)
-  if (!caixaLe.erro && caixaLe.n > 0) ok(`caixa lê o histórico de estoque (${caixaLe.n} movimentos)`)
-  else podeFalhar('leitura do livro pelo caixa', caixaLe.erro?.message ?? JSON.stringify(caixaLe))
+  const movimentoVisivel = movimentoLocal.linhas[0]?.id
+    ? await leComo(
+        CASHIER,
+        `select count(*)::int as n from public.movimentacoes_estoque
+          where id = '${movimentoLocal.linhas[0].id}'`,
+      )
+    : null
+  if (!movimentoLocal.erro && !caixaLe.erro &&
+      !movimentoVisivel?.erro && movimentoVisivel?.n === 1) {
+    ok(`caixa lê movimentos da filial ativa (${caixaLe.n} movimentos)`)
+  } else {
+    podeFalhar(
+      'leitura do livro pelo caixa',
+      movimentoLocal.erro?.message ?? caixaLe.erro?.message ??
+        movimentoVisivel?.erro?.message ?? JSON.stringify({ caixaLe, movimentoLocal }),
+    )
+  }
 
   const caixaInsere = await escreveComo(
     CASHIER,
@@ -2111,6 +2434,10 @@ log('\n== P3 · Venda por peso: conta, movimentos e idempotência ==')
   }
 
   /* ------------------------------------------------ venda por unidade ---- */
+  await rpcComo(
+    ADMIN,
+    `select * from public.ajustar_saldo('${p001}', 50, 'Saldo inicial para venda por unidade', 'abertura')`,
+  )
   const r6 = await vender('p3-teste-5', [{ produto_id: p001, quantidade: 3 }])
   const v6 = r6.linhas[0] ?? {}
   const item6 = await um(`select * from public.itens_venda where venda_id = '${v6.id}'`)
@@ -2338,7 +2665,7 @@ log('\n== P3 · Venda direta: baixa única no Estoque Normal ==')
     ADMIN,
     `update public.produtos set organization_id = '${ORG2}' where id = '${agua.id}'`,
   )
-  if (trocarFilial.erro && /filial/i.test(trocarFilial.erro.message)) {
+  if (trocarFilial.erro && /filial|row-level security/i.test(trocarFilial.erro.message)) {
     ok('dados do cliente não podem transferir o produto para outra filial')
   } else {
     podeFalhar('proteção contra troca de filial', trocarFilial.erro?.message ?? `${trocarFilial.afetados} linhas alteradas`)
@@ -2677,8 +3004,16 @@ log('\n== P4 · Estorno: devolve o estoque e deixa o rastro ==')
   const cache = await um(
     `select quantidade, public.saldo_estoque(id) as do_livro from public.produtos where id = '${ss1}'`,
   )
-  if (Number(cache.quantidade) === Number(cache.do_livro)) ok('o cache do produto voltou a bater com o livro-razão')
-  else podeFalhar('cache x livro', JSON.stringify(cache))
+  const cachePrivado = await um(`
+    select not has_column_privilege(
+      'authenticated', 'public.produtos', 'quantidade', 'select'
+    ) as oculto
+  `)
+  if (Number(cache.quantidade) === 0 && Number(cache.do_livro) === 10 && cachePrivado.oculto) {
+    ok('cache legado fica congelado e oculto; saldo operacional vem do livro da filial')
+  } else {
+    podeFalhar('saldo global legado', JSON.stringify({ cache, cachePrivado }))
+  }
 
   const vendaDepois = await um(
     `select status, estornada_em, estornada_por from public.vendas where id = '${venda.id}'`,

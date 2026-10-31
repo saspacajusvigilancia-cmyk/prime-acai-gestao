@@ -43,7 +43,12 @@ import {
 } from '../services/empresa.js'
 import { esc, toast } from '../ui.js'
 import { pode } from '../services/permissoes.js'
-import { gerenciarFilial, listarFiliais } from '../services/filiais.js'
+import {
+  gerenciarAcessoFilial,
+  gerenciarFilial,
+  listarAcessosFiliais,
+  listarFiliais,
+} from '../services/filiais.js'
 import { permissoesPage } from './permissoes.js'
 import { usuariosPage } from './usuarios.js'
 import { configProdutosPage, configVendasPage } from './config-vendas.js'
@@ -318,6 +323,22 @@ function painelFiliaisHtml(podeEditar) {
         </header>
         <div id="filiais-lista" aria-live="polite"></div>
       </section>
+      ${
+        podeEditar
+          ? `
+            <section class="config-filiais__acessos" aria-labelledby="filiais-acessos-titulo">
+              <header class="config-filiais__lista-head">
+                <div>
+                  <h3 id="filiais-acessos-titulo">Acessos por filial</h3>
+                  <p>Marque somente as unidades que cada pessoa está autorizada a acessar.</p>
+                </div>
+              </header>
+              <p class="config-filiais__feedback" id="filiais-acessos-feedback" role="status" aria-live="polite" hidden></p>
+              <div id="filiais-acessos-lista" aria-live="polite"></div>
+            </section>
+          `
+          : ''
+      }
     </div>
   `
 }
@@ -325,6 +346,8 @@ function painelFiliaisHtml(podeEditar) {
 function iniciarPainelFiliais(root, podeEditar) {
   const form = root.querySelector('#filial-form')
   const lista = root.querySelector('#filiais-lista')
+  const acessosLista = root.querySelector('#filiais-acessos-lista')
+  const acessosFeedback = root.querySelector('#filiais-acessos-feedback')
   const aviso = root.querySelector('#filiais-aviso')
   const feedback = root.querySelector('#filiais-feedback')
   const titulo = root.querySelector('#filial-form-titulo')
@@ -332,10 +355,13 @@ function iniciarPainelFiliais(root, podeEditar) {
   const botaoCancelar = root.querySelector('#filial-cancelar')
   const podeGravar = podeEditar && neonConfigurado
   let filiais = []
+  let acessos = []
   let filialEditada = null
   let salvando = false
+  let salvandoAcesso = false
   let vivo = true
   let consulta = 0
+  let consultaAcessos = 0
 
   function mostrarFeedback(texto, tipo = 'erro') {
     feedback.textContent = texto
@@ -407,6 +433,117 @@ function iniciarPainelFiliais(root, podeEditar) {
     renderIcons(lista)
   }
 
+  function mostrarFeedbackAcessos(texto, tipo = 'erro') {
+    if (!acessosFeedback) return
+    acessosFeedback.textContent = texto
+    acessosFeedback.classList.toggle('config-filiais__feedback--erro', tipo === 'erro')
+    acessosFeedback.hidden = !texto
+  }
+
+  function renderizarAcessos() {
+    if (!acessosLista) return
+    if (!acessos.length) {
+      acessosLista.innerHTML = '<div class="card config-filiais__vazio">Nenhum usuário ou filial foi encontrado.</div>'
+      return
+    }
+
+    const usuarios = new Map()
+    for (const acesso of acessos) {
+      if (!usuarios.has(acesso.usuario_id)) {
+        usuarios.set(acesso.usuario_id, { nome: acesso.nome_usuario, email: acesso.email, acessos: [] })
+      }
+      usuarios.get(acesso.usuario_id).acessos.push(acesso)
+    }
+
+    acessosLista.innerHTML = [...usuarios.entries()]
+      .map(([usuarioId, usuario]) => `
+        <article class="card config-filiais__acesso-usuario">
+          <div class="config-filiais__acesso-identidade">
+            <h4>${esc(usuario.nome || 'Usuário sem nome')}</h4>
+            ${usuario.email ? `<p>${esc(usuario.email)}</p>` : ''}
+          </div>
+          <div class="config-filiais__acesso-opcoes">
+            ${usuario.acessos.map((acesso) => {
+              const filial = filiais.find((item) => item.id === acesso.filial_id)
+              const numero = String(acesso.numero ?? '').padStart(2, '0')
+              const inativa = !filial?.ativo
+              return `
+                <label class="config-filiais__acesso-opcao${inativa ? ' is-inativa' : ''}">
+                  <input
+                    type="checkbox"
+                    data-acesso-usuario="${esc(usuarioId)}"
+                    data-acesso-filial="${esc(acesso.filial_id)}"
+                    ${acesso.ativo ? 'checked' : ''}
+                    ${!podeGravar || inativa || salvandoAcesso ? 'disabled' : ''}
+                  />
+                  <span>
+                    <strong>LOJA ${esc(numero)} — ${esc(acesso.nome_filial)}</strong>
+                    ${inativa ? '<small>Filial inativa</small>' : ''}
+                  </span>
+                </label>
+              `
+            }).join('')}
+          </div>
+        </article>
+      `)
+      .join('')
+  }
+
+  async function carregarAcessos() {
+    if (!acessosLista) return
+    const idConsulta = ++consultaAcessos
+    if (!neonConfigurado || !podeEditar) {
+      acessosLista.innerHTML = '<div class="card config-filiais__vazio">Conecte-se ao banco com permissão administrativa para carregar os acessos.</div>'
+      return
+    }
+
+    acessosLista.innerHTML = '<div class="card config-filiais__vazio" role="status">Carregando acessos...</div>'
+    mostrarFeedbackAcessos('')
+    try {
+      const resultado = await listarAcessosFiliais()
+      if (!vivo || idConsulta !== consultaAcessos) return
+      acessos = resultado
+      renderizarAcessos()
+    } catch (erro) {
+      if (!vivo || idConsulta !== consultaAcessos) return
+      console.error('[configuracoes] Falha ao carregar acessos por filial.', {
+        code: erro?.code ?? 'sem código',
+        name: erro?.name ?? 'Error',
+      })
+      acessosLista.innerHTML = ''
+      mostrarFeedbackAcessos('Não foi possível carregar os acessos. Verifique sua permissão e a conexão.')
+    }
+  }
+
+  async function alterarAcesso(evento) {
+    const controle = evento.target.closest('[data-acesso-usuario][data-acesso-filial]')
+    if (!controle || salvandoAcesso || !podeGravar) return
+
+    const usuarioId = controle.dataset.acessoUsuario
+    const filialId = controle.dataset.acessoFilial
+    const ativo = controle.checked
+    salvandoAcesso = true
+    mostrarFeedbackAcessos('')
+    renderizarAcessos()
+    try {
+      await gerenciarAcessoFilial(usuarioId, filialId, ativo)
+      await carregarAcessos()
+      toast(ativo ? 'Acesso à filial concedido.' : 'Acesso à filial removido.')
+    } catch (erro) {
+      console.error('[configuracoes] Falha ao alterar acesso por filial.', {
+        code: erro?.code ?? 'sem código',
+        name: erro?.name ?? 'Error',
+      })
+      mostrarFeedbackAcessos(
+        'Não foi possível alterar o acesso. O banco manteve as permissões anteriores.',
+      )
+      await carregarAcessos()
+    } finally {
+      salvandoAcesso = false
+      renderizarAcessos()
+    }
+  }
+
   function limparFormulario() {
     filialEditada = null
     form.reset()
@@ -438,6 +575,7 @@ function iniciarPainelFiliais(root, podeEditar) {
       if (!vivo || idConsulta !== consulta) return
       filiais = resultado.origem === 'neon' ? resultado.dados ?? [] : []
       renderizarLista()
+      await carregarAcessos()
     } catch (erro) {
       if (!vivo || idConsulta !== consulta) return
       console.error('[configuracoes] Falha ao carregar filiais.', {
@@ -561,6 +699,7 @@ function iniciarPainelFiliais(root, podeEditar) {
   form.addEventListener('submit', salvar)
   botaoCancelar.addEventListener('click', aoCancelar)
   lista.addEventListener('click', acionarLista)
+  acessosLista?.addEventListener('change', alterarAcesso)
   root.recarregarFiliais = carregarLista
   mostrarAviso()
   if (!podeGravar) {
@@ -573,9 +712,11 @@ function iniciarPainelFiliais(root, podeEditar) {
   return () => {
     vivo = false
     consulta += 1
+    consultaAcessos += 1
     form.removeEventListener('submit', salvar)
     botaoCancelar.removeEventListener('click', aoCancelar)
     lista.removeEventListener('click', acionarLista)
+    acessosLista?.removeEventListener('change', alterarAcesso)
     delete root.recarregarFiliais
   }
 }

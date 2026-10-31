@@ -43,6 +43,7 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `35_corrige_vw_titulos_financeiros_join.sql` | Troca o `JOIN` INNER por LEFT em `filiais` na view `vw_titulos_financeiros`, para que um usuário com `financeiro.consultar` sem `configuracoes.ver` não veja a lista "Contas a receber e a pagar" vazia; idempotente |
 | `36_integridade_estoque_principal_buffet.sql` | Estoque Principal = Loja + Geral e Buffet separado; bloqueia recebimento fornecedor → Buffet e transferências acima do saldo; adiciona chaves de idempotência para movimentos/recebimentos, fecha as RPCs antigas sem chave e corrige valor/alerta no `vw_resumo`; aditiva, mantém o ledger |
 | `37_gerenciamento_filiais.sql` | Numeração sequencial e dados de contato das filiais; cria a matriz de novas organizações; cadastro/edição/ativação/definição de matriz por RPC com `configuracoes.editar`; bloqueia escrita direta e exclusão física |
+| `38_isolamento_operacional_filiais.sql` | **Em validação local; não aplicar em produção.** Contexto persistente por filial, acessos explícitos, RLS restritiva, validação de operações protegendo também RPCs `SECURITY DEFINER`, saldos de estoque separados (sem RPC interna de saldo exposta ao navegador) e Buffet com escopo de filial; não atribui históricos ambíguos |
 | `reverter_33_…` / `reverter_34_…` / `reverter_35_…` | A reverter 33 remove as tabelas/colunas/triggers/views que a 33 criou, preservando as tabelas antigas e os dados; a reverter 34 remove apenas a função de demonstração; a reverter 35 restaura o JOIN INNER da view de títulos |
 | `reverter_36_integridade_estoque_principal_buffet.sql` | Remove RPCs/triggers da 36, restaura permissões e `vw_resumo`, e preserva as chaves idempotentes já gravadas |
 | `reverter_37_gerenciamento_filiais.sql` | Remove a extensão da 37 somente quando os novos dados de contato estão vazios; aborta para não descartar dados cadastrados |
@@ -62,6 +63,34 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `testar-demonstracao.mjs` | Aplica a cadeia inteira em PGlite e testa as travas, a carga, a idempotência e as regras de consistência da demonstração (`npm run testar:demonstracao`) |
 | `carregar-demonstracao.mjs` | Carrega a demonstração numa branch **descartável** já migrada; exige `DEMO_DATABASE_URL`, `DEMO_CONFIRMAR=SIM`, zero vendas/compras e recusa o host de produção (`npm run carregar:demonstracao`) |
 | `zerar-operacional.mjs` | Zera as tabelas operacionais de uma branch **descartável**, com lista explícita, backup declarado e host de produção recusado (`npm run zerar:operacional`) |
+
+### Estado e segurança da migration 38
+
+A migration 38 está em desenvolvimento. Ela não foi aplicada no Neon, não teve
+deploy, e ainda não possui uma reversão automática segura. **Não a aplique em
+produção** antes de revisão, aprovação, backup recuperável e validação em uma
+branch de homologação.
+
+Ela não preenche `filial_id` em movimentos ou perfis históricos sem prova
+documental. O diagnóstico de produção informado na auditoria anterior encontrou
+29 movimentos sem filial (2 comprováveis pela venda e 27 ambíguos) e 4 perfis
+sem filial. Os 27 movimentos e os perfis sem origem permanecem pendentes; não
+há classificação automática. Os registros sem filial ficam fora do contexto
+operacional protegido, e os saldos legados não podem ser tratados como saldo
+de uma loja.
+
+A suíte PGlite valida criação e troca de contexto, negação de filial não
+autorizada, leitura e escrita de estoque entre duas filiais da mesma
+organização, transferência local e operações idempotentes. A execução completa
+do harness também tenta reverter migrações antigas depois de inserir dados de
+teste; hoje essa etapa retorna falhas de dependências/guardas de reversão
+legadas. Isso não comprova uma reversão da 38. Consulte
+[`docs/MULTIFILIAL.md`](../docs/MULTIFILIAL.md) para os resultados e pendências.
+
+Até existir uma estratégia de reversão aprovada, a abordagem segura é não
+aplicar a migration. Depois de haver operações por filial, qualquer correção
+deve ser aditiva e forward-only; não remova colunas, políticas, acessos ou
+movimentos para “voltar” ao modelo anterior.
 
 ### Erro de função não encontrada ao receber compra
 

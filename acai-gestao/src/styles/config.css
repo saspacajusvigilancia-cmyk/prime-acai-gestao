@@ -584,6 +584,71 @@
   display: none;
 }
 
+.config-filiais__acesso-usuario {
+  display: grid;
+  grid-template-columns: minmax(180px, 0.7fr) minmax(0, 1.3fr);
+  gap: 18px;
+  padding: 16px 18px;
+}
+
+.config-filiais__acesso-identidade h4 {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.config-filiais__acesso-identidade p {
+  margin-top: 4px;
+  color: var(--texto-suave);
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.config-filiais__acesso-opcoes {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 8px;
+}
+
+.config-filiais__acesso-opcao {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 10px 12px;
+  border: 1px solid var(--borda);
+  border-radius: 9px;
+  background: var(--superficie-2);
+  cursor: pointer;
+}
+
+.config-filiais__acesso-opcao input {
+  width: 16px;
+  height: 16px;
+  margin: 1px 0 0;
+  accent-color: var(--primaria);
+}
+
+.config-filiais__acesso-opcao span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.config-filiais__acesso-opcao strong {
+  font-size: 11px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.config-filiais__acesso-opcao small {
+  color: var(--texto-fraco);
+  font-size: 11px;
+}
+
+.config-filiais__acesso-opcao.is-inativa {
+  opacity: 0.65;
+  cursor: not-allowed;
+}
+
 /* ---------- Responsivo ---------- */
 
 @media (max-width: 900px) {
@@ -680,6 +745,10 @@
 
   .config-filiais__item-acoes {
     justify-content: flex-start;
+  }
+
+  .config-filiais__acesso-usuario {
+    grid-template-columns: 1fr;
   }
 
   .logo {

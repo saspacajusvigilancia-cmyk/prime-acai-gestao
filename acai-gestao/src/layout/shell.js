@@ -86,6 +86,14 @@ export function renderShell(
               <span id="status-dados-texto">Verificando…</span>
             </span>
 
+            <label class="filial-atual" for="filial-atual">
+              <span>Unidade</span>
+              <select id="filial-atual" aria-label="Filial operacional" disabled>
+                <option value="">Carregando filiais...</option>
+              </select>
+              <small id="filial-atual-status" role="status" aria-live="polite"></small>
+            </label>
+
             <label class="search" for="busca-global">
               <i data-lucide="search"></i>
               <input

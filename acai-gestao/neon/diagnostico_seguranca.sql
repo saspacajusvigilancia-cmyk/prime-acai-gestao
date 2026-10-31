@@ -208,8 +208,9 @@ select
        left join public.vendas v on v.id = m.venda_id
       where m.filial_id is null;
 
-     -- 13. Políticas de tabelas operacionais que ainda não filtram por filial.
-     --     A lista deve ser zero antes de habilitar o seletor operacional.
+     -- 13. Políticas existentes que não mencionam filial. Depois da migration
+     --     38, interprete-as junto com a política restritiva
+     --     isolamento_filial_ativo; esta consulta sozinha nao prova isolamento.
      select tablename, policyname, cmd
        from pg_policies
       where schemaname = 'public'
@@ -223,3 +224,128 @@ select
         and coalesce(qual, '') !~* 'filial_id'
         and coalesce(with_check, '') !~* 'filial_id'
       order by tablename, policyname;
+
+     -- 14. Inventario individual dos movimentos historicos ainda sem filial.
+     --     Classificacao e apenas evidencia: nenhuma linha e atualizada.
+     select m.id as movimentacao_id,
+            m.criado_em,
+            m.organization_id,
+            m.produto_id,
+            p.nome as produto,
+            m.quantidade,
+            m.origem,
+            m.destino,
+            m.motivo,
+            m.venda_id,
+            v.codigo as venda_codigo,
+            v.filial_id as venda_filial_id,
+            fv.nome as venda_filial,
+            m.item_venda_id,
+            m.compra_id,
+            c.filial_id as compra_filial_id,
+            fc.nome as compra_filial,
+            m.compra_item_id,
+            m.recebimento_compra_id,
+            m.recebimento_item_id,
+            m.documento_tipo,
+            m.documento_id,
+            case
+              when v.id is not null and v.organization_id = m.organization_id
+                   and v.filial_id is not null
+                then 'EVIDENCIA_PELA_VENDA; requer aprovacao administrativa'
+              when c.id is not null and c.organization_id = m.organization_id
+                   and c.filial_id is not null
+                then 'EVIDENCIA_PELA_COMPRA; requer aprovacao administrativa'
+              else 'SEM_VINCULO_DOCUMENTAL_COM_FILIAL; manter sem atribuicao'
+            end as classificacao_provisoria
+       from public.movimentacoes_estoque m
+       join public.produtos p on p.id = m.produto_id
+       left join public.vendas v
+         on v.id = m.venda_id
+        and v.organization_id = m.organization_id
+       left join public.filiais fv
+         on fv.id = v.filial_id
+        and fv.organization_id = v.organization_id
+       left join public.compras c
+         on c.id = m.compra_id
+        and c.organization_id = m.organization_id
+       left join public.filiais fc
+         on fc.id = c.filial_id
+        and fc.organization_id = c.organization_id
+      where m.filial_id is null
+      order by m.criado_em, m.id;
+
+     -- 15. Perfis e filiacao atual. A filial do perfil e o contexto selecionado;
+     --     a lista de acessos explicitos passa a existir na migration 38.
+     --     Nao atribua filial por papel, organizacao ou e-mail.
+     select p.id as usuario_id,
+            p.full_name,
+            p.email,
+            p.role,
+            p.is_active,
+            p.organization_id,
+            o.nome as organizacao,
+            p.filial_id,
+            f.nome as filial_atual
+       from public.profiles p
+       left join public.organizations o on o.id = p.organization_id
+       left join public.filiais f
+         on f.id = p.filial_id
+        and f.organization_id = p.organization_id
+      order by o.nome, p.full_name, p.id;
+
+     -- 16. Inventario de funcoes SECURITY DEFINER. E necessario revisar a
+     --     definicao completa de cada funcao antes de liberar o isolamento.
+     select n.nspname as esquema,
+            p.proname as funcao,
+            pg_get_function_identity_arguments(p.oid) as argumentos,
+            pg_get_userbyid(p.proowner) as proprietario,
+            coalesce((
+              select regexp_replace(config, '^search_path=', '')
+                from unnest(p.proconfig) as config
+               where config like 'search_path=%'
+               limit 1
+            ), '(padrao do banco)') as search_path,
+            has_function_privilege('authenticated', p.oid, 'EXECUTE')
+              as authenticated_pode_executar,
+            exists (
+              select 1
+                from aclexplode(coalesce(p.proacl, acldefault('f', p.proowner))) acl
+               where acl.grantee = 0
+                 and acl.privilege_type = 'EXECUTE'
+            ) as public_pode_executar,
+            p.prosrc ilike '%filial_id%' as menciona_filial,
+            p.prosrc ilike '%minha_organizacao%' as menciona_organizacao,
+            p.prosrc ilike '%public.pode(%' as menciona_permissao
+       from pg_proc p
+       join pg_namespace n on n.oid = p.pronamespace
+      where n.nspname = 'public'
+        and p.prokind = 'f'
+        and p.prosecdef
+      order by p.proname, pg_get_function_identity_arguments(p.oid);
+
+     -- 17. Politica restritiva por filial instalada nas tabelas que possuem
+     --     filial_id. Resultado diferente de zero precisa de revisao antes
+     --     de habilitar operacao multifilial.
+     select c.relname as tabela_sem_isolamento_restritivo
+       from pg_class c
+       join pg_namespace n on n.oid = c.relnamespace
+       join pg_attribute a
+         on a.attrelid = c.oid
+        and a.attname = 'filial_id'
+        and not a.attisdropped
+      where n.nspname = 'public'
+        and c.relkind = 'r'
+        and c.relrowsecurity
+        and c.relname not in ('profiles', 'acessos_filiais')
+        and not exists (
+          select 1
+            from pg_policies pol
+           where pol.schemaname = 'public'
+             and pol.tablename = c.relname
+             and pol.permissive = 'RESTRICTIVE'
+             and pol.policyname = 'isolamento_filial_ativo'
+             and coalesce(pol.qual, '') ilike '%filial_ativa%'
+             and coalesce(pol.with_check, '') ilike '%filial_ativa%'
+        )
+      order by c.relname;

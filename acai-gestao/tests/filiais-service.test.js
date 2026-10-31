@@ -7,7 +7,14 @@ vi.mock('../src/services/base.js', () => ({
 }))
 
 const base = await import('../src/services/base.js')
-const { gerenciarFilial, listarFiliais } = await import('../src/services/filiais.js')
+const {
+  gerenciarAcessoFilial,
+  gerenciarFilial,
+  listarAcessosFiliais,
+  listarFiliais,
+  minhasFiliaisAutorizadas,
+  selecionarFilial,
+} = await import('../src/services/filiais.js')
 
 beforeEach(() => {
   vi.clearAllMocks()
@@ -54,5 +61,37 @@ describe('serviço de filiais', () => {
       expect.objectContaining({ code: '42501', operacao: 'criar' }),
     )
     consoleErro.mockRestore()
+  })
+
+  it('consulta somente filiais explicitamente autorizadas pelo banco', async () => {
+    const filiais = [{ id: 'f1', atual: true }, { id: 'f2', atual: false }]
+    base.neon.rpc.mockResolvedValue({ data: filiais, error: null })
+
+    await expect(minhasFiliaisAutorizadas()).resolves.toEqual(filiais)
+    expect(base.neon.rpc).toHaveBeenCalledWith('minhas_filiais_autorizadas')
+  })
+
+  it('troca a filial somente pela RPC que valida a permissão no servidor', async () => {
+    const filial = { id: 'f2', numero: 2 }
+    base.neon.rpc.mockResolvedValue({ data: filial, error: null })
+
+    await expect(selecionarFilial('f2')).resolves.toEqual(filial)
+    expect(base.neon.rpc).toHaveBeenCalledWith('selecionar_filial', {
+      p_filial_id: 'f2',
+    })
+  })
+
+  it('lista a matriz de acessos e delega a concessão para a RPC auditável', async () => {
+    const acessos = [{ usuario_id: 'u1', filial_id: 'f1', ativo: true }]
+    base.neon.rpc.mockResolvedValue({ data: acessos, error: null })
+
+    await expect(listarAcessosFiliais()).resolves.toEqual(acessos)
+    await gerenciarAcessoFilial('u1', 'f2', true)
+    expect(base.neon.rpc).toHaveBeenNthCalledWith(1, 'listar_acessos_filiais')
+    expect(base.neon.rpc).toHaveBeenNthCalledWith(2, 'gerenciar_acesso_filial', {
+      p_usuario_id: 'u1',
+      p_filial_id: 'f2',
+      p_ativo: true,
+    })
   })
 })

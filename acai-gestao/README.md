@@ -390,6 +390,13 @@ npm run validar:migracoes # a cadeia de migrações num Postgres em memória
 npm run testar:demonstracao # carga DEMO, travas, idempotência e consistência em PGlite
 ```
 
+O trabalho multifilial atual está documentado em
+[`docs/MULTIFILIAL.md`](../docs/MULTIFILIAL.md). A migration 38 ainda é local e
+não deve ser aplicada à produção: o isolamento precisa passar pela auditoria
+completa de RPCs e pela classificação administrativa dos históricos sem filial.
+Transferências entre filiais e o rollback seguro da migration 38 também continuam
+pendentes; não publique esta versão como SaaS multifilial completo.
+
 O pacote compartilhado tem a própria suíte (Node, sem dependências externas):
 
 ```bash
