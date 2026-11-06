@@ -5,11 +5,44 @@ export { neon, neonConfigurado }
 export const EVENTOS_DADOS = {
   carregamentoFalhou: 'dados-carregamento-falhou',
   carregamentoConcluido: 'dados-carregados',
+  operacaoFalhou: 'dados-operacao-falhou',
+  operacaoConcluida: 'dados-operacao-concluida',
 }
 
-function emitirEventoDados(tipo, nome) {
+function emitirEventoDados(tipo, nome, categoria = null) {
   if (typeof window === 'undefined') return
-  window.dispatchEvent(new CustomEvent(tipo, { detail: { nome } }))
+  const detail = categoria ? { nome, categoria } : { nome }
+  window.dispatchEvent(new CustomEvent(tipo, { detail }))
+}
+
+export function classificarErroNeon(erro) {
+  const status = Number(erro?.status ?? erro?.statusCode)
+  const codigo = String(erro?.code ?? '').toUpperCase()
+  const mensagem = String(erro?.message ?? erro ?? '').toLowerCase()
+
+  if (
+    status === 401 ||
+    ['PGRST301', '28000', '28P01'].includes(codigo) ||
+    /jwt|token expir|invalid token|invalid origin|invalid grant|unauthori[sz]ed|not authenticated|não autenticad/.test(mensagem)
+  ) {
+    return 'autenticacao'
+  }
+  if (
+    status === 403 ||
+    codigo === '42501' ||
+    /permission denied|sem permiss[aã]o|acesso negado/.test(mensagem)
+  ) {
+    return 'permissao'
+  }
+  if (
+    erro?.name === 'TypeError' ||
+    status === 0 ||
+    status >= 500 ||
+    /failed to fetch|network|connection|conex[aã]o.*indispon[ií]vel|timeout|timed out|tempo limite|fetch failed/.test(mensagem)
+  ) {
+    return 'indisponivel'
+  }
+  return 'consulta'
 }
 
 /**
@@ -21,12 +54,16 @@ function emitirEventoDados(tipo, nome) {
  */
 const TEMPO_LIMITE_MS = 20_000
 
-function comTempoLimite(promessa, nome) {
+function comTempoLimite(promessa, nome, { escrita = false } = {}) {
   let temporizador
   const limite = new Promise((_, rejeitar) => {
     temporizador = setTimeout(() => {
       rejeitar(
-        new Error(`Tempo limite ao falar com o banco de dados ("${nome}"). Verifique a conexão e tente novamente.`),
+        new Error(
+          escrita
+            ? `Tempo limite ao confirmar "${nome}". O resultado não foi confirmado; verifique o registro antes de tentar novamente.`
+            : `Tempo limite ao falar com o banco de dados ("${nome}"). Verifique a conexão e tente novamente.`,
+        ),
       )
     }, TEMPO_LIMITE_MS)
   })
@@ -52,8 +89,24 @@ export async function carregar({ nome, consulta, exemplo }) {
     return { dados, origem: 'neon' }
   } catch (erro) {
     console.error(`[neon] Falha ao carregar "${nome}".`, erro)
-    emitirEventoDados(EVENTOS_DADOS.carregamentoFalhou, nome)
+    emitirEventoDados(EVENTOS_DADOS.carregamentoFalhou, nome, classificarErroNeon(erro))
     throw erro
+  }
+}
+
+export async function verificarConexaoNeon() {
+  if (!neonConfigurado) return { status: 'nao-configurado' }
+
+  try {
+    const { error } = await comTempoLimite(
+      neon.from('profiles').select('id').limit(1),
+      'verificação da conexão',
+    )
+    if (error) throw error
+    return { status: 'conectado' }
+  } catch (erro) {
+    console.error('[neon] Não foi possível confirmar a conexão com o banco.', erro)
+    return { status: classificarErroNeon(erro) }
   }
 }
 
@@ -95,21 +148,28 @@ export function paraBooleano(valor, padrao = true) {
  * Diferente de `carregar`, aqui não existe fallback silencioso: se a gravação
  * falhar, o erro sobe para o formulário, que mostra a mensagem ao usuário.
  *
- * Sem credenciais no `.env`, devolve o registro já montado com origem
- * 'exemplo' — a tela insere na lista em memória e avisa que nada foi
- * persistido, em vez de fingir que salvou.
+ * Escritas marcadas como críticas exigem confirmação do Neon. As demais ainda
+ * podem usar dados de demonstração quando o app foi iniciado em modo demo.
  *
  * @returns {Promise<{ dados: unknown, origem: 'neon' | 'exemplo' }>}
  */
-export async function gravar({ nome, registro, escrever }) {
+export async function gravar({ nome, registro, escrever, exigirPersistencia = false }) {
   if (!neonConfigurado) {
+    if (exigirPersistencia) {
+      throw new Error(
+        `Não foi possível confirmar "${nome}": o Neon não está configurado. Nenhuma alteração foi salva. Use npm run dev:teste com uma branch sintética autorizada; o modo demo bloqueia esta operação.`,
+      )
+    }
     return { dados: registro, origem: 'exemplo' }
   }
 
   try {
-    return { dados: await comTempoLimite(escrever(neon), nome), origem: 'neon' }
+    const dados = await comTempoLimite(escrever(neon), nome, { escrita: true })
+    emitirEventoDados(EVENTOS_DADOS.operacaoConcluida, nome)
+    return { dados, origem: 'neon' }
   } catch (erro) {
     console.error(`[neon] Falha ao gravar "${nome}".`, erro)
+    emitirEventoDados(EVENTOS_DADOS.operacaoFalhou, nome, classificarErroNeon(erro))
     throw erro
   }
 }

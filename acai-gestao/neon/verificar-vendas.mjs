@@ -25,16 +25,13 @@
  * Por isso `abrir()` queima a primeira avaliação e a ordem é sempre
  * "papel primeiro, claim depois".
  */
-import { readFileSync } from 'node:fs'
 import pg from 'pg'
+import { carregarAmbiente, exigirDestinoSintetico } from './ambiente-teste.js'
 
-function url() {
-  if (process.env.DATABASE_URL) return process.env.DATABASE_URL
-  const texto = readFileSync(new URL('../.env', import.meta.url), 'utf8')
-  const linha = texto.split(/\r?\n/).find((l) => l.startsWith('DATABASE_URL='))
-  if (!linha) throw new Error('DATABASE_URL não encontrado no .env')
-  return linha.slice('DATABASE_URL='.length).trim().replace(/^["']|["']$/g, '')
-}
+const env = carregarAmbiente('test')
+const connectionString = (env.DATABASE_URL || '').trim()
+if (!connectionString) throw new Error('DATABASE_URL não encontrado no ambiente de teste.')
+exigirDestinoSintetico(env)
 
 let falhas = 0
 const ok = (nome, cond, extra = '') => {
@@ -46,7 +43,7 @@ const n = (v) => Number(v)
 const brl = (v) => `R$ ${n(v).toFixed(2).replace('.', ',')}`
 
 const conectar = async () => {
-  const c = new pg.Client({ connectionString: url(), ssl: { rejectUnauthorized: false } })
+  const c = new pg.Client({ connectionString, ssl: { rejectUnauthorized: false } })
   await c.connect()
   return c
 }
@@ -153,7 +150,7 @@ const porUnidade = await um(
     limit 1`,
 )
 
-console.log(`\nVerificando a venda transacional na base real: ${url().split('@')[1]?.split('/')[0] ?? ''}`)
+console.log('\nVerificando a venda transacional no ambiente sintético autorizado.')
 
 /* --------------------------------------------------------- estado inicial -- */
 
@@ -179,19 +176,24 @@ if (!admin) {
  * O código é escolhido por nós de propósito: `nextval` não volta no rollback.
  * A sequência de verdade é CONFERIDA logo abaixo, sem consumir nada.
  */
-const seq = await um(c, `select last_value, is_called from public.vendas_codigo_seq`)
-const maiorCodigo = n(
-  (
-    await um(
-      c,
-      `select max(nullif(regexp_replace(codigo, '\\D', '', 'g'), '')::bigint) as m from public.vendas`,
-    )
-  ).m,
+const contadores = await um(
+  c,
+  `select
+     count(*) filter (where coalesce(c.valor, 0) < coalesce(v.maior_codigo, 0))::int as atrasados,
+     coalesce(max(greatest(coalesce(v.maior_codigo, 0) - coalesce(c.valor, 0), 0)), 0)::bigint as maior_atraso
+   from public.organizations o
+   left join lateral (
+     select max(substring(v.codigo from '^#([0-9]+)$')::bigint) as maior_codigo
+       from public.vendas v
+      where v.organization_id = o.id
+   ) v on true
+   left join private.organization_counters c
+     on c.organization_id = o.id and c.recurso = 'venda'`,
 )
 ok(
-  'a sequência do pedido está no lugar (e adiante do maior código)',
-  n(seq.last_value) >= maiorCodigo,
-  `sequência=${seq.last_value} (is_called=${seq.is_called}) · maior código da base=#${maiorCodigo}`,
+  'cada contador de pedidos está adiante do maior código da organização',
+  n(contadores.atrasados) === 0,
+  `organizações atrasadas=${contadores.atrasados} · maior diferença=${contadores.maior_atraso}`,
 )
 
 /* ------------------------------------------------------------- a venda --- */

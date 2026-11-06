@@ -765,6 +765,7 @@ export function registrarCompra({
 
   return gravar({
     nome: 'compra',
+    exigirPersistencia: true,
     registro: {
       id: registroId,
       numero: `C-${anoAtual()}-0001`,
@@ -861,6 +862,7 @@ export function registrarCompra({
 export function marcarAguardandoRecebimento(id) {
   return gravar({
     nome: 'status da compra',
+    exigirPersistencia: true,
     registro: { id, status: 'aguardando_recebimento' },
     escrever: async (neon) => {
       const { data, error } = await neon
@@ -881,6 +883,7 @@ export function marcarAguardandoRecebimento(id) {
 export function cancelarCompra(id) {
   return gravar({
     nome: 'cancelamento da compra',
+    exigirPersistencia: true,
     registro: { id, status: 'cancelado' },
     escrever: async (neon) => {
       const { data, error } = await neon
@@ -901,6 +904,7 @@ export function cancelarCompra(id) {
 export function excluirCompra(id) {
   return gravar({
     nome: 'exclusão do rascunho',
+    exigirPersistencia: true,
     registro: { id },
     escrever: async (neon) => {
       const { data, error } = await neon
@@ -949,6 +953,7 @@ export function receberCompra(compraId, itens = [], chaveIdempotencia) {
 
   return gravar({
     nome: 'recebimento da compra',
+    exigirPersistencia: true,
     registro: { compraId, itens: linhas, chaveIdempotencia: chave },
     escrever: async (neon) => {
       const { data, error } = await neon.rpc('confirmar_recebimento_compra_idempotente', {

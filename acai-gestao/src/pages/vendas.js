@@ -17,6 +17,10 @@ import {
   LIMITE_DIA,
   listarVendas,
   proximoCodigoVenda,
+  atualizarStatusVenda,
+  cancelarVendaPendente,
+  detalharVenda,
+  historicoStatusVenda,
   registrarVenda,
 } from '../services/vendas.js'
 import {
@@ -28,6 +32,7 @@ import {
   cardHead,
   esc,
   formatBRL,
+  formatNumero,
   statCard,
   tabela,
   toast,
@@ -35,21 +40,40 @@ import {
 } from '../ui.js'
 
 /**
- * Ação de linha: estornar a venda.
- *
- * Só aparece para quem tem `vendas.editar` (o banco recusa o resto de novo) e
- * não aparece numa venda já cancelada/estornada — não há o que devolver.
+ * Ações da linha dependem do estado: concluir também confirma o recebimento;
+ * vendas pendentes podem ser canceladas; somente as concluídas podem ser
+ * estornadas. A permissão é conferida novamente pelo banco.
  */
-const acoesVenda = (v) => `
+const acoesVenda = (v, podeEditar) => `
   <div class="table__acoes">
-    ${
-      v.status === 'Cancelada'
-        ? '<span class="muted">—</span>'
-        : `<button class="btn btn--ghost btn--sm" type="button" data-acao="estornar-venda"
-                   data-id="${esc(v.uuid ?? v.id)}" title="Estornar e devolver o estoque">
-             <i data-lucide="rotate-ccw"></i><span>Estornar</span>
-           </button>`
-    }
+    <button class="btn btn--ghost btn--sm" type="button" data-acao="detalhes-venda"
+            data-id="${esc(v.uuid ?? v.id)}" aria-label="Ver detalhes da venda ${esc(v.id ?? '')}">
+      <i data-lucide="eye"></i><span>Detalhes</span>
+    </button>
+    ${!podeEditar || v.estornadaEm || v.status === 'Cancelada' ? '' : `
+      ${v.status === 'Aguardando' ? `
+        <button class="btn btn--ghost btn--sm" type="button" data-acao="preparar-venda"
+                data-id="${esc(v.uuid ?? v.id)}">
+          <i data-lucide="cooking-pot"></i><span>Iniciar preparo</span>
+        </button>
+      ` : ''}
+      ${['Aguardando', 'Em preparo'].includes(v.status) ? `
+        <button class="btn btn--primary btn--sm" type="button" data-acao="concluir-venda"
+                data-id="${esc(v.uuid ?? v.id)}" title="Confirma o recebimento integral e conclui a venda">
+          <i data-lucide="circle-check"></i><span>Confirmar pagamento</span>
+        </button>
+        <button class="btn btn--ghost btn--sm" type="button" data-acao="cancelar-venda"
+                data-id="${esc(v.uuid ?? v.id)}">
+          <i data-lucide="ban"></i><span>Cancelar</span>
+        </button>
+      ` : ''}
+      ${v.status === 'Concluída' ? `
+        <button class="btn btn--ghost btn--sm" type="button" data-acao="estornar-venda"
+                data-id="${esc(v.uuid ?? v.id)}" title="Estornar e devolver o estoque">
+          <i data-lucide="rotate-ccw"></i><span>Estornar</span>
+        </button>
+      ` : ''}
+    `}
   </div>
 `
 
@@ -57,7 +81,7 @@ const acoesVenda = (v) => `
  * Colunas da tabela de vendas. A coluna de Ações só existe para quem pode
  * estornar: para os demais, a tabela é a de antes — sem coluna vazia.
  */
-const colunas = ({ podeEstornar = false } = {}) => [
+const colunas = ({ podeEditar = false } = {}) => [
   { key: 'id', label: 'Pedido', render: (v) => `<span class="mono">${esc(v.id)}</span>` },
   {
     key: 'cliente',
@@ -78,7 +102,14 @@ const colunas = ({ podeEstornar = false } = {}) => [
       ${v.tipoVenda === 'Aplicativo' ? `<span class="cell-sub">Líquido est.: ${formatBRL(v.valorLiquidoEstimado ?? 0)} · Comissão: ${formatBRL(v.comissaoEstimada ?? 0)}</span>` : ''}
     `,
   },
-  { key: 'pagamento', label: 'Pagamento', render: (v) => esc(v.pagamento) },
+  {
+    key: 'pagamento',
+    label: 'Pagamento',
+    render: (v) => `
+      <span class="cell-main">${esc(v.pagamento)}</span>
+      <span class="cell-sub">${esc(v.pagamentoStatus ?? 'Pendente')}</span>
+    `,
+  },
   {
     key: 'total',
     label: 'Total',
@@ -86,19 +117,59 @@ const colunas = ({ podeEstornar = false } = {}) => [
     render: (v) => `<strong>${formatBRL(v.total)}</strong>`,
   },
   { key: 'status', label: 'Status', render: badgeStatusVenda },
-  ...(podeEstornar ? [{ key: 'acoes', label: 'Ações', render: acoesVenda }] : []),
+  { key: 'acoes', label: 'Ações', render: (v) => acoesVenda(v, podeEditar) },
 ]
 
-const filtrar = (dados, termo) => {
+const filtrar = (dados, termo, filtros = {}) => {
   const busca = termo.trim().toLowerCase()
-  if (!busca) return dados
   return dados.filter((venda) =>
-    [venda.id, venda.cliente, venda.pagamento, venda.tipoVenda, venda.plataforma, venda.pedidoExterno, venda.status]
-      .join(' ')
-      .toLowerCase()
-      .includes(busca),
+    (!busca ||
+      [venda.id, venda.cliente, venda.pagamento, venda.tipoVenda, venda.plataforma, venda.pedidoExterno, venda.status]
+        .join(' ')
+        .toLowerCase()
+        .includes(busca)) &&
+    (!filtros.status || (venda.estornadaEm ? 'Estornada' : venda.status) === filtros.status) &&
+    (!filtros.pagamento || venda.pagamento === filtros.pagamento) &&
+    (!filtros.canal ||
+      (filtros.canal.startsWith('tipo:')
+        ? venda.tipoVenda === filtros.canal.slice('tipo:'.length)
+        : filtros.canal.startsWith('plataforma:') &&
+          venda.plataforma === filtros.canal.slice('plataforma:'.length))),
   )
 }
+
+const totalEmCentavos = (venda) => {
+  if (venda.total == null || venda.total === '') return null
+  const valor = Number(venda.total)
+  const centavos = Math.round(valor * 100)
+  return Number.isFinite(valor) && Number.isSafeInteger(centavos) ? centavos : null
+}
+
+const agruparVendas = (dados, campo) => {
+  const grupos = new Map()
+  for (const venda of dados) {
+    const rotulo =
+      campo === 'status'
+        ? venda.estornadaEm
+          ? 'Estornada'
+          : venda.status || 'Não informado'
+        : venda[campo] || 'Não informado'
+    const grupo = grupos.get(rotulo) ?? { quantidade: 0, centavos: 0, valoresValidos: true }
+    const centavos = totalEmCentavos(venda)
+    if (centavos == null) {
+      grupo.valoresValidos = false
+    } else {
+      grupo.centavos += centavos
+      if (!Number.isSafeInteger(grupo.centavos)) grupo.valoresValidos = false
+    }
+    grupo.quantidade += 1
+    grupos.set(rotulo, grupo)
+  }
+  return [...grupos.entries()].sort(([a], [b]) => a.localeCompare(b, 'pt-BR'))
+}
+
+const formatarDataRelatorio = (dia) =>
+  new Intl.DateTimeFormat('pt-BR').format(new Date(`${dia}T12:00:00`))
 
 /**
  * Selo de idempotência da venda (ver `registrarVenda`).
@@ -112,10 +183,8 @@ const novaChave = () =>
   `venda-${Date.now()}-${Math.random().toString(16).slice(2)}`
 
 export function vendasPage() {
-  // Estornar é `vendas.editar` (o banco confere de novo). Sem a permissão, a
-  // tela é a de sempre, sem a coluna de ações.
-  const podeEstornar = pode('vendas', 'editar')
-  const colunasVenda = colunas({ podeEstornar })
+  const podeEditar = pode('vendas', 'editar')
+  const colunasVenda = colunas({ podeEditar })
 
   return {
     html: `
@@ -156,8 +225,8 @@ export function vendasPage() {
       <section class="card">
         ${cardHead({
           titulo: 'Pedidos',
-          descricao: podeEstornar
-            ? 'Escolha o dia, acompanhe os pedidos e estorne o que precisar'
+          descricao: podeEditar
+            ? 'Acompanhe pedidos, confirme pagamentos e gerencie preparo, cancelamentos e estornos'
             : 'Escolha o dia e acompanhe os pedidos',
           acoes: `
             <button class="btn btn--ghost" type="button" data-acao="exportar-vendas"
@@ -185,10 +254,41 @@ export function vendasPage() {
               </button>
               <button class="btn btn--ghost btn--sm" type="button" data-acao="dia-hoje">Hoje</button>
             </div>
+            <label class="campo" for="filtro-vendas-status">
+              <span class="campo__label">Status</span>
+              <select class="campo__input" id="filtro-vendas-status">
+                <option value="">Todos</option>
+              </select>
+            </label>
+            <label class="campo" for="filtro-vendas-canal">
+              <span class="campo__label">Canal / origem</span>
+              <select class="campo__input" id="filtro-vendas-canal">
+                <option value="">Todos</option>
+              </select>
+            </label>
+            <label class="campo" for="filtro-vendas-pagamento">
+              <span class="campo__label">Forma de pagamento</span>
+              <select class="campo__input" id="filtro-vendas-pagamento">
+                <option value="">Todas</option>
+              </select>
+            </label>
           `,
         })}
         <p class="table__count" id="contagem-vendas"></p>
         ${tabela({ colunas: colunasVenda, linhas: vendasExemplo, id: 'tabela-vendas' })}
+      </section>
+
+      <section class="card" id="relatorio-vendas" aria-labelledby="relatorio-vendas-titulo">
+        <div class="card__head">
+          <div>
+            <h2 class="card__title" id="relatorio-vendas-titulo">Relatório de vendas</h2>
+            <p class="card__desc">Resumo dos mesmos pedidos carregados na tabela, considerando o dia e os filtros atuais. Não realiza uma consulta adicional.</p>
+          </div>
+        </div>
+        <dl class="vendas-relatorio__metadados" id="relatorio-vendas-metadados"></dl>
+        <div class="vendas-relatorio__resumo" id="relatorio-vendas-resumo"></div>
+        <p class="campo__ajuda">Os totais são a soma dos valores exibidos por status; não recalculam estornos, taxas, liquidações nem substituem relatório financeiro ou conciliação.</p>
+        <div class="vendas-relatorio__grupos" id="relatorio-vendas-grupos"></div>
       </section>
     `,
 
@@ -196,15 +296,116 @@ export function vendasPage() {
       let dados = vendasExemplo
       // O dia mostrado. Nasce em hoje; a navegação troca e busca de novo.
       let dia = hoje()
+      let diaCarregado = dia
 
       const contagem = root.querySelector('#contagem-vendas')
       const input = root.querySelector('#busca-vendas')
       const campoDia = root.querySelector('#dia-vendas')
       const botaoHoje = root.querySelector('[data-acao="dia-hoje"]')
       const botaoProximo = root.querySelector('[data-dia="1"]')
+      const botaoExportar = root.querySelector('[data-acao="exportar-vendas"]')
+      const filtroStatus = root.querySelector('#filtro-vendas-status')
+      const filtroCanal = root.querySelector('#filtro-vendas-canal')
+      const filtroPagamento = root.querySelector('#filtro-vendas-pagamento')
+      const relatorioMetadados = root.querySelector('#relatorio-vendas-metadados')
+      const relatorioResumo = root.querySelector('#relatorio-vendas-resumo')
+      const relatorioGrupos = root.querySelector('#relatorio-vendas-grupos')
+      const seletorFilial = document.querySelector('#filial-atual')
+      let origemDados = 'exemplo'
+      let modalDetalhes = null
+
+      const reconstruirOpcoes = (campo, opcoes, todos) => {
+        const selecionado = campo.value
+        const unicas = [...new Map(opcoes.filter((opcao) => opcao.valor).map((opcao) => [opcao.valor, opcao])).values()]
+          .sort((a, b) => a.rotulo.localeCompare(b.rotulo, 'pt-BR'))
+        campo.innerHTML = `<option value="">${todos}</option>${unicas
+          .map(({ valor, rotulo }) => `<option value="${esc(valor)}">${esc(rotulo)}</option>`)
+          .join('')}`
+        campo.value = unicas.some(({ valor }) => valor === selecionado) ? selecionado : ''
+      }
+
+      const atualizarOpcoesFiltros = () => {
+        reconstruirOpcoes(
+          filtroStatus,
+          dados.map((venda) => {
+            const valor = venda.estornadaEm ? 'Estornada' : venda.status
+            return { valor, rotulo: valor }
+          }),
+          'Todos',
+        )
+        reconstruirOpcoes(
+          filtroCanal,
+          dados.flatMap((venda) => [
+            { valor: venda.tipoVenda ? `tipo:${venda.tipoVenda}` : '', rotulo: `Tipo · ${venda.tipoVenda ?? ''}` },
+            { valor: venda.plataforma ? `plataforma:${venda.plataforma}` : '', rotulo: `Plataforma · ${venda.plataforma ?? ''}` },
+          ]),
+          'Todos',
+        )
+        reconstruirOpcoes(
+          filtroPagamento,
+          dados.map((venda) => ({ valor: venda.pagamento, rotulo: venda.pagamento })),
+          'Todas',
+        )
+      }
+
+      const filtrosAtuais = () => ({
+        status: filtroStatus.value,
+        canal: filtroCanal.value,
+        pagamento: filtroPagamento.value,
+      })
+
+      const atualizarRelatorio = (linhas) => {
+        const filialIndicada = seletorFilial?.value
+          ? seletorFilial.selectedOptions[0]?.textContent?.trim() ?? 'Não informada no cabeçalho'
+          : 'Não informada no cabeçalho'
+        const filtros = [
+          input.value.trim() ? `Busca: ${input.value.trim()}` : '',
+          filtroStatus.value ? `Status: ${filtroStatus.selectedOptions[0]?.textContent}` : '',
+          filtroCanal.value ? `Canal/origem: ${filtroCanal.selectedOptions[0]?.textContent}` : '',
+          filtroPagamento.value ? `Pagamento: ${filtroPagamento.selectedOptions[0]?.textContent}` : '',
+        ].filter(Boolean)
+        const valoresEmCentavos = linhas.map(totalEmCentavos)
+        const totalCentavos = valoresEmCentavos.reduce((soma, valor) => soma + (valor ?? 0), 0)
+        const totaisValidos =
+          valoresEmCentavos.every((valor) => valor != null) && Number.isSafeInteger(totalCentavos)
+        const limiteAtingido = dados.length >= LIMITE_DIA
+        const cobertura =
+          origemDados !== 'neon'
+            ? `Demonstração; não representa dados operacionais.${limiteAtingido ? ` O teto de ${LIMITE_DIA} registros carregados também foi atingido; a amostra pode estar incompleta.` : ''}`
+            : limiteAtingido
+              ? `Parcial: até ${LIMITE_DIA} pedidos mais recentes; o dia pode conter outros pedidos.`
+              : `Consulta do dia abaixo do limite de ${LIMITE_DIA}; sem consolidação de outros períodos.`
+
+        relatorioMetadados.innerHTML = `
+          <div><dt>Período consultado</dt><dd>${esc(formatarDataRelatorio(diaCarregado))}</dd></div>
+          <div><dt>Filial indicada no cabeçalho</dt><dd>${esc(filialIndicada)}</dd></div>
+          <div><dt>Gerado em</dt><dd>${esc(new Date().toLocaleString('pt-BR'))}</dd></div>
+          <div><dt>Origem dos dados</dt><dd>${origemDados === 'neon' ? 'Neon Data API' : 'Dados de demonstração'}</dd></div>
+          <div><dt>Cobertura</dt><dd>${esc(cobertura)}</dd></div>
+          <div><dt>Filtros aplicados</dt><dd>${esc(filtros.length ? filtros.join(' · ') : 'Nenhum além do dia selecionado')}</dd></div>
+        `
+        relatorioResumo.innerHTML = `
+          <div><span>Pedidos no resultado</span><strong>${linhas.length}</strong></div>
+          <div><span>Soma dos valores listados</span><strong>${totaisValidos ? formatBRL(totalCentavos / 100) : '—'}</strong></div>
+        `
+        const tabelaGrupo = (titulo, campo) => {
+          const grupos = agruparVendas(linhas, campo)
+          return `
+            <section>
+              <h3>${titulo}</h3>
+              ${grupos.length
+                ? `<div class="table-wrap"><table class="table"><thead><tr><th>${campo === 'status' ? 'Status' : 'Pagamento'}</th><th>Pedidos</th><th class="ta-right">Soma dos valores</th></tr></thead><tbody>${grupos
+                  .map(([rotulo, grupo]) => `<tr><td>${esc(rotulo)}</td><td>${grupo.quantidade}</td><td class="ta-right">${grupo.valoresValidos ? formatBRL(grupo.centavos / 100) : '—'}</td></tr>`)
+                  .join('')}</tbody></table></div>`
+                : '<p class="muted">Nenhum pedido com os filtros atuais.</p>'}
+            </section>
+          `
+        }
+        relatorioGrupos.innerHTML = `${tabelaGrupo('Pedidos por status', 'status')}${tabelaGrupo('Pedidos por forma de pagamento', 'pagamento')}`
+      }
 
       const aplicar = (termo) => {
-        const linhas = filtrar(dados, termo)
+        const linhas = filtrar(dados, termo, filtrosAtuais())
         atualizarTabela(root, 'tabela-vendas', colunasVenda, linhas)
         // O rótulo do dia fica junto da contagem: é ele que diz ao operador que
         // a lista NÃO é a de hoje quando ele navegou para outro dia.
@@ -213,23 +414,40 @@ export function vendasPage() {
         // RECENTES (a consulta ordena de trás para frente) — e "300 de 300"
         // sozinho faria o operador achar que o dia teve 300 pedidos.
         const cortado = dados.length >= LIMITE_DIA ? ' · mostrando os mais recentes' : ''
-        contagem.textContent = `${rotuloDia(dia, hoje())} · ${linhas.length} de ${dados.length} pedidos${cortado}`
+        contagem.textContent = `${rotuloDia(diaCarregado, hoje())} · ${linhas.length} de ${dados.length} pedidos${cortado}`
+        botaoExportar.disabled = dia !== diaCarregado
+        botaoExportar.title = cortado
+          ? 'Exportação indisponível: o dia atingiu o limite de 300 pedidos e pode estar incompleto.'
+          : 'Baixar em CSV os pedidos carregados com os filtros atuais.'
+        atualizarRelatorio(linhas)
         renderIcons(root)
         ligarAcoes()
       }
 
+      atualizarOpcoesFiltros()
       aplicar('')
+      const observarFilial = seletorFilial && typeof MutationObserver !== 'undefined'
+        ? new MutationObserver(() => aplicar(input.value))
+        : null
+      observarFilial?.observe(seletorFilial, { childList: true })
 
       input.addEventListener('input', () => aplicar(input.value))
+      filtroStatus.addEventListener('change', () => aplicar(input.value))
+      filtroCanal.addEventListener('change', () => aplicar(input.value))
+      filtroPagamento.addEventListener('change', () => aplicar(input.value))
 
-      // Exporta exatamente o que a tabela mostra: o dia escolhido + a busca.
+      // Exporta exatamente o resultado carregado depois da busca e dos filtros locais.
       root.querySelector('[data-acao="exportar-vendas"]').addEventListener('click', () => {
-        const linhas = filtrar(dados, input.value)
+        const linhas = filtrar(dados, input.value, filtrosAtuais())
         if (!linhas.length) {
           toast('Nada para exportar com os filtros atuais.')
           return
         }
-        baixarCsv(`vendas-${dia}.csv`, gerarCsvVendas(linhas))
+        if (dados.length >= LIMITE_DIA) {
+          toast('Exportação bloqueada: o dia atingiu o limite de 300 pedidos e pode estar incompleto.')
+          return
+        }
+        baixarCsv(`vendas-${diaCarregado}.csv`, gerarCsvVendas(linhas))
       })
 
       // A busca da barra superior também filtra esta tabela.
@@ -253,11 +471,14 @@ export function vendasPage() {
       }
 
       const diaInicial = dia
-      const pararVendas = observar(listarVendas({ dia: diaInicial }), ({ dados: remotas }) => {
+      const pararVendas = observar(listarVendas({ dia: diaInicial }), ({ dados: remotas, origem }) => {
         // O operador pode ter trocado o dia enquanto esta resposta vinha: a
         // resposta antiga não pode sobrescrever a lista do dia novo.
         if (dia !== diaInicial) return
         dados = remotas
+        origemDados = origem
+        diaCarregado = diaInicial
+        atualizarOpcoesFiltros()
         aplicar(input.value)
       })
 
@@ -266,7 +487,7 @@ export function vendasPage() {
       /** Busca o dia escolhido e redesenha — ao navegar e depois de gravar. */
       const recarregar = async () => {
         const pedido = dia
-        const [{ dados: remotas }, { dados: r }] = await Promise.all([
+        const [{ dados: remotas, origem }, { dados: r }] = await Promise.all([
           listarVendas({ dia: pedido }),
           carregarResumo(),
         ])
@@ -275,6 +496,9 @@ export function vendasPage() {
         if (dia !== pedido) return
 
         dados = remotas
+        origemDados = origem
+        diaCarregado = pedido
+        atualizarOpcoesFiltros()
         aplicar(input.value)
         aplicarResumo(r)
       }
@@ -297,6 +521,7 @@ export function vendasPage() {
         }
 
         dia = alvo
+        botaoExportar.disabled = true
         ajustarDia()
         await recarregar()
       }
@@ -314,6 +539,218 @@ export function vendasPage() {
         root.querySelectorAll('[data-acao="estornar-venda"]').forEach((btn) => {
           btn.addEventListener('click', () => estornar(btn.dataset.id))
         })
+        root.querySelectorAll('[data-acao="preparar-venda"]').forEach((btn) => {
+          btn.addEventListener('click', () => alterarStatus(btn.dataset.id, 'Em preparo'))
+        })
+        root.querySelectorAll('[data-acao="concluir-venda"]').forEach((btn) => {
+          btn.addEventListener('click', () => alterarStatus(btn.dataset.id, 'Concluída'))
+        })
+        root.querySelectorAll('[data-acao="cancelar-venda"]').forEach((btn) => {
+          btn.addEventListener('click', () => cancelar(btn.dataset.id))
+        })
+        root.querySelectorAll('[data-acao="detalhes-venda"]').forEach((btn) => {
+          btn.addEventListener('click', () => verDetalhes(btn.dataset.id))
+        })
+      }
+
+      async function alterarStatus(vendaId, novoStatus) {
+        const venda = dados.find((item) => (item.uuid ?? item.id) === vendaId)
+        if (!venda) return
+
+        try {
+          const { dados: resultado, origem } = await atualizarStatusVenda({
+            vendaId: venda.uuid ?? null,
+            codigo: venda.id,
+            novoStatus,
+          })
+          if (origem === 'exemplo') {
+            dados = dados.map((item) =>
+              (item.uuid ?? item.id) === vendaId
+                ? {
+                    ...item,
+                    status: resultado.status,
+                    pagamentoStatus: resultado.status === 'Concluída' ? 'Confirmado' : 'Pendente',
+                    statusHistorico: [
+                      ...(item.statusHistorico ?? []),
+                      { statusAnterior: item.status, statusNovo: resultado.status, criadoEm: new Date().toISOString() },
+                    ],
+                  }
+                : item,
+            )
+            aplicar(input.value)
+            toast(novoStatus === 'Concluída'
+              ? `Pedido ${venda.id}: pagamento confirmado e venda concluída.`
+              : `Pedido ${venda.id} enviado para preparo.`)
+            return
+          }
+
+          await recarregar()
+          toast(resultado.jaEstavaAtualizado
+            ? `Pedido ${venda.id} já estava com status ${resultado.status}.`
+            : novoStatus === 'Concluída'
+              ? `Pedido ${venda.id}: pagamento confirmado e venda concluída.`
+              : `Pedido ${venda.id} enviado para preparo.`)
+        } catch (erro) {
+          console.error('[vendas] Não foi possível atualizar o status do pedido.', erro)
+          toast(erro?.message ?? 'Não foi possível atualizar o status da venda.')
+        }
+      }
+
+      function cancelar(vendaId) {
+        const venda = dados.find((item) => (item.uuid ?? item.id) === vendaId)
+        if (!venda) return
+
+        abrirFormulario({
+          titulo: `Cancelar pedido ${venda.id}`,
+          descricao: 'O motivo será registrado no histórico. O estoque movimentado pelo pedido será devolvido uma única vez.',
+          campos: [{
+            nome: 'motivo',
+            label: 'Motivo do cancelamento',
+            tipo: 'textarea',
+            obrigatorio: true,
+            largo: true,
+            placeholder: 'Ex.: cliente desistiu, pedido lançado em duplicidade...',
+          }],
+          textoBotao: 'Cancelar pedido',
+          aoSalvar: async ({ motivo }) => {
+            const { dados: cancelada, origem } = await cancelarVendaPendente({
+              vendaId: venda.uuid ?? null,
+              codigo: venda.id,
+              motivo,
+            })
+
+            if (origem === 'exemplo') {
+              dados = dados.map((item) =>
+                (item.uuid ?? item.id) === vendaId
+                  ? { ...item, status: 'Cancelada', pagamentoStatus: 'Cancelado' }
+                  : item,
+              )
+              aplicar(input.value)
+              return cancelada.jaCancelada
+                ? `Pedido ${venda.id} já estava cancelado.`
+                : `Pedido ${venda.id} cancelado nesta demonstração.`
+            }
+
+            await recarregar()
+            return cancelada.jaCancelada
+              ? `Pedido ${venda.id} já estava cancelado; nenhum movimento foi repetido.`
+              : `Pedido ${venda.id} cancelado; ${cancelada.movimentos} movimento(s) de estoque revertido(s).`
+          },
+        })
+      }
+
+      async function verDetalhes(vendaId) {
+        const venda = dados.find((item) => (item.uuid ?? item.id) === vendaId)
+        if (!venda) return
+        modalDetalhes?.remove()
+
+        modalDetalhes = document.createElement('div')
+        modalDetalhes.className = 'modal venda-detalhe'
+        modalDetalhes.setAttribute('role', 'dialog')
+        modalDetalhes.setAttribute('aria-modal', 'true')
+        modalDetalhes.setAttribute('aria-labelledby', 'venda-detalhe-titulo')
+        modalDetalhes.innerHTML = `
+          <div class="modal__scrim" data-detalhe-fechar></div>
+          <section class="modal__caixa venda-detalhe__caixa">
+            <header class="modal__head">
+              <div>
+                <h2 class="modal__titulo" id="venda-detalhe-titulo">Pedido ${esc(venda.id)}</h2>
+                <p class="modal__desc">Carregando os dados históricos do pedido...</p>
+              </div>
+              <button class="modal__x" type="button" data-detalhe-fechar aria-label="Fechar detalhes">
+                <i data-lucide="x"></i>
+              </button>
+            </header>
+            <div class="venda-detalhe__conteudo" aria-live="polite">
+              <p>Carregando detalhes e histórico...</p>
+            </div>
+          </section>
+        `
+        document.body.append(modalDetalhes)
+        renderIcons(modalDetalhes)
+
+        const fecharDetalhes = () => {
+          modalDetalhes?.removeEventListener('keydown', aoTeclar)
+          modalDetalhes?.remove()
+          modalDetalhes = null
+        }
+        const aoTeclar = (evento) => {
+          if (evento.key === 'Escape') fecharDetalhes()
+        }
+        modalDetalhes.querySelectorAll('[data-detalhe-fechar]').forEach((botao) => {
+          botao.addEventListener('click', fecharDetalhes)
+        })
+        modalDetalhes.addEventListener('keydown', aoTeclar)
+        modalDetalhes.querySelector('[data-detalhe-fechar]:not(.modal__scrim)')?.focus()
+
+        try {
+          const [resultadoDetalhes, resultadoHistorico] = await Promise.all([
+            detalharVenda(venda.uuid ?? venda.id),
+            historicoStatusVenda(venda.uuid ?? venda.id),
+          ])
+          if (!modalDetalhes?.isConnected) return
+
+          const detalhe = resultadoDetalhes.origem === 'neon'
+            ? resultadoDetalhes.dados
+            : null
+          const historico = resultadoHistorico.origem === 'neon'
+            ? resultadoHistorico.dados
+            : venda.statusHistorico ?? []
+          const itens = detalhe?.itensVenda ?? []
+          const dadosDoPedido = detalhe ?? venda
+          const total = Number(dadosDoPedido.total ?? 0)
+          const totalItens = Number(dadosDoPedido.subtotal ?? total)
+          const taxaEntrega = Number(dadosDoPedido.taxaEntrega ?? 0)
+          const statusPagamento = dadosDoPedido.pagamentoStatus ??
+            (dadosDoPedido.status === 'Concluída'
+              ? 'Confirmado'
+              : dadosDoPedido.status === 'Cancelada' ? 'Cancelado' : 'Pendente')
+          const listaItens = itens.length
+            ? `<div class="table-wrap"><table class="table"><thead><tr><th>Produto e quantidade</th><th>Preço</th><th class="ta-right">Total</th></tr></thead><tbody>${itens.map((item) => {
+                const quantidade = item.metodoPeso
+                  ? `${formatNumero(item.pesoLiquidoGramas)} g líquidos${item.pesoBrutoGramas == null ? '' : ` · bruto ${formatNumero(item.pesoBrutoGramas)} g · tara ${formatNumero(item.taraGramas)} g`}${item.recipienteId ? ` · recipiente ${esc(item.recipienteId)}` : ''}`
+                  : `${formatNumero(item.quantidade)} un.`
+                return `<tr><td><strong>${esc(item.descricao)}</strong><span class="cell-sub">${esc(quantidade)}</span></td><td>${formatBRL(item.precoUnitario)}${item.metodoPeso ? '/kg' : ''}</td><td class="ta-right">${formatBRL(item.total)}</td></tr>`
+              }).join('')}</tbody></table></div>`
+            : `<p class="muted">${resultadoDetalhes.origem === 'exemplo'
+                ? 'A demonstração não possui itens históricos detalhados para este pedido.'
+                : 'Nenhum item detalhado foi retornado para este pedido.'}</p>`
+          const eventos = historico.length
+            ? `<ol class="venda-detalhe__historico">${historico.map((evento) => `
+                <li>
+                  <strong>${esc(evento.statusAnterior ? `${evento.statusAnterior} → ${evento.statusNovo}` : evento.statusNovo)}</strong>
+                  <time>${esc(evento.criadoEm ? new Date(evento.criadoEm).toLocaleString('pt-BR') : 'Data não disponível')}</time>
+                  ${evento.motivo ? `<span>${esc(evento.motivo)}</span>` : ''}
+                </li>
+              `).join('')}</ol>`
+            : '<p class="muted">Histórico detalhado indisponível para este pedido.</p>'
+          modalDetalhes.querySelector('.modal__desc').textContent =
+            `${dadosDoPedido.cliente ?? 'Consumidor'} · ${dadosDoPedido.tipoVenda ?? 'Tipo não informado'} · ${dadosDoPedido.pagamento ?? 'Pagamento não informado'}`
+          modalDetalhes.querySelector('.venda-detalhe__conteudo').innerHTML = `
+            <dl class="venda-detalhe__resumo">
+              <div><dt>Status do pedido</dt><dd>${esc(dadosDoPedido.estornadaEm ? 'Estornada' : dadosDoPedido.status)}</dd></div>
+              <div><dt>Situação do pagamento</dt><dd>${esc(statusPagamento)}</dd></div>
+              <div><dt>Data e hora</dt><dd>${esc(dadosDoPedido.criadoEm ? new Date(dadosDoPedido.criadoEm).toLocaleString('pt-BR') : dadosDoPedido.hora ?? 'Não disponível')}</dd></div>
+              <div><dt>Subtotal dos itens</dt><dd>${formatBRL(totalItens)}</dd></div>
+              ${taxaEntrega ? `<div><dt>Taxa de entrega cobrada do cliente</dt><dd>${formatBRL(taxaEntrega)}</dd></div>` : ''}
+              <div><dt>Total cobrado</dt><dd><strong>${formatBRL(total)}</strong></dd></div>
+              ${dadosDoPedido.valorRecebido == null ? '' : `<div><dt>Valor recebido</dt><dd>${formatBRL(dadosDoPedido.valorRecebido)} · troco ${formatBRL(dadosDoPedido.troco ?? 0)}</dd></div>`}
+              ${dadosDoPedido.tipoVenda === 'Aplicativo' ? `<div><dt>Plataforma / pedido externo</dt><dd>${esc(dadosDoPedido.plataforma ?? '—')} · ${esc(dadosDoPedido.pedidoExterno ?? 'sem identificador')}</dd></div><div><dt>Comissão e outras taxas</dt><dd>${formatBRL(dadosDoPedido.comissaoEstimada ?? 0)} · ${formatBRL(dadosDoPedido.taxaAplicativo ?? 0)}</dd></div><div><dt>Líquido estimado</dt><dd>${formatBRL(dadosDoPedido.valorLiquidoEstimado ?? 0)}</dd></div>` : ''}
+              ${dadosDoPedido.enderecoEntrega ? `<div class="venda-detalhe__largo"><dt>Endereço de entrega</dt><dd>${esc(dadosDoPedido.enderecoEntrega)}</dd></div>` : ''}
+              <div class="venda-detalhe__largo"><dt>Descontos</dt><dd>Descontos não são registrados separadamente nos dados deste pedido.</dd></div>
+            </dl>
+            <h3>Itens</h3>${listaItens}
+            <h3>Histórico de status</h3>${eventos}
+            ${resultadoDetalhes.origem !== 'neon' ? '<p class="campo__ajuda">Dados de demonstração são temporários e não representam um registro histórico no banco.</p>' : ''}
+          `
+        } catch (erro) {
+          console.error('[vendas] Não foi possível carregar os detalhes do pedido.', erro)
+          if (modalDetalhes?.isConnected) {
+            modalDetalhes.querySelector('.modal__desc').textContent = 'Falha ao consultar os detalhes.'
+            modalDetalhes.querySelector('.venda-detalhe__conteudo').innerHTML =
+              `<p class="alert alert--danger" role="alert">${esc(erro?.message ?? 'Não foi possível consultar os detalhes do pedido.')}</p>`
+          }
+        }
       }
 
       /**
@@ -436,7 +873,7 @@ export function vendasPage() {
           abrirFormulario({
             titulo: 'Nova venda',
             descricao:
-              'Monte o pedido escolhendo os itens — o total é calculado sozinho. Item por peso pede o peso lido na balança. Taxas e comissões são estimativas: não confirmam pagamento nem consultam aplicativos.',
+              'Novos pedidos começam Aguardando. Confirme o pagamento somente quando receber; itens por peso usam o peso lido na balança. Taxas e comissões são estimativas.',
             campos: [
               {
                 nome: 'codigo',
@@ -461,13 +898,6 @@ export function vendasPage() {
                   valor: tipo.id,
                   rotulo: tipo.nome,
                 })),
-                obrigatorio: true,
-              },
-              {
-                nome: 'status',
-                label: 'Status',
-                tipo: 'select',
-                opcoes: ['Aguardando', 'Em preparo', 'Concluída', 'Cancelada'],
                 obrigatorio: true,
               },
               {
@@ -533,7 +963,6 @@ export function vendasPage() {
               },
             ],
             valores: {
-              status: 'Concluída',
               tipoVendaId: tipoInicial.id,
               formaPagamentoId: pagamentoInicial.id,
               taxaEntrega: 0,
@@ -670,10 +1099,13 @@ export function vendasPage() {
 
       return () => {
         window.removeEventListener('busca-global', aoBuscarGlobal)
+        observarFilial?.disconnect()
         // O formulário é anexado ao `body`; sem fechar aqui ele sobrevive à
         // troca de rota (com o MutationObserver e as fotos em memória) e o
         // "Salvar" continuaria agindo sobre o estado da página anterior.
         fechar()
+        modalDetalhes?.remove()
+        modalDetalhes = null
         pararVendas()
         pararResumo()
       }

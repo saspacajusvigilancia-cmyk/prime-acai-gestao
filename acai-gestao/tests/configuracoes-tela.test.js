@@ -4,6 +4,11 @@ import { beforeEach, describe, it, expect, vi } from 'vitest'
 vi.mock('../src/formulario.js', () => ({
   campoHtml: (campo) => `<div><label>${campo.label}<input class="campo__input" name="${campo.nome}" /></label></div>`,
   confirmar: vi.fn(),
+  protegerFormulario: () => ({
+    confirmarDescarte: vi.fn().mockResolvedValue(true),
+    redefinir: vi.fn(),
+    limpar: vi.fn(),
+  }),
 }))
 
 vi.mock('../src/icons.js', () => ({ renderIcons: vi.fn() }))

@@ -36,10 +36,25 @@ describe('tabela / atualizarTabela', () => {
 
   it('cabeçalho reflete todas as colunas, inclusive Ações', () => {
     const root = document.createElement('div')
-    root.innerHTML = tabela({ colunas, linhas: [], id: 't' })
+    root.innerHTML = tabela({ colunas, linhas: [{ nome: 'Ana' }], id: 't' })
 
     const ths = [...root.querySelectorAll('#t thead th')].map((th) => th.textContent)
     expect(ths).toEqual(['Ações', 'Usuário'])
+    expect(root.querySelector('#t thead th.table__col--acoes')).not.toBeNull()
+    expect(root.querySelector('#t tbody td.table__col--acoes')).not.toBeNull()
+  })
+
+  it('marca tabelas largas para o tratamento responsivo sem alterar o conteúdo', () => {
+    const root = document.createElement('div')
+    const cincoColunas = [
+      ...colunas,
+      { key: 'status', label: 'Status', render: () => 'Ativo' },
+      { key: 'data', label: 'Data', render: () => 'Hoje' },
+      { key: 'filial', label: 'Filial', render: () => 'Matriz' },
+    ]
+    root.innerHTML = tabela({ colunas: cincoColunas, linhas: [], id: 't-larga' })
+
+    expect(root.querySelector('#t-larga').classList.contains('table--wide')).toBe(true)
   })
 
   it('lista vazia mostra a linha de "nenhum registro" com colspan correto', () => {

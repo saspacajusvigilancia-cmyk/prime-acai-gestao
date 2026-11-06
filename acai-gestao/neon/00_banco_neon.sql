@@ -723,19 +723,18 @@ create policy logo_exclusao on public.company_logos
   using (organization_id = public.minha_organizacao() and public.eh_gestor());
 
 -- ============================================================================
--- 10. Dados de exemplo (APAGA as tabelas de negócio antes de inserir)
+-- 10. Dados de demonstração (opt-in explícito; nunca semeia por padrão)
 -- ============================================================================
--- Esta seção roda **só em base vazia**. Se já existir qualquer dado de negócio,
--- ela ABORTA em vez de apagar — é isso que impede um `aplicar.mjs` sem filtro de
--- zerar a produção (a `00` roda o arquivo inteiro numa transação, então o
--- `raise` desfaz tudo o que veio antes neste arquivo).
---
--- Para semear de propósito numa base que já tem dados (ambiente de estudo),
--- peça na mão: `set app.semear = 'on';` antes de rodar este arquivo.
+-- Para carregar dados fictícios apenas em um banco descartável de testes,
+-- defina `set app.semear = 'on';` antes de executar este arquivo.
 do $$
 declare
   v_registros bigint;
 begin
+  if coalesce(current_setting('app.semear', true), '') <> 'on' then
+    return;
+  end if;
+
   select (select count(*) from public.vendas)
        + (select count(*) from public.itens_venda)
        + (select count(*) from public.lancamentos)
@@ -743,17 +742,16 @@ begin
        + (select count(*) from public.clientes)
     into v_registros;
 
-  if v_registros > 0 and coalesce(current_setting('app.semear', true), '') <> 'on' then
+  if v_registros > 0 then
     raise exception using
       message = format('Seed abortado: a base já tem %s registros de negócio.', v_registros),
       hint = 'A seção 10 (dados de exemplo) faz truncate nas tabelas. Se a intenção é mesmo semear, rode `set app.semear = ''on'';` antes deste arquivo.';
   end if;
-end $$;
 
-truncate public.itens_venda, public.vendas, public.lancamentos, public.produtos, public.clientes
+  truncate public.itens_venda, public.vendas, public.lancamentos, public.produtos, public.clientes
   restart identity cascade;
 
-insert into public.produtos (codigo, nome, categoria, quantidade, minimo, unidade, custo, preco) values
+  insert into public.produtos (codigo, nome, categoria, quantidade, minimo, unidade, custo, preco) values
   ('P001', 'Açaí tradicional 300ml', 'Açaí',       86, 40, 'un',  5.20, 15.90),
   ('P002', 'Açaí tradicional 500ml', 'Açaí',       48, 45, 'un',  9.40, 21.90),
   ('P003', 'Açaí tradicional 700ml', 'Açaí',       22, 30, 'un', 12.80, 28.50),
@@ -765,7 +763,7 @@ insert into public.produtos (codigo, nome, categoria, quantidade, minimo, unidad
   ('P009', 'Copo 500ml com tampa',   'Embalagens', 640, 300, 'un', 0.42,  0.00),
   ('P010', 'Colher descartável',     'Embalagens', 250, 400, 'un', 0.08,  0.00);
 
-insert into public.clientes (codigo, nome, telefone, email, desde, tier) values
+  insert into public.clientes (codigo, nome, telefone, email, desde, tier) values
   ('C-0912', 'Fernanda Dias',  '(11) 98812-4471', 'fernanda.dias@email.com',  '2024-03-11', 'VIP'),
   ('C-0887', 'Maria Souza',    '(11) 99145-2210', 'maria.souza@email.com',    '2024-06-02', 'VIP'),
   ('C-1104', 'Ana Beatriz',    '(11) 97733-8102', 'ana.beatriz@email.com',    '2025-01-19', 'Recorrente'),
@@ -775,7 +773,7 @@ insert into public.clientes (codigo, nome, telefone, email, desde, tier) values
   ('C-1502', 'Lucas Moreira',  '(11) 99033-7765', 'lucas.moreira@email.com',  '2026-07-22', 'Novo'),
   ('C-1531', 'Rafael Nunes',   '(11) 98890-4402', 'rafael.nunes@email.com',   '2026-09-30', 'Novo');
 
-insert into public.vendas (codigo, cliente_id, status, pagamento, total, criado_em)
+  insert into public.vendas (codigo, cliente_id, status, pagamento, total, criado_em)
 select
   '#' || lpad((1000 + row_number() over (order by d.dia, pedido.n))::text, 4, '0'),
   c.id,
@@ -792,7 +790,7 @@ cross join lateral (
   select id from public.clientes where pedido.n > 0 order by random() limit 1
 ) c;
 
-insert into public.itens_venda (venda_id, produto_id, descricao, quantidade, preco_unitario)
+  insert into public.itens_venda (venda_id, produto_id, descricao, quantidade, preco_unitario)
 select
   s.venda_id,
   p.id,
@@ -813,7 +811,7 @@ cross join lateral (
   limit 1
 ) p;
 
-insert into public.lancamentos (descricao, categoria, tipo, valor, forma, data)
+  insert into public.lancamentos (descricao, categoria, tipo, valor, forma, data)
 select
   'Vendas do dia (PDV)',
   'Vendas',
@@ -825,7 +823,7 @@ from public.vendas
 where status <> 'Cancelada'
 group by criado_em::date;
 
-insert into public.lancamentos (descricao, categoria, tipo, valor, forma, data)
+  insert into public.lancamentos (descricao, categoria, tipo, valor, forma, data)
 select
   t.descricao,
   t.categoria,
@@ -846,6 +844,7 @@ cross join lateral generate_series(
   current_date,
   make_interval(days => t.a_cada_dias)
 ) as d;
+end $$;
 
 -- ============================================================================
 -- 11. Conferência (não altera nada)

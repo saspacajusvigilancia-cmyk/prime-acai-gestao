@@ -1,19 +1,6 @@
 import { acessoNegadoPage } from './pages/acesso-negado.js'
-import { cadastroPage } from 'login-projetos/pages/cadastro'
 import { loginProjetosConfig } from './login-config.js'
-import { clientesPage } from './pages/clientes.js'
-import { configuracoesPage } from './pages/configuracoes.js'
-import { dashboardPage } from './pages/dashboard.js'
-import { estoquePage } from './pages/estoque.js'
-import { buffetPage } from './pages/buffet.js'
-import { financeiroPage } from './pages/financeiro.js'
-import { loginPage } from 'login-projetos/pages/login'
 import { naoEncontradoPage } from './pages/nao-encontrado.js'
-import { comprasPage, fornecedoresPage } from './pages/compras.js'
-import { produtosPage } from './pages/produtos.js'
-import { recuperarSenhaPage } from 'login-projetos/pages/recuperar-senha'
-import { redefinirSenhaPage } from 'login-projetos/pages/redefinir-senha'
-import { vendasPage } from './pages/vendas.js'
 
 /**
  * Registro de rotas do app.
@@ -41,7 +28,7 @@ export const routes = [
     icon: 'layout-dashboard',
     group: 'Visão geral',
     modulo: 'dashboard',
-    page: dashboardPage,
+    loadPage: () => import('./pages/dashboard.js').then((modulo) => modulo.dashboardPage),
   },
   {
     path: '/vendas',
@@ -49,9 +36,29 @@ export const routes = [
     title: 'Vendas',
     subtitle: 'Pedidos do dia e histórico de vendas',
     icon: 'shopping-cart',
-    group: 'Operação',
+    group: 'Atendimento',
     modulo: 'vendas',
-    page: vendasPage,
+    loadPage: () => import('./pages/vendas.js').then((modulo) => modulo.vendasPage),
+  },
+  {
+    path: '/clientes',
+    label: 'Clientes',
+    title: 'Clientes',
+    subtitle: 'Cadastro e histórico de compras',
+    icon: 'users',
+    group: 'Atendimento',
+    modulo: 'clientes',
+    loadPage: () => import('./pages/clientes.js').then((modulo) => modulo.clientesPage),
+  },
+  {
+    path: '/produtos',
+    label: 'Produtos',
+    title: 'Produtos',
+    subtitle: 'Catálogo, preços e imagens dos produtos',
+    icon: 'package',
+    group: 'Produtos e estoque',
+    modulo: 'estoque',
+    loadPage: () => import('./pages/produtos.js').then((modulo) => modulo.produtosPage),
   },
   {
     path: '/estoque',
@@ -59,9 +66,9 @@ export const routes = [
     title: 'Estoque',
     subtitle: 'Produtos, insumos e ponto de reposição',
     icon: 'package',
-    group: 'Operação',
+    group: 'Produtos e estoque',
     modulo: 'estoque',
-    page: estoquePage,
+    loadPage: () => import('./pages/estoque.js').then((modulo) => modulo.estoquePage),
   },
   {
     path: '/buffet',
@@ -69,9 +76,9 @@ export const routes = [
     title: 'Estoque Buffet',
     subtitle: 'Fechamento, contagem e histórico do buffet',
     icon: 'cooking-pot',
-    group: 'Operação',
+    group: 'Produtos e estoque',
     modulo: 'estoque',
-    page: buffetPage,
+    loadPage: () => import('./pages/buffet.js').then((modulo) => modulo.buffetPage),
   },
   {
     path: '/compras',
@@ -80,19 +87,9 @@ export const routes = [
     subtitle: 'Fornecedores, compras, recebimento e custo médio',
     hideTopbarTitle: true,
     icon: 'truck',
-    group: 'Operação',
+    group: 'Suprimentos',
     modulo: 'compras',
-    page: comprasPage,
-  },
-  {
-    path: '/clientes',
-    label: 'Clientes',
-    title: 'Clientes',
-    subtitle: 'Cadastro e histórico de compras',
-    icon: 'users',
-    group: 'Cadastros',
-    modulo: 'clientes',
-    page: clientesPage,
+    loadPage: () => import('./pages/compras.js').then((modulo) => modulo.comprasPage),
   },
   {
     path: '/fornecedores',
@@ -100,19 +97,9 @@ export const routes = [
     title: 'Fornecedores',
     subtitle: 'Cadastro e contatos dos fornecedores',
     icon: 'truck',
-    group: 'Cadastros',
+    group: 'Suprimentos',
     modulo: 'compras',
-    page: fornecedoresPage,
-  },
-  {
-    path: '/produtos',
-    label: 'Produtos',
-    title: 'Produtos',
-    subtitle: 'Catálogo, preços e imagens dos produtos',
-    icon: 'package',
-    group: 'Cadastros',
-    modulo: 'estoque',
-    page: produtosPage,
+    loadPage: () => import('./pages/compras.js').then((modulo) => modulo.fornecedoresPage),
   },
   {
     path: '/financeiro',
@@ -120,23 +107,20 @@ export const routes = [
     title: 'Financeiro',
     subtitle: 'Entradas, saídas e resultado',
     icon: 'wallet',
-    group: 'Gestão',
+    group: 'Financeiro',
     modulo: 'financeiro',
-    page: financeiroPage,
+    loadPage: () => import('./pages/financeiro.js').then((modulo) => modulo.financeiroPage),
   },
 
   {
-    // Chega-se aqui pela engrenagem do rodapé do menu lateral, não pela lista
-    // de navegação. Por isso `hidden: true` e nenhum `group`: é exatamente o
-    // que impede uma segunda opção "Configurações" aparecer no menu.
     path: '/configuracoes',
     label: 'Configurações',
     title: 'Configurações',
-    subtitle: 'Dados da empresa, usuários e permissões',
+    subtitle: 'Dados da empresa, filiais, usuários e permissões',
     icon: 'settings',
-    hidden: true,
+    group: 'Administração',
     modulo: 'configuracoes',
-    page: configuracoesPage,
+    loadPage: () => import('./pages/configuracoes.js').then((modulo) => modulo.configuracoesPage),
   },
 
 
@@ -149,7 +133,7 @@ export const routes = [
     subtitle: 'Acesso ao sistema',
     hidden: true,
     publica: true,
-    page: loginPage,
+    loadPage: () => import('login-projetos/pages/login').then((modulo) => modulo.loginPage),
   },
   {
     path: loginProjetosConfig.rotas.cadastro,
@@ -158,7 +142,7 @@ export const routes = [
     subtitle: 'Cadastro de usuário',
     hidden: true,
     publica: true,
-    page: cadastroPage,
+    loadPage: () => import('login-projetos/pages/cadastro').then((modulo) => modulo.cadastroPage),
   },
   {
     path: loginProjetosConfig.rotas.recuperar,
@@ -167,7 +151,7 @@ export const routes = [
     subtitle: 'Envio do link de redefinição',
     hidden: true,
     publica: true,
-    page: recuperarSenhaPage,
+    loadPage: () => import('login-projetos/pages/recuperar-senha').then((modulo) => modulo.recuperarSenhaPage),
   },
   {
     path: loginProjetosConfig.rotas.redefinir,
@@ -180,7 +164,7 @@ export const routes = [
     // já está logado (é a sessão de recuperação). Sem esta exceção, o guarda
     // mandaria a pessoa para o dashboard antes de ela definir a senha nova.
     permiteLogado: true,
-    page: redefinirSenhaPage,
+    loadPage: () => import('login-projetos/pages/redefinir-senha').then((modulo) => modulo.redefinirSenhaPage),
   },
 
   /* ----------------------------------------------------- acesso negado ---- */

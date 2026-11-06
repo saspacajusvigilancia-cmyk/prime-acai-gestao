@@ -15,7 +15,7 @@ vi.mock('login-projetos/neon', () => ({
   neon: {},
 }))
 
-const { abrirFormulario } = await import('../src/formulario.js')
+const { abrirFormulario, fechar } = await import('../src/formulario.js')
 const { vendasPage } = await import('../src/pages/vendas.js')
 const { formatBRL } = await import('../src/ui.js')
 const { hoje } = await import('../src/services/base.js')
@@ -111,6 +111,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  document.querySelector('.modal__caixa--estreita [data-cancelar].btn--ghost')?.click()
+  fechar()
   vi.restoreAllMocks()
 })
 
@@ -358,7 +360,7 @@ describe('a tela de Vendas em modo demonstração', () => {
     return root
   }
 
-  it('registra uma venda e o pedido aparece na lista', async () => {
+  it('não registra a venda nem a lista como salva sem Neon', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const root = montar()
     const antes = root.querySelectorAll('#tabela-vendas tbody tr').length
@@ -379,11 +381,12 @@ describe('a tela de Vendas em modo demonstração', () => {
     )
     await tick()
 
-    expect(root.querySelectorAll('#tabela-vendas tbody tr')).toHaveLength(antes + 1)
-    expect(document.querySelector('.toast')?.textContent ?? '').toMatch(/só nesta sessão/i)
+    expect(root.querySelectorAll('#tabela-vendas tbody tr')).toHaveLength(antes)
+    expect(document.querySelector('.modal__erro').textContent)
+      .toMatch(/Neon não está configurado.*Nenhuma alteração foi salva/)
   })
 
-  it('estorna um pedido: pede o motivo, avisa e a linha vira "Estornada"', async () => {
+  it('estorno de demonstração pede motivo, mas não altera a venda sem Neon', async () => {
     vi.spyOn(console, 'warn').mockImplementation(() => {})
     const root = montar()
     // Espera a primeira carga terminar, para o estorno mexer na lista já cheia.
@@ -391,6 +394,7 @@ describe('a tela de Vendas em modo demonstração', () => {
 
     const botao = root.querySelector('[data-acao="estornar-venda"]')
     expect(botao).toBeTruthy()
+    const vendaAntes = botao.closest('tr').textContent
     botao.click()
 
     // A janela pede o motivo — sem ele o banco (e a tela) recusam.
@@ -407,9 +411,10 @@ describe('a tela de Vendas em modo demonstração', () => {
     await enviar()
     await tick()
 
-    expect(document.querySelector('.toast')?.textContent ?? '').toMatch(/só nesta sessão/i)
-    expect(document.querySelector('.modal')).toBe(null)
-    expect(root.querySelector('#tabela-vendas tbody').textContent).toMatch(/Estornada/)
+    expect(document.querySelector('.modal')).toBeTruthy()
+    expect(document.querySelector('.modal__erro').textContent)
+      .toMatch(/Neon não está configurado.*Nenhuma alteração foi salva/)
+    expect(botao.closest('tr').textContent).toBe(vendaAntes)
   })
 
   it('navega pelos dias: ontem, com o rótulo certo e sem ir para o futuro', async () => {

@@ -7,13 +7,14 @@
  * criou: `src/routes.js` -> `login-projetos/pages/*` -> `mount(root)`.
  */
 // @vitest-environment jsdom
-import { describe, it, expect, beforeAll, beforeEach } from 'vitest'
+import { describe, it, expect, beforeAll, beforeEach, vi } from 'vitest'
 
 import { configurarLogin } from 'login-projetos'
 import { loginProjetosConfig } from '../src/login-config.js'
 import { createRouter } from '../src/router.js'
 import { routes } from '../src/routes.js'
 import { renderShell } from '../src/layout/shell.js'
+import { mostrarSaidaDemonstracao } from '../src/demo-saida.js'
 
 beforeAll(() => {
   // É exatamente o que o `main.js` faz no boot do app.
@@ -23,8 +24,10 @@ beforeAll(() => {
 const rota = (caminho) => routes.find((r) => r.path === caminho)
 
 /** Monta a página da rota num #app limpo, como o roteador faz. */
-function montar(caminho) {
-  const pagina = rota(caminho).page()
+async function montar(caminho) {
+  const registro = rota(caminho)
+  const construirPagina = registro.loadPage ? await registro.loadPage() : registro.page
+  const pagina = construirPagina()
   document.body.innerHTML = '<div id="app"></div>'
   const root = document.querySelector('#app')
   root.innerHTML = pagina.html
@@ -37,7 +40,7 @@ beforeEach(() => {
 })
 
 describe('o app registra as telas do pacote', () => {
-  it('separa Cadastros no menu e mantém Clientes, Fornecedores e Produtos nessa ordem', () => {
+  it('organiza a navegação por tarefa e inclui a Administração na rota existente', () => {
     const html = renderShell(routes)
     const caminhos = [...html.matchAll(/data-route="([^"]+)"/g)].map(([, caminho]) => caminho)
     const rotulos = caminhos.map((caminho) => rota(caminho).label)
@@ -45,17 +48,24 @@ describe('o app registra as telas do pacote', () => {
     expect(rotulos).toEqual([
       'Dashboard',
       'Vendas',
+      'Clientes',
+      'Produtos',
       'Estoque',
       'Estoque Buffet',
       'Compras',
-      'Clientes',
       'Fornecedores',
-      'Produtos',
       'Financeiro',
+      'Configurações',
     ])
-    expect(routes.find((r) => r.path === '/clientes').group).toBe('Cadastros')
-    expect(routes.find((r) => r.path === '/fornecedores').group).toBe('Cadastros')
-    expect(routes.find((r) => r.path === '/produtos').group).toBe('Cadastros')
+    expect(html).toContain('id="btn-sair"')
+    expect(routes.find((r) => r.path === '/clientes').group).toBe('Atendimento')
+    expect(routes.find((r) => r.path === '/fornecedores').group).toBe('Suprimentos')
+    expect(routes.find((r) => r.path === '/produtos').group).toBe('Produtos e estoque')
+    expect(routes.find((r) => r.path === '/configuracoes')).toMatchObject({
+      group: 'Administração',
+      modulo: 'configuracoes',
+    })
+    expect(html).toContain('Administração')
   })
 
   it('as quatro telas de autenticação estão registradas como públicas', () => {
@@ -63,7 +73,7 @@ describe('o app registra as telas do pacote', () => {
       const r = rota(caminho)
       expect(r, `rota ${caminho} ausente em src/routes.js`).toBeTruthy()
       expect(r.publica, `${caminho} deveria ser publica`).toBe(true)
-      expect(typeof r.page, `${caminho}.page deveria ser uma fábrica`).toBe('function')
+      expect(typeof (r.loadPage ?? r.page), `${caminho} deveria ter um carregador`).toBe('function')
     }
   })
 
@@ -79,9 +89,23 @@ describe('o app registra as telas do pacote', () => {
   })
 })
 
+describe('sair do modo de demonstração', () => {
+  it('mostra uma tela de saída e permite voltar ao sistema', () => {
+    const root = document.createElement('div')
+    const voltar = vi.fn()
+
+    mostrarSaidaDemonstracao(root, voltar)
+
+    expect(root.textContent).toContain('Você saiu do sistema local')
+    expect(root.textContent).toContain('não são gravados no banco')
+    root.querySelector('#demo-voltar').click()
+    expect(voltar).toHaveBeenCalledOnce()
+  })
+})
+
 describe('tela de login montada pelo app', () => {
-  it('renderiza o formulário com a marca e as rotas do app', () => {
-    const root = montar('/login')
+  it('renderiza o formulário com a marca e as rotas do app', async () => {
+    const root = await montar('/login')
 
     expect(root.querySelector('.auth')).toBeTruthy()
     expect(root.textContent).toContain('Prime Açaí')
@@ -97,8 +121,8 @@ describe('tela de login montada pelo app', () => {
     expect(root.textContent).toContain('O cadastro é por convite')
   })
 
-  it('o botão de olho alterna o type da senha sem apagar o valor digitado', () => {
-    const root = montar('/login')
+  it('o botão de olho alterna o type da senha sem apagar o valor digitado', async () => {
+    const root = await montar('/login')
     const senha = root.querySelector('#auth-senha')
 
     senha.value = 'minha-senha'
@@ -113,8 +137,8 @@ describe('tela de login montada pelo app', () => {
     expect(senha.value).toBe('minha-senha')
   })
 
-  it('e-mail inválido mostra o erro do campo e não chama o backend', () => {
-    const root = montar('/login')
+  it('e-mail inválido mostra o erro do campo e não chama o backend', async () => {
+    const root = await montar('/login')
     const form = root.querySelector('#form-login')
 
     form.elements.email.value = 'nao-e-email'

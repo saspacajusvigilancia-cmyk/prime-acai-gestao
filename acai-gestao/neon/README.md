@@ -43,10 +43,18 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `35_corrige_vw_titulos_financeiros_join.sql` | Troca o `JOIN` INNER por LEFT em `filiais` na view `vw_titulos_financeiros`, para que um usuário com `financeiro.consultar` sem `configuracoes.ver` não veja a lista "Contas a receber e a pagar" vazia; idempotente |
 | `36_integridade_estoque_principal_buffet.sql` | Estoque Principal = Loja + Geral e Buffet separado; bloqueia recebimento fornecedor → Buffet e transferências acima do saldo; adiciona chaves de idempotência para movimentos/recebimentos, fecha as RPCs antigas sem chave e corrige valor/alerta no `vw_resumo`; aditiva, mantém o ledger |
 | `37_gerenciamento_filiais.sql` | Numeração sequencial e dados de contato das filiais; cria a matriz de novas organizações; cadastro/edição/ativação/definição de matriz por RPC com `configuracoes.editar`; bloqueia escrita direta e exclusão física |
-| `38_isolamento_operacional_filiais.sql` | **Em validação local; não aplicar em produção.** Contexto persistente por filial, acessos explícitos, RLS restritiva, validação de operações protegendo também RPCs `SECURITY DEFINER`, saldos de estoque separados (sem RPC interna de saldo exposta ao navegador) e Buffet com escopo de filial; não atribui históricos ambíguos |
+| `38_isolamento_operacional_filiais.sql` | Contexto persistente por filial, acessos explícitos, RLS restritiva, validação de operações protegendo também RPCs `SECURITY DEFINER`, saldos de estoque separados e Buffet com escopo de filial; não atribui históricos ambíguos |
+| `39_buffet_rpcs_escopo_filial.sql` | Restringe as quatro RPCs `SECURITY DEFINER` de leitura do Buffet à filial ativa, inclusive detalhes e resumo por fechamento; mantém retornos e grants |
+| `40_garantir_perfil_convites_multiorg.sql` | Provisiona o perfil na organização do convite pendente, rejeitando convites ambíguos e preservando a organização de perfis existentes |
+| `41_grant_saldo_estoque_local_v2.sql` | Concede a `authenticated` a consulta do saldo por local, exigida pela view `vw_resumo` com `SECURITY INVOKER`; a função valida organização e filial ativa e continua bloqueada para `PUBLIC` e `anonymous` |
+| `42_restringir_rpc_financeiro_e_ficha_filial.sql` | Restringe `saldo_parcela` a `financeiro.ver` e organização/filial ativas; restringe `custo_ficha_tecnica` a `estoque.ver` e escopo ativo; valida também a filial da parcela e do título na baixa; usa cálculo privado nas rotinas financeiras internas |
+| `43_fluxo_controlado_vendas.sql` | Faz novas vendas iniciarem `Aguardando`, audita transições, separa confirmação de pagamento e cancelamento pendente, limita as consultas à filial ativa e valida metadados compatíveis com o canal; não altera vendas existentes |
 | `reverter_33_…` / `reverter_34_…` / `reverter_35_…` | A reverter 33 remove as tabelas/colunas/triggers/views que a 33 criou, preservando as tabelas antigas e os dados; a reverter 34 remove apenas a função de demonstração; a reverter 35 restaura o JOIN INNER da view de títulos |
 | `reverter_36_integridade_estoque_principal_buffet.sql` | Remove RPCs/triggers da 36, restaura permissões e `vw_resumo`, e preserva as chaves idempotentes já gravadas |
 | `reverter_37_gerenciamento_filiais.sql` | Remove a extensão da 37 somente quando os novos dados de contato estão vazios; aborta para não descartar dados cadastrados |
+| `reverter_39_buffet_rpcs_escopo_filial.sql` | Restaura as quatro definições anteriores à 39 sem alterar dados; aborta enquanto 38 estiver ativa. Para reverter ambas, execute 38 e depois 39 na mesma transação |
+| `reverter_41_grant_saldo_estoque_local_v2.sql` | Remove apenas o privilégio de execução concedido pela 41 |
+| `reverter_42_restringir_rpc_financeiro_e_ficha_filial.sql` | Rollback seguro: desabilita as RPCs públicas sem restaurar as definições vulneráveis; mantém o helper privado necessário às rotinas financeiras internas |
 | `reverter_08_…` até `reverter_32_…` (e as anteriores) | Reversões conservadoras; a 21 bloqueia categorias personalizadas em uso, a 22 bloqueia movimentos do estoque geral, a 23 impede remover WhatsApps cadastrados, a 24 preserva os novos metadados, a 26 não remove códigos gravados, a 27 bloqueia reversão quando já há operações/snapshots/autorizações, a 28 devolve a edição manual do código do cliente, a 29 volta as políticas ao formato sem organização sem apagar linhas, a 30 remove apenas os índices que criou, a 31 remove a RPC e os dois índices e a 32 restaura as chaves globais somente se não houver repetição entre organizações |
 | `garantir_perfil_novo.sql` | Versão de `garantir_perfil()` que lê e-mail e convite — conta sem convite nasce **inativa** (aprovação pelo administrador) e convite define papel/ativação. **Passo manual**, não é `NN_*.sql`; o app usa `aprovacaoManual: true` |
 | `classificar_produtos_buffet.sql` | Classificação inicial do Estoque Buffet: `Acai self-service` vira `buffet`, granola/leite em pó/morango/banana viram `insumo` e o retorno é ligado só em granola e leite em pó. **Passo manual**, não é `NN_*.sql`; a reversão está em `classificar_produtos_buffet_reverter.sql` |
@@ -64,12 +72,15 @@ Este projeto saiu do Supabase e passou a usar o **Neon**: Postgres gerenciado co
 | `carregar-demonstracao.mjs` | Carrega a demonstração numa branch **descartável** já migrada; exige `DEMO_DATABASE_URL`, `DEMO_CONFIRMAR=SIM`, zero vendas/compras e recusa o host de produção (`npm run carregar:demonstracao`) |
 | `zerar-operacional.mjs` | Zera as tabelas operacionais de uma branch **descartável**, com lista explícita, backup declarado e host de produção recusado (`npm run zerar:operacional`) |
 
-### Estado e segurança da migration 38
+### Estado e segurança das migrations locais
 
-A migration 38 está em desenvolvimento. Ela não foi aplicada no Neon, não teve
-deploy, e ainda não possui uma reversão automática segura. **Não a aplique em
-produção** antes de revisão, aprovação, backup recuperável e validação em uma
-branch de homologação.
+A migration 38 e a migration 43 permanecem somente no código local e não foram
+aplicadas no Neon.
+Sua reversão conservadora existe e passou na cadeia limpa do harness PGlite;
+ela aborta quando encontra acessos explícitos ou operações ligadas a filiais.
+Esse teste local não substitui a validação em uma branch Neon de homologação.
+**Não aplique a migration nem sua reversão em produção** antes de revisão,
+aprovação, backup recuperável e validação nesse ambiente.
 
 Ela não preenche `filial_id` em movimentos ou perfis históricos sem prova
 documental. O diagnóstico de produção informado na auditoria anterior encontrou
@@ -81,16 +92,19 @@ de uma loja.
 
 A suíte PGlite valida criação e troca de contexto, negação de filial não
 autorizada, leitura e escrita de estoque entre duas filiais da mesma
-organização, transferência local e operações idempotentes. A execução completa
-do harness também tenta reverter migrações antigas depois de inserir dados de
-teste; hoje essa etapa retorna falhas de dependências/guardas de reversão
-legadas. Isso não comprova uma reversão da 38. Consulte
+organização, transferência local e operações idempotentes. A validação da
+matriz confirma RLS restritiva nas 27 tabelas operacionais dimensionadas,
+catálogos compartilhados por organização e o escopo dos itens de compra pela
+compra vinculada. O harness também passa pelas salvaguardas e reverte a cadeia
+em uma instância PGlite limpa (`== TUDO OK ==`). Isso não comprova o
+comportamento do Neon/Data API, nem autoriza aplicar migrations em produção. Consulte
 [`docs/MULTIFILIAL.md`](../docs/MULTIFILIAL.md) para os resultados e pendências.
 
-Até existir uma estratégia de reversão aprovada, a abordagem segura é não
-aplicar a migration. Depois de haver operações por filial, qualquer correção
-deve ser aditiva e forward-only; não remova colunas, políticas, acessos ou
-movimentos para “voltar” ao modelo anterior.
+Até validar a cadeia em ambiente Neon de homologação autorizado e aprovar a
+reversão para esse destino, a abordagem segura é não aplicar a migration.
+Depois de haver operações por filial, qualquer correção deve ser aditiva e
+forward-only; não remova colunas, políticas, acessos ou movimentos para “voltar”
+ao modelo anterior.
 
 ### Erro de função não encontrada ao receber compra
 
@@ -120,6 +134,12 @@ Para aplicar as migrações, na ordem dos nomes:
 ```bash
 node neon/aplicar.mjs
 ```
+
+O aplicador só conecta quando `.env.test.local` configura
+`VITE_NEON_URL`, `DATABASE_URL` e os IDs de projeto/branch/endpoint do mesmo
+destino sintético, além de `NEON_TEST_DATASET=synthetic`. O preflight rejeita
+produção antes de abrir a conexão; não use o `.env` padrão como alvo de
+migrations. A string de conexão não é impressa pelo aplicador.
 
 O `aplicar.mjs` aplica as migrações numeradas em ordem alfabética, cada arquivo
 na própria transação. A migração `12` contém dados de estudo não idempotentes e
@@ -1076,53 +1096,68 @@ configurar `saspacajusvigilancia@gmail.com` como administrador inicial:
 1. Crie a conta com esse e-mail e entre no app ao menos uma vez, para gerar o
    perfil.
 2. No SQL Editor do Neon, execute `neon/promover-administrador-inicial.sql`.
-   O script confere que existe uma única conta e ativa o perfil.
+   O script confere que existe uma única conta, ativa o perfil e concede acesso
+   explícito à filial MATRIZ. Esse acesso é necessário para o RLS e o seletor de
+   filial após a migration 38.
 
 Esse arquivo é uma ação manual e não é executado pelo aplicador de migrations.
 
 ## Cliente no navegador
 
-`src/lib/neon.js` cria o cliente com uma URL só:
+`src/lib/neon.js` configura Auth e Data API com as URLs emitidas pelo Neon:
 
 ```js
-createClient(import.meta.env.VITE_NEON_URL, {
-  auth: { adapter: SupabaseAuthAdapter() },
+createClient({
+  auth: {
+    url: import.meta.env.VITE_NEON_AUTH_URL,
+    adapter: SupabaseAuthAdapter(),
+  },
+  dataApi: {
+    url: import.meta.env.VITE_NEON_DATA_API_URL,
+  },
 })
 ```
 
-O SDK deriva os dois endpoints dessa URL:
+Os endpoints públicos têm caminhos distintos:
 
 ```
-VITE_NEON_URL = https://ep-xxx.c-2.us-east-2.aws.neon.tech/neondb
-  Auth      -> https://ep-xxx.neonauth.c-2.us-east-2.aws.neon.tech/neondb/auth
-  Data API  -> https://ep-xxx.apirest.c-2.us-east-2.aws.neon.tech/neondb/rest/v1
+VITE_NEON_AUTH_URL=https://ep-xxx.neonauth.c-2.aws.neon.tech/neondb/auth
+VITE_NEON_DATA_API_URL=https://ep-xxx.apirest.c-2.aws.neon.tech/neondb/rest/v1
 ```
 
 Como o export chama-se `neon` e a API de consulta é a mesma, os serviços
 (`src/services/*`) continuam usando `neon.from(...)` sem outras mudanças.
+`VITE_NEON_URL` permanece apenas como compatibilidade para ambientes legados.
 
-## Testar a base real
+## Testar uma branch sintética
 
-Com o `.env` preenchido **e uma conta de teste**:
+Os comandos remotos de teste exigem um `.env.test` explícito, com
+`VITE_NEON_URL` e `DATABASE_URL` do mesmo endpoint, além dos identificadores
+públicos do projeto, da branch e do endpoint. `NEON_TEST_DATASET=synthetic` é
+uma confirmação operacional: só defina depois de verificar que a branch não
+contém dados reais e que o destino está autorizado.
 
-```env
-VITE_NEON_URL=https://ep-xxx.c-2.us-east-2.aws.neon.tech/neondb
-VITE_TESTE_EMAIL=voce@exemplo.com
-VITE_TESTE_SENHA=sua-senha
-```
+As variáveis obrigatórias são `VITE_NEON_URL`, `DATABASE_URL`,
+`NEON_TEST_PROJECT_ID`, `NEON_TEST_BRANCH_ID`, `NEON_TEST_ENDPOINT_ID` e
+`NEON_TEST_DATASET=synthetic`. Os valores de endpoint, branch e conta devem ser
+obtidos do Console/ambiente de teste confirmado; não há URL ou credencial de
+desenvolvimento validada para registrar aqui. Use valores reais somente em
+configuração local não versionada ou no ambiente de execução, nunca no README,
+código ou bundle. Não reutilize credenciais de produção.
 
-As duas da conta também podem vir do ambiente — melhor, porque o `.env` é lido
-pelo Vite no build e ninguém quer senha passeando por arquivo de frontend:
+As credenciais `VITE_TESTE_EMAIL` e `VITE_TESTE_SENHA` podem ser fornecidas
+apenas ao processo do teste remoto. Não as imprima nem registre.
 
-```powershell
-$env:VITE_TESTE_EMAIL = 'voce@exemplo.com'
-$env:VITE_TESTE_SENHA = 'sua-senha'
-npm run testar:base
-```
+`npm run dev` usa modo demo sem endpoint. `npm run dev:teste` inicia o app
+autenticado apenas depois de validar a configuração acima. `npm test` bloqueia
+a inicialização se detectar a branch de produção; as suítes unitárias podem
+rodar sem URLs de banco. Scripts remotos também validam as duas URLs e os
+identificadores antes de qualquer request ou conexão PostgreSQL.
 
 A conta é necessária porque o RLS é restrito: sem JWT o Data API recusa tudo
 (`missing authentication credentials: required authorization bearer token in
-JWT format`). O roteiro entra por `POST /auth/sign-in/email`.
+JWT format`). O roteiro entra por `POST /auth/sign-in/email`; tokens são
+mantidos em memória e não devem ser impressos ou registrados.
 
 Duas armadilhas do Managed Better Auth que custaram tempo:
 

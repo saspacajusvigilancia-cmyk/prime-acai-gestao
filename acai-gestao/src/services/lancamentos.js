@@ -42,6 +42,7 @@ export function criarLancamento(valores) {
 
   return gravar({
     nome: 'lançamento',
+    exigirPersistencia: true,
     // Sem Neon, o id vira algo legível e improvável de repetir na sessão.
     registro: {
       id: `L-${String(Date.now()).slice(-4)}`,

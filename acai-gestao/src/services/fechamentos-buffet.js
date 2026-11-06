@@ -19,6 +19,7 @@ export function abrirFechamentoBuffet(turno = 'Geral') {
 
   return gravar({
     nome: 'abertura de fechamento do Buffet',
+    exigirPersistencia: true,
     registro: { turno: nomeTurno },
     escrever: async (neon) => {
       const { data, error } = await neon.rpc('abrir_fechamento_buffet_turno', {
@@ -49,6 +50,7 @@ export function fecharFechamentoBuffet(id, itens = []) {
 
   return gravar({
     nome: 'fechamento do Buffet',
+    exigirPersistencia: true,
     registro: { id, itens: linhas },
     escrever: async (neon) => {
       const { data, error } = await neon.rpc('fechar_fechamento_buffet', {
@@ -76,6 +78,7 @@ export function reabrirFechamentoBuffet(id, motivo) {
 
   return gravar({
     nome: 'reabertura de fechamento do Buffet',
+    exigirPersistencia: true,
     registro: { id, motivo: texto },
     escrever: async (neon) => {
       const { data, error } = await neon.rpc('reabrir_fechamento_buffet', {

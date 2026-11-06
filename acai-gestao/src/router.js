@@ -21,10 +21,13 @@
  * quem não está logado vai parar no login. Ele é síncrono de propósito: quem
  * sabe se há sessão é o `main.js`, que carrega isso antes de criar o roteador.
  */
-export function createRouter({ routes, raiz, shells, guarda, onRender }) {
+export function createRouter({ routes, raiz, shells, guarda, onRender, beforeNavigate }) {
   const fallback = routes.find((rota) => rota.path === '*')
   let desmontar = null
   let shellAtual = null
+  let caminhoRenderizado = null
+  let sequenciaNavegacao = 0
+  let sequenciaRender = 0
 
   function currentPath() {
     const bruto = window.location.hash.replace(/^#/, '')
@@ -39,13 +42,14 @@ export function createRouter({ routes, raiz, shells, guarda, onRender }) {
 
   function navigate(path) {
     if (currentPath() === path) {
-      render()
+      void renderComProtecao({ forcar: true })
       return
     }
     window.location.hash = path
   }
 
   function render() {
+    const renderAtual = ++sequenciaRender
     const path = currentPath()
     const rota = match(path)
 
@@ -60,31 +64,96 @@ export function createRouter({ routes, raiz, shells, guarda, onRender }) {
 
     const tipo = rota.publica ? 'auth' : 'app'
 
+    function mostrarFalhaCarga(erro) {
+      if (renderAtual !== sequenciaRender || currentPath() !== path) return
+      console.error(`[router] Falha ao carregar a rota ${path}:`, erro)
+
+      if (typeof desmontar === 'function') desmontar()
+      desmontar = null
+      if (shellAtual !== tipo) {
+        if (typeof shells[shellAtual]?.aoDesmontar === 'function') shells[shellAtual].aoDesmontar(raiz)
+        raiz.innerHTML = shells[tipo].html()
+        shellAtual = tipo
+        if (typeof shells[tipo].aoMontar === 'function') shells[tipo].aoMontar(raiz)
+      }
+
+      const outlet = raiz.querySelector(shells[tipo].outlet)
+      outlet.innerHTML = '<p class="alert alert--danger" role="alert">Não foi possível abrir esta tela. Tente novamente.</p>'
+      if (typeof onRender === 'function') onRender({ rota, path, outlet, shell: tipo })
+      caminhoRenderizado = path
+    }
+
+    function desenhar(pagina) {
+      if (renderAtual !== sequenciaRender || currentPath() !== path) return
+
+      // Libera listeners e gráficos da página anterior antes de trocar o HTML.
+      if (typeof desmontar === 'function') desmontar()
+      desmontar = null
+
+      if (shellAtual !== tipo) {
+        if (typeof shells[shellAtual]?.aoDesmontar === 'function') shells[shellAtual].aoDesmontar(raiz)
+
+        raiz.innerHTML = shells[tipo].html()
+        shellAtual = tipo
+        if (typeof shells[tipo].aoMontar === 'function') shells[tipo].aoMontar(raiz)
+      }
+
+      const outlet = raiz.querySelector(shells[tipo].outlet)
+      outlet.innerHTML = pagina.html
+
+      if (typeof pagina.mount === 'function') {
+        desmontar = pagina.mount(outlet) ?? null
+      }
+
+      if (typeof onRender === 'function') onRender({ rota, path, outlet, shell: tipo })
+      caminhoRenderizado = path
+    }
+
+    if (typeof rota.loadPage === 'function') {
+      void rota.loadPage().then(
+        (construirPagina) => {
+          if (typeof construirPagina !== 'function') {
+            mostrarFalhaCarga(new TypeError(`A rota ${path} não retornou uma página válida.`))
+            return
+          }
+          desenhar(construirPagina({ path, rota }))
+        },
+        mostrarFalhaCarga,
+      )
+      return
+    }
+
     // Libera listeners e gráficos da página anterior antes de trocar o HTML.
-    if (typeof desmontar === 'function') desmontar()
-    desmontar = null
-
-    if (shellAtual !== tipo) {
-      if (typeof shells[shellAtual]?.aoDesmontar === 'function') shells[shellAtual].aoDesmontar(raiz)
-
-      raiz.innerHTML = shells[tipo].html()
-      shellAtual = tipo
-      if (typeof shells[tipo].aoMontar === 'function') shells[tipo].aoMontar(raiz)
-    }
-
-    const outlet = raiz.querySelector(shells[tipo].outlet)
-    const pagina = rota.page({ path, rota })
-
-    outlet.innerHTML = pagina.html
-
-    if (typeof pagina.mount === 'function') {
-      desmontar = pagina.mount(outlet) ?? null
-    }
-
-    if (typeof onRender === 'function') onRender({ rota, path, outlet, shell: tipo })
+    desenhar(rota.page({ path, rota }))
   }
 
-  window.addEventListener('hashchange', render)
+  async function renderComProtecao({ forcar = false, apenasAutorizar = false } = {}) {
+    const destino = currentPath()
+    const origem = caminhoRenderizado
+    if (origem && beforeNavigate && (forcar || destino !== origem)) {
+      const sequencia = ++sequenciaNavegacao
+      const permitido = await beforeNavigate({ origem, destino })
+      if (sequencia !== sequenciaNavegacao || currentPath() !== destino) return false
+      if (!permitido) {
+        if (destino !== origem) {
+          window.history.replaceState(
+            window.history.state,
+            '',
+            `${window.location.pathname}${window.location.search}#${origem}`,
+          )
+        }
+        return false
+      }
+    }
+    if (apenasAutorizar) return true
+    if (currentPath() === destino) render()
+    return currentPath() === destino
+  }
+
+  const aoMudarHash = () => {
+    void renderComProtecao()
+  }
+  window.addEventListener('hashchange', aoMudarHash)
 
   /**
    * Reconstrói o invólucro (menu lateral) na próxima renderização.
@@ -93,7 +162,8 @@ export function createRouter({ routes, raiz, shells, guarda, onRender }) {
    * permissões mudam (um admin concedeu/negou acesso), é preciso refazê-lo —
    * senão a pessoa continua vendo itens que já não pode abrir.
    */
-  function reconstruirMenu() {
+  async function reconstruirMenu() {
+    if (!await renderComProtecao({ forcar: true, apenasAutorizar: true })) return
     // Desmonta o invólucro antes de esquecê-lo: `render` só chama
     // `aoDesmontar` quando o tipo muda, e aqui o shell é o mesmo. Sem isso,
     // listeners de `document`/`window` e o intervalo do badge se acumulam a
@@ -105,5 +175,11 @@ export function createRouter({ routes, raiz, shells, guarda, onRender }) {
     render()
   }
 
-  return { render, navigate, currentPath, match, reconstruirMenu }
+  function destruir() {
+    window.removeEventListener('hashchange', aoMudarHash)
+    if (typeof desmontar === 'function') desmontar()
+    if (typeof shells[shellAtual]?.aoDesmontar === 'function') shells[shellAtual].aoDesmontar(raiz)
+  }
+
+  return { render, navigate, currentPath, match, reconstruirMenu, destruir }
 }

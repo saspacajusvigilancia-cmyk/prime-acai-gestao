@@ -46,7 +46,7 @@ function acoesHtml(u) {
   if (u.pendente) {
     return `
       <div class="table__acoes">
-        <button class="btn btn--ghost btn--sm" type="button" data-acao="cancelar-convite" data-id="${esc(u.id)}" title="Cancelar convite">
+        <button class="btn btn--ghost btn--sm" type="button" data-acao="cancelar-convite" data-id="${esc(u.id)}" title="Cancelar convite" aria-label="Cancelar convite de ${esc(u.email || u.id)}">
           <i data-lucide="x"></i>
         </button>
       </div>
@@ -67,16 +67,16 @@ function acoesHtml(u) {
   const ehProprio = u.id === estadoSessao.perfil?.id
   return `
     <div class="table__acoes">
-      <button class="btn btn--ghost btn--sm" type="button" data-acao="editar" data-id="${esc(u.id)}" title="Editar">
+      <button class="btn btn--ghost btn--sm" type="button" data-acao="editar" data-id="${esc(u.id)}" title="Editar" aria-label="Editar usuário ${esc(u.full_name || u.email || '')}">
         <i data-lucide="pencil"></i>
       </button>
-      <button class="btn btn--ghost btn--sm" type="button" data-acao="permissoes" data-id="${esc(u.id)}" title="Permissões">
+      <button class="btn btn--ghost btn--sm" type="button" data-acao="permissoes" data-id="${esc(u.id)}" title="Permissões" aria-label="Permissões de ${esc(u.full_name || u.email || '')}">
         <i data-lucide="shield"></i>
       </button>
-      ${ehProprio ? '' : `<button class="btn btn--ghost btn--sm" type="button" data-acao="toggle-ativo" data-id="${esc(u.id)}" title="${desativarLabel}">
+      ${ehProprio ? '' : `<button class="btn btn--ghost btn--sm" type="button" data-acao="toggle-ativo" data-id="${esc(u.id)}" title="${desativarLabel}" aria-label="${desativarLabel} usuário ${esc(u.full_name || u.email || '')}">
         <i data-lucide="${desativarIcon}"></i>
       </button>`}
-      <button class="btn btn--ghost btn--sm" type="button" data-acao="reset-senha" data-id="${esc(u.id)}" title="Redefinir senha" data-email="${esc(u.email || '')}">
+      <button class="btn btn--ghost btn--sm" type="button" data-acao="reset-senha" data-id="${esc(u.id)}" title="Redefinir senha" aria-label="Redefinir senha de ${esc(u.full_name || u.email || '')}" data-email="${esc(u.email || '')}">
         <i data-lucide="key-round"></i>
       </button>
     </div>

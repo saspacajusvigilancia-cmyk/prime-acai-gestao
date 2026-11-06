@@ -129,6 +129,7 @@ export function registrarMovimentacao({
 
   return gravar({
     nome: 'movimentação de estoque',
+    exigirPersistencia: true,
     registro: { produtoId, quantidade: qtd, origem, destino, motivo: texto, chaveIdempotencia: chave },
     escrever: async (neon) => {
       if (LOCAL_ESTOQUE[origem] && LOCAL_ESTOQUE[destino]) {
@@ -247,6 +248,7 @@ export function ajustarSaldo({
 
   return gravar({
     nome: 'ajuste de saldo',
+    exigirPersistencia: true,
     registro: { produtoId, contado: numero, motivo: texto, local, estoqueLocal, saldo: numero },
     escrever: async (neon) => {
       const { data, error } = await neon.rpc('ajustar_saldo_estoque_local', {

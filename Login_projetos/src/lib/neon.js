@@ -15,14 +15,13 @@ import { config } from '../config.js'
  * - **Data API** (PostgREST), onde as consultas `.from(...).select()` continuam
  *   iguais às do Supabase.
  *
- * Uma única URL resolve os dois: o SDK deriva o endpoint de Auth e o de Data
- * API a partir dela. É a URL HTTPS do banco (host + database), **não** a string
- * de conexão do Postgres. Exemplo:
+ * O SDK recebe separadamente as URLs públicas de Auth e Data API. Exemplo:
  *
- *   VITE_NEON_URL=https://ep-xxx.c-2.us-east-2.aws.neon.tech/neondb
+ *   VITE_NEON_AUTH_URL=https://ep-xxx.neonauth.c-2.aws.neon.tech/neondb/auth
+ *   VITE_NEON_DATA_API_URL=https://ep-xxx.apirest.c-2.aws.neon.tech/neondb/rest/v1
  *
- * Sem a variável, `neon` fica `null` e o host deve rodar em modo demonstração
- * (dados de exemplo seus).
+ * `VITE_NEON_URL` ainda é aceito para ambientes antigos: o SDK deriva dele
+ * ambas as URLs. Sem nenhuma URL, `neon` fica `null` e o host roda em demo.
  *
  * Segurança: a URL vai no bundle do navegador. Quem protege os dados é o RLS
  * (veja `sql/00_profiles.sql`) — exatamente como era com o Supabase.
@@ -36,16 +35,33 @@ import { config } from '../config.js'
  * do modo demonstração dobraria de tamanho sem motivo.
  */
 const url = import.meta.env.VITE_NEON_URL
+const authUrl = import.meta.env.VITE_NEON_AUTH_URL
+const dataApiUrl = import.meta.env.VITE_NEON_DATA_API_URL
+const endpointsExplicitos = Boolean(authUrl || dataApiUrl)
 
-export const neonConfigurado = Boolean(url)
+if (endpointsExplicitos && (!authUrl || !dataApiUrl)) {
+  throw new Error('Configure juntas VITE_NEON_AUTH_URL e VITE_NEON_DATA_API_URL.')
+}
 
-export const neon = neonConfigurado
-  ? createClient(String(url).trim(), {
+export const neonConfigurado = Boolean(endpointsExplicitos || url)
+
+export const neon = endpointsExplicitos
+  ? createClient({
       auth: {
+        url: String(authUrl).trim(),
         adapter: SupabaseAuthAdapter(),
       },
+      dataApi: {
+        url: String(dataApiUrl).trim(),
+      },
     })
-  : null
+  : neonConfigurado
+    ? createClient(String(url).trim(), {
+        auth: {
+          adapter: SupabaseAuthAdapter(),
+        },
+      })
+    : null
 
 /** Retorna o cliente configurado pelo host ou o cliente Neon padrão. */
 export function clienteAuth() {

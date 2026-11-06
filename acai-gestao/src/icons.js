@@ -19,9 +19,13 @@ import {
   BarChart3,
   DollarSign,
   AlertTriangle,
+  Ban,
   ClipboardList,
+  ClipboardCheck,
   Trash2,
   Pencil,
+  HandCoins,
+  Receipt,
   Store,
   CreditCard,
   ChartLine,
@@ -69,6 +73,10 @@ import {
   AlignLeft,
   Tags,
   CircleCheck,
+  SlidersHorizontal,
+  RefreshCw,
+  ShieldOff,
+  Star,
 } from 'lucide'
 
 /**
@@ -96,9 +104,13 @@ export const iconSet = {
   BarChart3,
   DollarSign,
   AlertTriangle,
+  Ban,
   ClipboardList,
+  ClipboardCheck,
   Trash2,
   Pencil,
+  HandCoins,
+  Receipt,
   Store,
   CreditCard,
   ChartLine,
@@ -146,6 +158,10 @@ export const iconSet = {
   AlignLeft,
   Tags,
   CircleCheck,
+  SlidersHorizontal,
+  RefreshCw,
+  ShieldOff,
+  Star,
 }
 
 /**

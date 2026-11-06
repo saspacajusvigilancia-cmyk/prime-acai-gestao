@@ -71,6 +71,11 @@ export async function carregarPermissoes() {
     return estadoSessao.permissoes
   }
 
+  if (!estadoSessao.usuario) {
+    estadoSessao.permissoes = new Set()
+    return estadoSessao.permissoes
+  }
+
   try {
     const { data, error } = await neon.rpc('minhas_permissoes')
     if (error) throw error

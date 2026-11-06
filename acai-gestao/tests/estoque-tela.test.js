@@ -13,6 +13,7 @@ vi.mock('login-projetos/neon', () => ({
 }))
 
 const { estoquePage } = await import('../src/pages/estoque.js')
+const { fechar } = await import('../src/formulario.js')
 
 let avisos = []
 
@@ -23,6 +24,8 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  document.querySelector('.modal__caixa--estreita [data-cancelar].btn--ghost')?.click()
+  fechar()
   vi.restoreAllMocks()
 })
 
@@ -175,21 +178,27 @@ describe('tela de Estoque — livro-razão do saldo', () => {
     expect(campo('contado').value).toBe('0')
   })
 
-  it('movimentar em modo demonstração move o saldo na tela e avisa', async () => {
+  it('bloqueia movimentação em modo demonstração sem alterar o saldo', async () => {
     const root = montar()
+    const linha = [...root.querySelectorAll('#tabela-estoque tbody tr')]
+      .find((item) => item.textContent.includes('Açaí tradicional 300ml'))
+    const conteudoAntes = linha.textContent
     root.querySelector('[data-acao="movimentar-produto"]').click()
 
     campo('quantidade').value = '10'
     campo('motivo').value = 'Compra de teste'
     await submeter()
 
-    // 86 + 10 (fornecedor → estoque).
-    expect(root.textContent).toContain('96 un')
-    expect(document.querySelector('.toast')?.textContent ?? '').toMatch(/nesta sessão/i)
+    expect(linha.textContent).toBe(conteudoAntes)
+    expect(document.querySelector('.modal__erro').textContent)
+      .toMatch(/Neon não está configurado.*Nenhuma alteração foi salva/)
   })
 
-  it('a contagem registra a diferença, não o total', async () => {
+  it('bloqueia ajuste de saldo em modo demonstração sem alterar o estoque', async () => {
     const root = montar()
+    const linha = [...root.querySelectorAll('#tabela-estoque tbody tr')]
+      .find((item) => item.textContent.includes('Açaí tradicional 300ml'))
+    const conteudoAntes = linha.textContent
     root.querySelector('[data-acao="contar-produto"]').click()
 
     campo('contado').value = '90'
@@ -197,7 +206,9 @@ describe('tela de Estoque — livro-razão do saldo', () => {
     campo('local').value = 'abertura'
     await submeter()
 
-    expect(root.textContent).toContain('90 un')
+    expect(linha.textContent).toBe(conteudoAntes)
+    expect(document.querySelector('.modal__erro').textContent)
+      .toMatch(/Neon não está configurado.*Nenhuma alteração foi salva/)
   })
 
   it('o Histórico de movimentação abre o painel (no modo demonstração avisa que depende do banco)', async () => {

@@ -16,7 +16,7 @@
  *    foi gravado, em vez de fingir que salvou.
  */
 
-import { campoHtml, confirmar } from '../formulario.js'
+import { campoHtml, confirmar, protegerFormulario } from '../formulario.js'
 import { renderIcons } from '../icons.js'
 import { estadoSessao } from 'login-projetos/sessao'
 import { emailValido } from 'login-projetos/auth'
@@ -156,8 +156,8 @@ const GRUPOS = [
 const PREFERENCIAS = {
   id: 'preferencias',
   icone: 'clock',
-  titulo: 'Preferências',
-  descricao: 'Valores que o sistema aplica em todas as telas.',
+  titulo: 'Preferências gerais',
+  descricao: 'Valores organizacionais aplicados em todas as telas e filiais.',
   campos: [
     {
       nome: 'moeda',
@@ -353,6 +353,7 @@ function iniciarPainelFiliais(root, podeEditar) {
   const titulo = root.querySelector('#filial-form-titulo')
   const botaoSalvar = root.querySelector('#filial-salvar')
   const botaoCancelar = root.querySelector('#filial-cancelar')
+  const protecao = protegerFormulario(form)
   const podeGravar = podeEditar && neonConfigurado
   let filiais = []
   let acessos = []
@@ -547,17 +548,20 @@ function iniciarPainelFiliais(root, podeEditar) {
   function limparFormulario() {
     filialEditada = null
     form.reset()
+    protecao.redefinir()
     titulo.textContent = 'Cadastrar filial'
     botaoSalvar.querySelector('span').textContent = 'Salvar filial'
     botaoCancelar.hidden = true
     mostrarFeedback('')
   }
 
-  function prepararEdicao(filial) {
+  async function prepararEdicao(filial) {
+    if (!await protecao.confirmarDescarte()) return
     filialEditada = filial.id
     for (const campo of form.elements) {
       if (campo.name) campo.value = filial[campo.name] ?? ''
     }
+    protecao.redefinir()
     titulo.textContent = 'Editar filial'
     botaoSalvar.querySelector('span').textContent = 'Salvar alterações'
     botaoCancelar.hidden = false
@@ -676,13 +680,13 @@ function iniciarPainelFiliais(root, podeEditar) {
     }
   }
 
-  function acionarLista(evento) {
+  async function acionarLista(evento) {
     const editar = evento.target.closest('[data-filial-editar]')
     const matriz = evento.target.closest('[data-filial-matriz]')
     const status = evento.target.closest('[data-filial-status]')
     if (editar) {
       const filial = filiais.find((item) => item.id === editar.dataset.filialEditar)
-      if (filial) prepararEdicao(filial)
+      if (filial) await prepararEdicao(filial)
     } else if (matriz) {
       const filial = filiais.find((item) => item.id === matriz.dataset.filialMatriz)
       if (filial) executarAcao('definir_matriz', filial)
@@ -692,7 +696,8 @@ function iniciarPainelFiliais(root, podeEditar) {
     }
   }
 
-  function aoCancelar() {
+  async function aoCancelar() {
+    if (!await protecao.confirmarDescarte()) return
     limparFormulario()
   }
 
@@ -717,6 +722,7 @@ function iniciarPainelFiliais(root, podeEditar) {
     botaoCancelar.removeEventListener('click', aoCancelar)
     lista.removeEventListener('click', acionarLista)
     acessosLista?.removeEventListener('change', alterarAcesso)
+    protecao.limpar()
     delete root.recarregarFiliais
   }
 }
@@ -733,12 +739,14 @@ export function configuracoesPage() {
     html: `
       <div class="config">
         <aside class="config__secoes">
-          <p class="config__secoes-titulo">Preferências do sistema</p>
-          <nav aria-label="Seções de configurações">
-            <ul class="config__lista">
+          <p class="config__secoes-titulo">Administração da organização</p>
+          <nav class="config__navegacao" aria-label="Seções de configurações">
+            <div class="config__grupo">
+              <p class="config__grupo-titulo">Organização</p>
+              <ul class="config__lista">
               <li>
                 <button class="config__secao is-active" id="btn-empresa" type="button" data-painel="empresa" aria-controls="painel-empresa" aria-pressed="true">
-                  <i data-lucide="building-2"></i><span>Configuração da Empresa</span>
+                  <i data-lucide="building-2"></i><span>Empresa e preferências</span>
                 </button>
               </li>
               <li>
@@ -746,9 +754,14 @@ export function configuracoesPage() {
                   <i data-lucide="store"></i><span>Filiais e lojas</span>
                 </button>
               </li>
+              </ul>
+            </div>
+            ${podeUsuarios || podePermissoes ? `<div class="config__grupo">
+              <p class="config__grupo-titulo">Acessos</p>
+              <ul class="config__lista">
               ${podeUsuarios ? `<li>
                 <button class="config__secao" id="btn-usuarios" type="button" data-painel="usuarios" aria-controls="painel-usuarios" aria-pressed="false">
-                  <i data-lucide="users"></i><span>Usuários</span>
+                  <i data-lucide="users"></i><span>Usuários e acessos</span>
                 </button>
               </li>` : ''}
               ${podePermissoes ? `<li>
@@ -756,17 +769,23 @@ export function configuracoesPage() {
                   <i data-lucide="shield-check"></i><span>Permissões</span>
                 </button>
               </li>` : ''}
+              </ul>
+            </div>` : ''}
+            <div class="config__grupo">
+              <p class="config__grupo-titulo">Operação</p>
+              <ul class="config__lista">
               <li>
                 <button class="config__secao" id="btn-produtos" type="button" data-painel="produtos" aria-controls="painel-produtos" aria-pressed="false">
-                  <i data-lucide="package"></i><span>Produtos</span>
+                  <i data-lucide="package"></i><span>Categorias de produtos</span>
                 </button>
               </li>
               <li>
                 <button class="config__secao" id="btn-vendas" type="button" data-painel="vendas" aria-controls="painel-vendas" aria-pressed="false">
-                  <i data-lucide="shopping-bag"></i><span>Vendas</span>
+                  <i data-lucide="shopping-bag"></i><span>Vendas e pagamentos</span>
                 </button>
               </li>
-            </ul>
+              </ul>
+            </div>
           </nav>
           <div class="config__secoes-rodape">
             <i data-lucide="sliders-horizontal"></i>
@@ -777,6 +796,10 @@ export function configuracoesPage() {
         <div class="config__conteudo">
           <section class="config__painel" id="painel-empresa" aria-labelledby="btn-empresa">
             <form id="form-empresa" novalidate>
+              <header class="config__intro">
+                <h2>Dados da empresa</h2>
+                <p>Identificação, contato, endereço e preferências gerais aplicadas à organização.</p>
+              </header>
               <div id="config-avisos"></div>
 
               ${GRUPOS.map(grupoHtml).join('')}
@@ -811,6 +834,7 @@ export function configuracoesPage() {
 
     mount(root) {
       const form = root.querySelector('#form-empresa')
+      const protecaoEmpresa = protegerFormulario(form)
       const avisos = root.querySelector('#config-avisos')
       const erroGeral = root.querySelector('#config-erro')
       const acoes = root.querySelector('#config-acoes')
@@ -1030,6 +1054,7 @@ export function configuracoesPage() {
         })
 
         arquivoInput.value = ''
+        protecaoEmpresa.redefinir()
       }
 
       function coletar() {
@@ -1279,6 +1304,7 @@ export function configuracoesPage() {
 
       botaoCancelar.addEventListener('click', async () => {
         if (salvando) return
+        if (!await protecaoEmpresa.confirmarDescarte()) return
 
         limparErros()
         limparPrevia()
@@ -1412,6 +1438,7 @@ export function configuracoesPage() {
 
       return () => {
         vivo = false
+        protecaoEmpresa.limpar()
         limparPrevia()
         limparUsuarios()
         limparPermissoes()

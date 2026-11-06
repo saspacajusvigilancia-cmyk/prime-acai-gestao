@@ -109,6 +109,9 @@ describe('cadastro de cliente', () => {
     root.querySelector('#busca-clientes').dispatchEvent(new Event('input', { bubbles: true }))
 
     document.querySelector('.modal__scrim').click()
+    expect(document.querySelectorAll('.modal')).toHaveLength(2)
+    document.querySelector('.modal [data-cancelar].btn--ghost').click()
+    await tick()
     expect(document.querySelectorAll('.modal')).toHaveLength(1)
     expect(document.querySelector('.modal')).toBe(formulario)
     expect(nome.value).toBe('Ana Souza')

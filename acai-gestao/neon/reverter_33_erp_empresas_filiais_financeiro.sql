@@ -79,9 +79,15 @@ drop table if exists public.recebimentos_compra;
 -- 5. Colunas acrescentadas nas tabelas antigas
 -- ---------------------------------------------------------------------------
 drop index if exists public.lancamentos_chave_idempotencia_unica;
+drop index if exists public.idx_vendas_filial;
+drop index if exists public.idx_compras_filial;
+drop index if exists public.idx_movimentos_filial;
+drop index if exists public.idx_lancamentos_filial;
 
 alter table public.lancamentos
   drop constraint if exists lancamentos_plano_conta_fk;
+alter table public.lancamentos
+  drop constraint if exists lancamentos_filial_fk;
 alter table public.lancamentos
   drop column if exists plano_conta_id,
   drop column if exists origem_tipo,
@@ -89,6 +95,19 @@ alter table public.lancamentos
   drop column if exists natureza,
   drop column if exists chave_idempotencia,
   drop column if exists filial_id;
+
+alter table public.vendas
+  drop constraint if exists vendas_filial_fk;
+alter table public.itens_venda
+  drop constraint if exists itens_venda_filial_fk;
+alter table public.venda_detalhes
+  drop constraint if exists venda_detalhes_filial_fk;
+alter table public.compras
+  drop constraint if exists compras_filial_fk;
+alter table public.transferencias_estoque
+  drop constraint if exists transferencias_estoque_filial_fk;
+alter table public.movimentacoes_estoque
+  drop constraint if exists movimentacoes_estoque_filial_fk;
 
 alter table public.vendas drop column if exists filial_id;
 alter table public.itens_venda drop column if exists filial_id;
@@ -118,7 +137,8 @@ alter table public.movimentacoes_estoque
   drop column if exists filial_id;
 
 alter table public.estoque_locais
-  drop constraint if exists estoque_locais_deposito_fk;
+  drop constraint if exists estoque_locais_deposito_fk,
+  drop constraint if exists estoque_locais_filial_fk;
 alter table public.estoque_locais
   drop column if exists deposito_id,
   drop column if exists filial_id;

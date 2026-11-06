@@ -60,7 +60,7 @@ export function renderShell(
             <button class="icon-btn" type="button" id="btn-config" aria-label="Configurações" title="Configurações"${podeAcessar('configuracoes') ? '' : ' hidden'}>
               <i data-lucide="settings"></i>
             </button>
-            <button class="icon-btn" type="button" id="btn-sair" aria-label="Sair da conta" title="Sair">
+            <button class="icon-btn" type="button" id="btn-sair" aria-label="Sair do sistema" title="Sair">
               <i data-lucide="log-out"></i>
             </button>
           </div>
@@ -87,19 +87,20 @@ export function renderShell(
             </span>
 
             <label class="filial-atual" for="filial-atual">
-              <span>Unidade</span>
-              <select id="filial-atual" aria-label="Filial operacional" disabled>
+              <span class="filial-atual__titulo"><i data-lucide="store" aria-hidden="true"></i> Filial ativa</span>
+              <select id="filial-atual" aria-label="Filial operacional ativa" disabled>
                 <option value="">Carregando filiais...</option>
               </select>
               <small id="filial-atual-status" role="status" aria-live="polite"></small>
             </label>
 
             <label class="search" for="busca-global">
-              <i data-lucide="search"></i>
+              <i data-lucide="search" aria-hidden="true"></i>
               <input
                 id="busca-global"
                 type="search"
                 placeholder="Buscar na página atual..."
+                aria-label="Buscar nesta tela"
                 autocomplete="off"
               />
             </label>
@@ -108,17 +109,17 @@ export function renderShell(
               <i data-lucide="moon"></i>
             </button>
 
-            <div style="position:relative" id="notif-wrap">
-              <button class="icon-btn" type="button" id="btn-notif" aria-label="Notificações">
+            <div class="notif-wrap" id="notif-wrap">
+              <button class="icon-btn" type="button" id="btn-notif" aria-label="Notificações" aria-haspopup="true" aria-controls="notif-painel" aria-expanded="false">
                 <i data-lucide="bell"></i>
-                <span id="notif-badge" style="position:absolute;top:2px;right:2px;min-width:16px;height:16px;padding:0 4px;border-radius:8px;background:var(--marca-dourado);color:var(--texto-contraste);font-size:10px;font-weight:700;line-height:16px;text-align:center;display:none">0</span>
+                <span id="notif-badge" class="notif-badge" aria-label="Notificações não lidas" hidden>0</span>
               </button>
-              <div id="notif-painel" hidden style="position:absolute;right:0;top:40px;width:min(320px,92vw);max-height:400px;overflow:auto;background:var(--superficie);border:1px solid var(--borda);border-radius:var(--raio);box-shadow:var(--sombra);z-index:200;padding:8px">
-                <div style="display:flex;justify-content:space-between;align-items:center;padding:4px 8px">
-                  <strong style="font-size:13px">Notificacoes</strong>
+              <div id="notif-painel" class="notif-panel" role="region" aria-label="Notificações" hidden>
+                <div class="notif-panel__head">
+                  <strong>Notificações</strong>
                   <button class="btn btn--ghost btn--sm" type="button" id="notif-marcar-todas">Marcar todas como lidas</button>
                 </div>
-                <div id="notif-lista"></div>
+                <div id="notif-lista" aria-live="polite"></div>
               </div>
             </div>
           </div>

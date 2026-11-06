@@ -79,6 +79,23 @@ describe('tela de Compras', () => {
     root.querySelector('[data-acao="voltar-compras"]').click()
     expect(root.querySelector('[data-painel="compra"]').hidden).toBe(false)
     expect(root.querySelector('[data-painel="nova"]').hidden).toBe(true)
+  })
+
+  it('confirma antes de limpar um rascunho e preserva os campos ao continuar editando', async () => {
+    root.querySelector('[data-acao="nova-compra"]').click()
+    const nota = root.querySelector('#compra-nota')
+    nota.value = 'Rascunho ainda não salvo'
+
+    root.querySelector('#compra-limpar').click()
+    expect(document.querySelector('.modal__titulo').textContent).toBe('Limpar o rascunho da compra?')
+    document.querySelector('.modal [data-cancelar].btn--ghost').click()
+    await tick()
+    expect(nota.value).toBe('Rascunho ainda não salvo')
+
+    root.querySelector('#compra-limpar').click()
+    document.querySelector('.modal [data-confirmar]').click()
+    await tick()
+    expect(nota.value).toBe('')
     expect(root.querySelector('[data-tab="compra"]').getAttribute('aria-selected')).toBe('true')
   })
 
@@ -162,6 +179,9 @@ describe('tela de Compras', () => {
     nome.dispatchEvent(new Event('input', { bubbles: true }))
 
     document.querySelector('.modal__scrim').click()
+    expect(document.querySelectorAll('.modal')).toHaveLength(2)
+    document.querySelector('.modal [data-cancelar].btn--ghost').click()
+    await tick()
     expect(document.querySelectorAll('.modal')).toHaveLength(1)
     expect(nome.value).toBe('Fornecedor protegido')
 
@@ -221,6 +241,8 @@ describe('tela de Compras', () => {
     nome.value = 'Fornecedor da compra'
     nome.dispatchEvent(new Event('input', { bubbles: true }))
     document.querySelector('.modal__scrim').click()
+    document.querySelector('.modal [data-cancelar].btn--ghost').click()
+    await tick()
     expect(nome.value).toBe('Fornecedor da compra')
 
     criarFornecedorMock
@@ -280,7 +302,7 @@ describe('tela de Compras', () => {
       .toThrow('O WhatsApp deve conter DDD e 10 ou 11 dígitos.')
   })
 
-  it('mantém o nome do fornecedor na compra de demonstração e usa fallback só sem vínculo', async () => {
+  it('bloqueia compra de demonstração sem confirmar persistência no banco', async () => {
     const itens = [{
       produtoId: 'P001',
       nome: 'Açaí tradicional',
@@ -289,16 +311,11 @@ describe('tela de Compras', () => {
       quantidadeSolicitada: 1,
       custoUnitario: 10,
     }]
-    const comFornecedor = await registrarCompra({
+    await expect(registrarCompra({
       fornecedorId: 'fornecedor-1',
       fornecedorNome: 'Fornecedor selecionado',
       itens,
-    })
-    const semFornecedor = await registrarCompra({ itens })
-
-    expect(comFornecedor.dados.fornecedorNome).toBe('Fornecedor selecionado')
-    expect(semFornecedor.dados.fornecedorNome).toBe('Sem fornecedor')
-    expect(comFornecedor.dados.itens[0].unidadeCompra).toBe('UN')
+    })).rejects.toThrow(/Neon não está configurado.*Nenhuma alteração foi salva/)
   })
 
   it('adiciona um item com conversão e calcula o total', () => {
@@ -320,7 +337,9 @@ describe('tela de Compras', () => {
     expect(root.querySelector('#novo-resumo').textContent).toContain('20,00')
   })
 
-  it('salva o rascunho e mostra a compra no histórico', async () => {
+  it('mantém o rascunho na tela e não o lista como salvo sem Neon', async () => {
+    const linhasAntes = linhasDe('tabela-historico').length
+    vi.spyOn(console, 'error').mockImplementation(() => {})
     root.querySelector('[data-acao="nova-compra"]').click()
     const produto = root.querySelector('#item-produto')
     produto.value = 'P001'
@@ -333,9 +352,10 @@ describe('tela de Compras', () => {
     await tick()
     await tick()
 
-    expect(root.querySelector('[data-painel="compra"]').hidden).toBe(false)
-    expect(root.querySelector('[data-painel="nova"]').hidden).toBe(true)
-    expect(linhasDe('tabela-historico')).toHaveLength(1)
-    expect(root.querySelector('#tabela-historico').textContent).toContain('C-')
+    expect(root.querySelector('[data-painel="compra"]').hidden).toBe(true)
+    expect(root.querySelector('[data-painel="nova"]').hidden).toBe(false)
+    expect(linhasDe('tabela-historico')).toHaveLength(linhasAntes)
+    expect(root.querySelector('#tabela-historico').textContent).not.toContain('C-')
+    expect(document.querySelector('#toasts').textContent).toMatch(/Nenhuma alteração foi salva/)
   })
 })

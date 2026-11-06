@@ -17,35 +17,18 @@
  * usa em produção.
  */
 
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
 import pg from 'pg'
+import { carregarAmbiente, exigirDestinoSintetico } from './ambiente-teste.js'
 
-const raiz = join(dirname(fileURLToPath(import.meta.url)), '..')
-
-function lerEnv() {
-  try {
-    const texto = readFileSync(join(raiz, '.env'), 'utf8')
-    const env = {}
-    for (const linha of texto.split(/\r?\n/)) {
-      if (linha.trim().startsWith('#')) continue
-      const m = linha.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/)
-      if (m) env[m[1]] = m[2].trim().replace(/^["']|["']$/g, '')
-    }
-    return env
-  } catch {
-    return {}
-  }
-}
-
-const env = lerEnv()
-const base = (process.env.DATABASE_URL || env.DATABASE_URL || '').trim()
+const env = carregarAmbiente('test')
+const base = (env.DATABASE_URL || '').trim()
 
 if (!base) {
   console.log('\n  DATABASE_URL não configurada. Nada a verificar.\n')
   process.exit(0)
 }
+
+exigirDestinoSintetico(env)
 
 // Evita o pooler: o teste depende da mesma sessão entre as transações.
 const connectionString = base.replace('-pooler', '')

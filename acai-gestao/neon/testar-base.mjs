@@ -27,27 +27,7 @@
  *           ->  <prefixo>.apirest.<resto>   (Data API)
  */
 
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
-
-const raiz = join(dirname(fileURLToPath(import.meta.url)), '..')
-
-// ----------------------------------------------------------------- .env --
-function lerEnv() {
-  try {
-    const texto = readFileSync(join(raiz, '.env'), 'utf8')
-    const env = {}
-    for (const linha of texto.split(/\r?\n/)) {
-      if (linha.trim().startsWith('#')) continue
-      const m = linha.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/)
-      if (m) env[m[1]] = m[2].trim().replace(/^["']|["']$/g, '')
-    }
-    return env
-  } catch {
-    return {}
-  }
-}
+import { carregarAmbiente, exigirDestinoSintetico } from './ambiente-teste.js'
 
 /** Mesma derivação de endereços do SDK (veja defaultDeriveNeonUrls). */
 function derivarEnderecos(base) {
@@ -64,7 +44,7 @@ function derivarEnderecos(base) {
   }
 }
 
-const env = lerEnv()
+const env = carregarAmbiente('test')
 const base = (env.VITE_NEON_URL || '').trim()
 const emailTeste = (process.env.VITE_TESTE_EMAIL || env.VITE_TESTE_EMAIL || '').trim()
 const senhaTeste = (process.env.VITE_TESTE_SENHA || env.VITE_TESTE_SENHA || '').trim()
@@ -80,6 +60,8 @@ if (!base) {
   console.log('  Sem isso o app usa os dados de exemplo e não há o que testar.\n')
   process.exit(0)
 }
+
+exigirDestinoSintetico(env)
 
 const { auth: authBase, data: dataBase } = derivarEnderecos(base)
 
@@ -129,7 +111,7 @@ async function entrar() {
 }
 
 const token = await entrar().catch((e) => {
-  console.log(`\n  Não foi possível entrar como ${emailTeste}: ${e.message}`)
+  console.log(`\n  Não foi possível autenticar a conta de teste: ${e.message}`)
   console.log('  Confira o e-mail/senha em VITE_TESTE_EMAIL e VITE_TESTE_SENHA.\n')
   process.exit(1)
 })
@@ -173,7 +155,7 @@ const ok = (rotulo, condicao, detalhe = '') => {
 }
 
 // ------------------------------------------------------------------ testes --
-console.log(`\nTestando a base real: ${base}`)
+console.log('\nTestando o ambiente Neon sintético autorizado.')
 
 secao('0) Sem sessão, o Data API não entrega nada')
 const semToken = await fetch(`${dataBase}/produtos?select=id&limit=1`)

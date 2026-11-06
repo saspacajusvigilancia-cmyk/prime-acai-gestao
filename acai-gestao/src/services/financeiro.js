@@ -127,6 +127,7 @@ export function baixarParcela({ parcelaId, valor, data, formaPagamentoId, observ
 
   return gravar({
     nome: 'baixa financeira',
+    exigirPersistencia: true,
     registro: { parcelaId, valor: valorNumerico, chave: chaveIdempotencia },
     escrever: async (neon) => {
       const { data, error } = await neon.rpc('baixar_parcela_financeira', {

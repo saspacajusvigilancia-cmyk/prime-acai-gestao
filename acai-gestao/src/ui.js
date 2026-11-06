@@ -151,8 +151,8 @@ export function toolbar({ buscaId, placeholder = 'Buscar...', acao = '', filtros
     <div class="toolbar">
       ${filtros}
       <label class="search search--inline" for="${buscaId}">
-        <i data-lucide="search"></i>
-        <input id="${buscaId}" type="search" placeholder="${esc(placeholder)}" autocomplete="off" />
+        <i data-lucide="search" aria-hidden="true"></i>
+        <input id="${buscaId}" type="search" placeholder="${esc(placeholder)}" aria-label="${esc(placeholder)}" autocomplete="off" />
       </label>
       ${acao}
     </div>
@@ -215,14 +215,17 @@ export function baixarCsv(nome, conteudo) {
 export function tabela({ colunas, linhas, id = '' }) {
   return `
     <div class="table-wrap">
-      <table class="table"${id ? ` id="${id}"` : ''}>
+      <table class="table${colunas.length >= 5 ? ' table--wide' : ''}"${id ? ` id="${id}"` : ''}>
         <thead>
           <tr>
             ${colunas
-              .map(
-                (col) =>
-                  `<th scope="col"${col.align ? ` class="ta-${col.align}"` : ''}${col.width ? ` style="width:${col.width}"` : ''}>${esc(col.label)}</th>`,
-              )
+              .map((col) => {
+                const acao = col.key === 'acoes' || col.key === 'acao'
+                const classes = [col.align ? `ta-${col.align}` : '', acao ? 'table__col--acoes' : '']
+                  .filter(Boolean)
+                  .join(' ')
+                return `<th scope="col"${classes ? ` class="${classes}"` : ''}${col.width ? ` style="width:${col.width}"` : ''}>${esc(col.label)}</th>`
+              })
               .join('')}
           </tr>
         </thead>
@@ -242,8 +245,13 @@ export function tabelaLinhas(colunas, linhas) {
       (linha) =>
         `<tr>${colunas
           .map(
-            (col) =>
-              `<td${col.align ? ` class="ta-${col.align}"` : ''}${col.width ? ` style="width:${col.width}"` : ''}>${col.render(linha)}</td>`,
+            (col) => {
+              const acao = col.key === 'acoes' || col.key === 'acao'
+              const classes = [col.align ? `ta-${col.align}` : '', acao ? 'table__col--acoes' : '']
+                .filter(Boolean)
+                .join(' ')
+              return `<td${classes ? ` class="${classes}"` : ''}${col.width ? ` style="width:${col.width}"` : ''}>${col.render(linha)}</td>`
+            },
           )
           .join('')}</tr>`,
     )

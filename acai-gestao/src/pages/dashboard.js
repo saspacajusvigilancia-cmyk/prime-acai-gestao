@@ -35,7 +35,7 @@ const colunas = [
 export function dashboardPage() {
   return {
     html: `
-      <section class="grid grid--stats">
+      <section class="grid grid--stats dashboard__stats" aria-label="Indicadores do negócio">
         ${statCard({
           kpi: 'faturamentoMes',
           label: 'Faturamento do mês',
@@ -77,7 +77,7 @@ export function dashboardPage() {
         </article>
 
         <article class="card">
-          ${cardHead({ titulo: 'Vendas por categoria', descricao: 'Participação no período' })}
+          ${cardHead({ titulo: 'Vendas por categoria', descricao: 'Total vendido em cada categoria' })}
           <div class="chart chart--doughnut"><canvas id="grafico-categorias"></canvas></div>
         </article>
       </section>

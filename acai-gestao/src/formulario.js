@@ -127,6 +127,126 @@ export function campoHtml(campo, valor) {
 
 let aberto = null
 let limpar = null
+let solicitarFechamentoAberto = null
+let formularioAtualTemAlteracoes = null
+const formulariosProtegidos = new Set()
+let monitorarSaida = false
+let suprimirProximoAntesDeSair = false
+
+function antesDeSair(evento) {
+  if (suprimirProximoAntesDeSair) {
+    suprimirProximoAntesDeSair = false
+    return
+  }
+  if (![...formulariosProtegidos].some((protecao) => protecao.temAlteracoes())) return
+  evento.preventDefault()
+  evento.returnValue = ''
+}
+
+function sincronizarMonitoramentoSaida() {
+  const precisaMonitorar = formulariosProtegidos.size > 0
+  if (precisaMonitorar === monitorarSaida) return
+  monitorarSaida = precisaMonitorar
+  if (precisaMonitorar) window.addEventListener('beforeunload', antesDeSair)
+  else window.removeEventListener('beforeunload', antesDeSair)
+}
+
+function estadoDosCampos(formulario) {
+  return [...formulario.querySelectorAll('input, select, textarea')].map((elemento) => ({
+    elemento,
+    valor: elemento.value,
+    marcado: 'checked' in elemento ? elemento.checked : undefined,
+    selecionados: elemento instanceof HTMLSelectElement
+      ? [...elemento.selectedOptions].map((opcao) => opcao.value)
+      : undefined,
+    arquivos: elemento instanceof HTMLInputElement && elemento.type === 'file'
+      ? [...elemento.files].map((arquivo) => [arquivo.name, arquivo.size, arquivo.lastModified])
+      : undefined,
+  }))
+}
+
+function estadosIguais(inicial, atual) {
+  return inicial.length === atual.length && inicial.every((item, indice) => {
+    const outro = atual[indice]
+    return item.elemento === outro.elemento &&
+      item.valor === outro.valor &&
+      item.marcado === outro.marcado &&
+      JSON.stringify(item.selecionados) === JSON.stringify(outro.selecionados) &&
+      JSON.stringify(item.arquivos) === JSON.stringify(outro.arquivos)
+  })
+}
+
+export function protegerFormulario(formulario, { aoDescartar } = {}) {
+  let inicial = estadoDosCampos(formulario)
+  let ativo = true
+  let alteracaoExtra = false
+  let saidaAprovada = false
+  const aoEditar = () => { saidaAprovada = false }
+  formulario.addEventListener('input', aoEditar)
+  formulario.addEventListener('change', aoEditar)
+  const protecao = {
+    temAlteracoes() {
+      return ativo && (alteracaoExtra || !estadosIguais(inicial, estadoDosCampos(formulario)))
+    },
+    redefinir() {
+      inicial = estadoDosCampos(formulario)
+      alteracaoExtra = false
+      saidaAprovada = false
+    },
+    marcarAlterado() {
+      alteracaoExtra = true
+      saidaAprovada = false
+    },
+    saidaAprovada: () => saidaAprovada,
+    aprovarSaida() { saidaAprovada = true },
+    cancelarSaida() { saidaAprovada = false },
+    async confirmarDescarte() {
+      if (!protecao.temAlteracoes()) return true
+      return confirmar({
+        titulo: 'Existem dados não salvos. Deseja realmente sair e descartar as alterações?',
+        textoCancelar: 'Continuar editando',
+        textoBotao: 'Descartar alterações',
+      })
+    },
+    async descartar() {
+      return aoDescartar ? aoDescartar() : true
+    },
+    limpar() {
+      if (!ativo) return
+      ativo = false
+      formulario.removeEventListener('input', aoEditar)
+      formulario.removeEventListener('change', aoEditar)
+      formulariosProtegidos.delete(protecao)
+      sincronizarMonitoramentoSaida()
+    },
+  }
+  formulariosProtegidos.add(protecao)
+  sincronizarMonitoramentoSaida()
+  return protecao
+}
+
+export async function confirmarSaidaComRascunhos() {
+  for (const protecao of [...formulariosProtegidos]) {
+    if (!protecao.temAlteracoes()) continue
+    if (protecao.saidaAprovada()) continue
+    if (!await protecao.confirmarDescarte()) return false
+    protecao.aprovarSaida()
+    if (await protecao.descartar() === false) {
+      protecao.cancelarSaida()
+      return false
+    }
+  }
+  return true
+}
+
+export function cancelarAprovacaoSaida() {
+  formulariosProtegidos.forEach((protecao) => protecao.cancelarSaida())
+  suprimirProximoAntesDeSair = false
+}
+
+export function suprimirProximoAvisoAntesDeSair() {
+  suprimirProximoAntesDeSair = true
+}
 
 /**
  * Traduz erros técnicos em mensagens que o usuário entende.
@@ -165,15 +285,26 @@ export function abrirFormulario({
   campos,
   valores = {},
   textoBotao = 'Salvar',
-  protegerDescarte = false,
   aoSalvar,
 }) {
+  if (aberto && solicitarFechamentoAberto) {
+    if (formularioAtualTemAlteracoes?.()) {
+      void solicitarFechamentoAberto().then((podeAbrir) => {
+        if (podeAbrir && !aberto) {
+          abrirFormulario({ titulo, descricao, campos, valores, textoBotao, aoSalvar })
+        }
+      })
+      return
+    }
+    void solicitarFechamentoAberto()
+  }
+
   fechar()
 
   const overlay = document.createElement('div')
   overlay.className = 'modal'
   overlay.innerHTML = `
-    <div class="modal__scrim" ${protegerDescarte ? '' : 'data-fechar'}></div>
+    <div class="modal__scrim" data-fechar></div>
     <div class="modal__caixa" role="dialog" aria-modal="true" aria-labelledby="modal-titulo">
       <header class="modal__head">
         <div>
@@ -214,22 +345,7 @@ export function abrirFormulario({
   const campoDeItens = campos.find((c) => c.tipo === 'itens')
   let salvando = false
   let confirmandoDescarte = false
-
-  const camposAlterados = new Set()
-  const valoresIniciais = new Map(
-    [...form.elements]
-      .filter((elemento) => elemento.name)
-      .map((elemento) => [elemento.name, elemento.value]),
-  )
-
-  const acompanharAlteracoes = (evento) => {
-    const elemento = evento.target
-    if (!(elemento instanceof HTMLElement) || !elemento.name) return
-    if (elemento.value === valoresIniciais.get(elemento.name)) camposAlterados.delete(elemento.name)
-    else camposAlterados.add(elemento.name)
-  }
-  form.addEventListener('input', acompanharAlteracoes)
-  form.addEventListener('change', acompanharAlteracoes)
+  let protecao = null
 
   // Liga ajuda e mensagem de erro ao campo pelo aria-describedby: leitores de
   // tela anunciam a explicação junto do input, e não como texto solto.
@@ -260,20 +376,17 @@ export function abrirFormulario({
   }
 
   async function solicitarFechamento() {
-    if (salvando || confirmandoDescarte) return
-    if (protegerDescarte && camposAlterados.size) {
+    if (salvando || confirmandoDescarte) return false
+    if (protecao?.temAlteracoes()) {
       confirmandoDescarte = true
       try {
-        const descartar = await confirmar({
-          titulo: 'Existem dados não salvos. Deseja realmente sair e descartar as alterações?',
-          textoBotao: 'Descartar alterações',
-        })
-        if (!descartar) return
+        if (!await protecao.confirmarDescarte()) return false
       } finally {
         confirmandoDescarte = false
       }
     }
     fechar()
+    return true
   }
 
   function aoTeclar(evento) {
@@ -309,6 +422,11 @@ export function abrirFormulario({
   document.addEventListener('keydown', aoTeclar)
   limpar = () => {
     document.removeEventListener('keydown', aoTeclar)
+    protecao?.limpar()
+    if (solicitarFechamentoAberto === solicitarFechamento) {
+      solicitarFechamentoAberto = null
+      formularioAtualTemAlteracoes = null
+    }
     // Devolve o foco ao botão que abriu a janela (teclado continua de onde
     // parou, em vez de voltar para o início da página).
     if (focoAnterior instanceof HTMLElement && focoAnterior.isConnected) focoAnterior.focus()
@@ -319,6 +437,13 @@ export function abrirFormulario({
   // O campo `itens` (produto + quantidade ou peso) mora em `itens-venda.js`:
   // é onde vive a conta da venda por peso e onde os campos de peso aparecem.
   const widgetItens = campoDeItens ? iniciarItens({ overlay, campo: campoDeItens }) : null
+  protecao = protegerFormulario(form, {
+    aoDescartar: () => {
+      if (aberto === overlay) fechar()
+    },
+  })
+  solicitarFechamentoAberto = solicitarFechamento
+  formularioAtualTemAlteracoes = () => protecao.temAlteracoes()
 
   /* ---------------------------------------------------- validação ------- */
 
@@ -461,11 +586,12 @@ export function abrirFormulario({
 /** Fecha a janela aberta, se houver. */
 export function fechar() {
   if (!aberto) return
+  const overlay = aberto
   limpar?.()
   limpar = null
-  aberto.remove()
+  overlay.remove()
   aberto = null
-  document.body.classList.remove('sem-scroll')
+  if (!document.querySelector('.modal')) document.body.classList.remove('sem-scroll')
 }
 
 /* ------------------------------------------------------- confirmação ----- */
@@ -478,7 +604,12 @@ export function fechar() {
  * Devolve `true` só quando o usuário confirma. Cancelar, Escape e clique fora
  * devolvem `false`.
  */
-export function confirmar({ titulo, descricao = '', textoBotao = 'Confirmar' }) {
+export function confirmar({
+  titulo,
+  descricao = '',
+  textoBotao = 'Confirmar',
+  textoCancelar = 'Cancelar',
+}) {
   return new Promise((resolve) => {
     const overlay = document.createElement('div')
     overlay.className = 'modal'
@@ -495,7 +626,7 @@ export function confirmar({ titulo, descricao = '', textoBotao = 'Confirmar' }) 
           </button>
         </header>
         <footer class="modal__acoes">
-          <button class="btn btn--ghost" type="button" data-cancelar>Cancelar</button>
+          <button class="btn btn--ghost" type="button" data-cancelar>${esc(textoCancelar)}</button>
           <button class="btn btn--danger" type="button" data-confirmar>${esc(textoBotao)}</button>
         </footer>
       </div>

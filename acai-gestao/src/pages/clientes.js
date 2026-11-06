@@ -250,7 +250,6 @@ export function clientesPage() {
         abrirFormulario({
           titulo: 'Novo cliente',
           descricao: 'O código é gerado automaticamente e o cliente já pode ser vinculado aos pedidos.',
-          protegerDescarte: true,
           campos: [
             {
               nome: 'codigo',

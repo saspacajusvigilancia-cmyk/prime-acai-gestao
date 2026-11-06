@@ -1,6 +1,6 @@
 import { formatNumero, esc, toast } from '../ui.js'
 import { renderIcons } from '../icons.js'
-import { confirmar } from '../formulario.js'
+import { confirmar, protegerFormulario } from '../formulario.js'
 import {
   abrirFechamentoBuffet,
   fecharFechamentoBuffet,
@@ -92,6 +92,10 @@ export function buffetPage() {
     `,
     mount(root) {
       const host = root.querySelector('#buffet-root')
+      const limparProtecoesForm = []
+      const limparProtecoes = () => {
+        while (limparProtecoesForm.length) limparProtecoesForm.pop()()
+      }
       let produtos = []
       let saldos = new Map()
       let fechamentos = []
@@ -148,6 +152,7 @@ export function buffetPage() {
       }
 
       function render() {
+        limparProtecoes()
         // Guarda o que já foi digitado ANTES de trocar o HTML da tela. O
         // fechamento é identificado pelo id: ao abrir outro turno, as
         // contagens antigas não podem vazar para o novo.
@@ -194,7 +199,7 @@ export function buffetPage() {
             ${aberto ? `
               ${elegiveis.length ? `
                 <div class="table-wrap">
-                  <table class="table">
+                  <table class="table table--wide">
                     <thead><tr><th>Produto</th><th>Unidade</th><th class="ta-right">Sistema</th><th>Contagem física</th></tr></thead>
                     <tbody>${elegiveis.map((produto) => `
                       <tr>
@@ -225,7 +230,7 @@ export function buffetPage() {
             <div class="table-wrap"><table class="table"><thead><tr><th>Indicador</th><th>Resultado</th></tr></thead>
               <tbody><tr><td>Produtos controlados com saldo no Buffet</td><td>${comSaldoBuffet.length}</td></tr>
               <tr><td>Produtos autorizados para retorno ao Estoque Principal</td><td>${autorizadosRetorno.length}</td></tr></tbody></table></div>
-            ${elegiveis.length ? `<div class="table-wrap"><table class="table">
+            ${elegiveis.length ? `<div class="table-wrap"><table class="table table--wide">
               <thead><tr><th>Produto</th><th>Unidade</th><th>Estoque Principal</th><th>Buffet</th><th>Total consolidado</th></tr></thead>
               <tbody>${elegiveis.map((produto) => `<tr>
                 <td>${esc(produto.nome)}</td><td>${esc(produto.unidade)}</td>
@@ -234,6 +239,7 @@ export function buffetPage() {
                 <td>${formatNumero(saldoPrincipal(produto) + saldoBuffet(produto))}</td></tr>`).join('')}</tbody>
               </table></div>` : '<p class="muted">Cadastre produtos como Buffet ou insumos e habilite o controle de estoque para operar este local.</p>'}
             ${pode('estoque', 'criar') ? `
+              <h3 class="buffet__form-titulo">Abastecimento</h3>
               <form data-form-operacao="abastecimento" class="buffet__form">
                 <label class="campo"><span class="campo__label">Produto a abastecer</span><select class="campo__input" name="produtoId" required>${disponiveisNormais.map((produto) => `
                   <option value="${esc(produto.uuid ?? produto.id)}">
@@ -244,6 +250,7 @@ export function buffetPage() {
                 <label class="campo"><span class="campo__label">Motivo</span><input class="campo__input" name="motivo" maxlength="500" required value="Abastecimento do Buffet" /></label>
                 <button class="btn btn--primary" type="submit">Abastecer Buffet</button>
               </form>
+              <h3 class="buffet__form-titulo">Registro de perdas</h3>
               <form data-form-operacao="perda" class="buffet__form">
                 <label class="campo"><span class="campo__label">Produto perdido</span><select class="campo__input" name="produtoId" required>${opcoesProduto(comSaldoBuffet)}</select></label>
                 <label class="campo"><span class="campo__label">Quantidade</span><input class="campo__input" name="quantidade" type="number" min="0.001" step="0.001" required /></label>
@@ -251,6 +258,7 @@ export function buffetPage() {
                 <label class="campo"><span class="campo__label">Observações</span><input class="campo__input" name="observacoes" maxlength="1000" /></label>
                 <button class="btn btn--ghost" type="submit">Registrar perda</button>
               </form>
+              <h3 class="buffet__form-titulo">Devolução ao estoque</h3>
               <form data-form-operacao="devolucao" class="buffet__form">
                 <label class="campo"><span class="campo__label">Produto autorizado</span><select class="campo__input" name="produtoId" required>${opcoesProduto(autorizadosRetorno)}</select></label>
                 <label class="campo"><span class="campo__label">Quantidade</span><input class="campo__input" name="quantidade" type="number" min="0.001" step="0.001" required /></label>
@@ -270,7 +278,7 @@ export function buffetPage() {
               <label class="campo"><span class="campo__label">Produto</span><select class="campo__input" name="produtoId"><option value="">Todos</option>${opcoesProduto(elegiveis, filtrosOperacoes.produtoId)}</select></label>
               <button class="btn btn--ghost" type="submit">Filtrar</button>
             </form>
-            ${operacoes.length ? `<div class="table-wrap"><table class="table">
+            ${operacoes.length ? `<div class="table-wrap"><table class="table table--wide">
               <thead><tr><th>Data</th><th>Operação</th><th>Produto</th><th>Quantidade</th><th>Detalhe</th><th>Responsável</th></tr></thead>
               <tbody>${operacoes.map((item) => `<tr>
                 <td>${esc(dataHora(item.criadoEm))}</td><td>${esc(tipoOperacaoRotulo[item.tipo] ?? item.tipo)}</td>
@@ -285,8 +293,8 @@ export function buffetPage() {
                 <p class="card__desc">Fechamentos, ajustes e reaberturas permanecem registrados.</p></div>
             </div>
             ${fechamentos.length ? `
-              <div class="table-wrap"><table class="table">
-                <thead><tr><th>Data operacional</th><th>Turno</th><th>Aberto em</th><th>Fechado em</th><th>Status</th><th>Motivo de reabertura</th><th>Ações</th></tr></thead>
+              <div class="table-wrap"><table class="table table--wide">
+                <thead><tr><th>Data operacional</th><th>Turno</th><th>Aberto em</th><th>Fechado em</th><th>Status</th><th>Motivo de reabertura</th><th class="table__col--acoes">Ações</th></tr></thead>
                 <tbody>${fechamentos.map((item) => `
                   <tr>
                     <td>${esc(item.dataOperacional ?? '—')}</td>
@@ -295,7 +303,7 @@ export function buffetPage() {
                     <td>${esc(dataHora(item.fechadoEm))}</td>
                     <td>${esc(statusRotulo[item.status] ?? item.status)}</td>
                     <td>${esc(item.motivoReabertura ?? '—')}</td>
-                    <td>
+                    <td class="table__col--acoes">
                       <button class="btn btn--ghost btn--sm" type="button" data-acao="detalhes" data-id="${esc(item.id)}">Ver itens</button>
                       ${item.status === 'fechado' && pode('estoque', 'reabrir_buffet') ? `
                         <form data-form-reabertura="${esc(item.id)}" class="table__acoes">
@@ -497,7 +505,7 @@ export function buffetPage() {
               detalhes.innerHTML = `
                 <div class="card__head"><div><h2 class="card__title">Reconciliação do turno</h2>
                   <p class="card__desc">Consumo estimado = saldo inicial + abastecimentos − devoluções − perdas − vendas diretas − saldo contado. Consumo aparente não desconta perdas.</p></div></div>
-                <div class="table-wrap"><table class="table">
+                <div class="table-wrap"><table class="table table--wide">
                   <thead><tr><th>Produto</th><th>Un.</th><th>Inicial</th><th>Abastecido</th><th>Devolvido</th><th>Perdas</th><th>Venda direta</th><th>Consumo aparente</th><th>Consumo estimado</th><th>Sistema</th><th>Contado</th><th>Divergência</th></tr></thead>
                   <tbody>${resultado.dados.map((item) => `
                     ${(() => {
@@ -538,10 +546,16 @@ export function buffetPage() {
             }
           })
         })
+
+        host.querySelectorAll('[data-form-operacao], [data-form-reabertura]').forEach((formulario) => {
+          const protecao = protegerFormulario(formulario)
+          limparProtecoesForm.push(() => protecao.limpar())
+        })
       }
 
       render()
       void carregarDados()
+      return () => limparProtecoes()
     },
   }
 }

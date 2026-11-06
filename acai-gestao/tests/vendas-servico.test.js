@@ -38,6 +38,16 @@ vi.mock('login-projetos/neon', () => {
         registro.filtros.push(['lt', coluna, valor])
         return q
       },
+      eq: (coluna, valor) => {
+        registro.filtros.push(['eq', coluna, valor])
+        return q
+      },
+      maybeSingle: () => Promise.resolve({
+        data: Array.isArray(estado.resposta.data)
+          ? estado.resposta.data[0]
+          : estado.resposta.data,
+        error: estado.resposta.error,
+      }),
       order: (coluna, opcoes) => {
         registro.ordem = [coluna, opcoes]
         return q
@@ -62,9 +72,16 @@ vi.mock('login-projetos/neon', () => {
   }
 })
 
-const { estornarVenda, listarVendas, registrarVenda, proximoCodigoVenda } = await import(
-  '../src/services/vendas.js'
-)
+const {
+  atualizarStatusVenda,
+  cancelarVendaPendente,
+  detalharVenda,
+  estornarVenda,
+  historicoStatusVenda,
+  listarVendas,
+  registrarVenda,
+  proximoCodigoVenda,
+} = await import('../src/services/vendas.js')
 
 const sql18 = readFileSync(new URL('../neon/18_canais_pagamentos_vendas.sql', import.meta.url), 'utf8')
 const sql11 = readFileSync(new URL('../neon/11_estorno.sql', import.meta.url), 'utf8')
@@ -82,7 +99,7 @@ const respostaDaVenda = (extra = {}) => ({
       codigo: '#9390',
       total: 31.46,
       total_cobrado: 31.46,
-      status: 'Concluída',
+      status: 'Aguardando',
       pagamento: 'Pix',
       forma_pagamento: 'PIX',
       tipo_venda: 'Balcão',
@@ -141,6 +158,11 @@ describe('registrarVenda — o contrato com o banco', () => {
     expect(Object.keys(estado.rpc[0].params).sort()).toEqual(
       parametrosDe('registrar_venda_completa', sql18),
     )
+  })
+
+  it('sempre registra a venda como Aguardando, sem aceitar status do formulário', async () => {
+    await registrarVenda(vendaDePeso)
+    expect(estado.rpc[0].params.p_status).toBe('Aguardando')
   })
 
   it('a linha por peso manda bruto, tara, líquido e recipiente — nunca o preço', async () => {
@@ -206,11 +228,146 @@ describe('registrarVenda — o contrato com o banco', () => {
       uuid: 'venda-1',
       id: '#9390',
       total: 31.46,
-      status: 'Concluída',
+      status: 'Aguardando',
       pagamento: 'PIX',
       tipoVenda: 'Balcão',
       movimentos: 1,
       jaExistia: false,
+    })
+  })
+
+  describe('status e cancelamento de vendas', () => {
+      it('chama a RPC auditada com o status de destino', async () => {
+        estado.resposta = {
+          data: [{
+            venda_id: 'venda-1',
+            codigo: '#9390',
+            status: 'Em preparo',
+            ja_estava_atualizado: false,
+          }],
+          error: null,
+        }
+
+        const resultado = await atualizarStatusVenda({
+          vendaId: 'venda-1',
+          codigo: '#9390',
+          novoStatus: 'Em preparo',
+        })
+
+        expect(estado.rpc[0]).toEqual({
+          nome: 'atualizar_status_venda',
+          params: { p_venda_id: 'venda-1', p_novo_status: 'Em preparo' },
+        })
+        expect(resultado.dados).toMatchObject({ status: 'Em preparo', jaEstavaAtualizado: false })
+      })
+
+      it('não permite status de destino fora da máquina de estados', async () => {
+        expect(() => atualizarStatusVenda({
+          vendaId: 'venda-1',
+          novoStatus: 'Cancelada',
+        })).toThrow(/status de destino válido/i)
+        expect(estado.rpc).toHaveLength(0)
+      })
+
+      it('exige motivo e encaminha o cancelamento para a RPC idempotente', async () => {
+        expect(() => cancelarVendaPendente({
+          vendaId: 'venda-1',
+          motivo: ' ',
+        })).toThrow(/motivo do cancelamento/i)
+
+        estado.resposta = {
+          data: [{
+            venda_id: 'venda-1',
+            codigo: '#9390',
+            status: 'Cancelada',
+            movimentos: 1,
+            ja_cancelada: false,
+          }],
+          error: null,
+        }
+        const resultado = await cancelarVendaPendente({
+          vendaId: 'venda-1',
+          codigo: '#9390',
+          motivo: 'Cliente desistiu',
+        })
+
+        expect(estado.rpc[0]).toEqual({
+          nome: 'cancelar_venda_pendente',
+          params: { p_venda_id: 'venda-1', p_motivo: 'Cliente desistiu' },
+        })
+        expect(resultado.dados).toMatchObject({ status: 'Cancelada', movimentos: 1 })
+    })
+  })
+
+  describe('detalhes e histórico da venda', () => {
+    it('mapeia itens e detalhes históricos mesmo quando o relacionamento vem como array', async () => {
+      estado.resposta = {
+        data: [{
+          id: 'venda-1',
+          codigo: '#9390',
+          status: 'Aguardando',
+          pagamento: 'Pix',
+          total: '31.46',
+          criado_em: '2026-10-19T12:30:00.000Z',
+          filial_id: 'filial-1',
+          clientes: { nome: 'Cliente histórico' },
+          venda_detalhes: [{
+            tipo_venda_nome: 'Delivery próprio',
+            forma_pagamento_nome: 'Pix',
+            endereco_entrega: 'Rua A, 10',
+            taxa_entrega: '2.00',
+            total_cobrado: '33.46',
+            valor_recebido: null,
+            troco: '0',
+          }],
+          itens_venda: [{
+            id: 'item-1',
+            descricao: 'Açaí',
+            quantidade: '0.45',
+            preco_unitario: '69.90',
+            total: '31.46',
+            metodo_peso: 'bruto_tara',
+            peso_bruto_g: 480,
+            tara_g: 30,
+            peso_liquido_g: 450,
+          }],
+        }],
+        error: null,
+      }
+
+      const resultado = await detalharVenda('venda-1')
+      expect(resultado.dados).toMatchObject({
+        cliente: 'Cliente histórico',
+        total: 33.46,
+        enderecoEntrega: 'Rua A, 10',
+        itensVenda: [{
+          descricao: 'Açaí',
+          pesoBrutoGramas: 480,
+          taraGramas: 30,
+          pesoLiquidoGramas: 450,
+        }],
+      })
+    })
+
+    it('mapeia transições e motivos do histórico da RPC', async () => {
+      estado.resposta = {
+        data: [{
+          status_anterior: 'Aguardando',
+          status_novo: 'Em preparo',
+          motivo: null,
+          actor_user_id: 'user-1',
+          criado_em: '2026-10-19T12:30:00.000Z',
+        }],
+        error: null,
+      }
+
+      const resultado = await historicoStatusVenda('venda-1')
+      expect(estado.rpc[0].nome).toBe('historico_status_venda')
+      expect(resultado.dados[0]).toMatchObject({
+        statusAnterior: 'Aguardando',
+        statusNovo: 'Em preparo',
+        usuarioId: 'user-1',
+      })
     })
   })
 
@@ -267,6 +424,14 @@ describe('registrarVenda — o contrato com o banco', () => {
 
     expect(estado.rpc[0].nome).toBe('proximo_codigo_venda')
     expect(codigo).toBe('#9390')
+  })
+
+  it('propaga falha do banco sem sugerir um código fictício', async () => {
+    estado.resposta = { data: null, error: { message: 'Acesso negado.' } }
+    estado.consultas = []
+
+    await expect(proximoCodigoVenda()).rejects.toThrow('Acesso negado.')
+    expect(estado.consultas).toHaveLength(0)
   })
 })
 

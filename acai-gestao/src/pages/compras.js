@@ -1,6 +1,11 @@
 import '../styles/compras.css'
 
-import { abrirFormulario, confirmar, fechar as fecharFormulario } from '../formulario.js'
+import {
+  abrirFormulario,
+  confirmar,
+  fechar as fecharFormulario,
+  protegerFormulario,
+} from '../formulario.js'
 import { renderIcons } from '../icons.js'
 import {
   ativarCamposMonetarios,
@@ -147,6 +152,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
             `,
           })}
 
+          <h3 class="compras__secao-titulo">Dados da compra</h3>
           <div class="compras-form">
             <label class="campo">
               <span class="campo__label">Data da compra</span>
@@ -197,6 +203,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
             </label>
           </div>
 
+          <h3 class="compras__secao-titulo">Itens e recebimento</h3>
           <div class="compras-item-form" id="item-form">
             <label class="campo campo--produto">
               <span class="campo__label">Produto / insumo</span>
@@ -251,6 +258,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
             <p class="compras-dica" id="item-dica">Escolha o produto para ver a conversão entre unidade de compra e unidade de estoque.</p>
           </div>
 
+          <h3 class="compras__secao-titulo">Conferência e totais</h3>
           <div id="itens-novos"></div>
 
           <div class="compras-resumo" id="novo-resumo">
@@ -317,7 +325,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
             </label>
             <label class="search search--inline" for="filtro-busca">
               <i data-lucide="search"></i>
-              <input id="filtro-busca" type="search" placeholder="Número, fornecedor ou nota" autocomplete="off" />
+              <input id="filtro-busca" type="search" placeholder="Número, fornecedor ou nota" aria-label="Buscar por número, fornecedor ou nota" autocomplete="off" />
             </label>
           </div>
 
@@ -352,6 +360,8 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
       let saldosEstoquePorProduto = null
 
       const el = (seletor) => root.querySelector(seletor)
+      const protecaoCompra = protegerFormulario(el('.compras-form'))
+      const protecaoItem = protegerFormulario(el('#item-form'))
       const lerMoedaOpcional = (campo, rotulo) => {
         const texto = campo.value.trim()
         const centavos = texto ? paraCentavos(texto) : 0
@@ -555,6 +565,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
             const key = botao.dataset.key
             if (botao.dataset.itemAcao === 'remover') {
               itensNovos = itensNovos.filter((item) => item._key !== key)
+              protecaoCompra.marcarAlterado()
               if (editandoKey === key) resetarEdicao()
               renderItensNovos()
               return
@@ -626,6 +637,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
         el('#item-validade').value = ''
         resetarEdicao()
         atualizarDica()
+        protecaoItem.redefinir()
       }
 
       function editarItem(key) {
@@ -656,6 +668,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
         el('#item-cancelar').hidden = false
         atualizarDica()
         el('#item-qtd').focus()
+        protecaoItem.redefinir()
       }
 
       function lerItemFormulario() {
@@ -715,6 +728,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
             itensNovos.push(item)
           }
 
+          protecaoCompra.marcarAlterado()
           limparItemFormulario()
           renderItensNovos()
         } catch (erro) {
@@ -723,7 +737,8 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
       }
 
       el('#item-adicionar').addEventListener('click', adicionarItem)
-      el('#item-cancelar').addEventListener('click', () => {
+      el('#item-cancelar').addEventListener('click', async () => {
+        if (!await protecaoItem.confirmarDescarte()) return
         limparItemFormulario()
       })
 
@@ -753,7 +768,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
       })
 
       /* ---------------------------------------------------- salvar compra -- */
-      function limparCompra() {
+      function limparCamposCompra() {
         el('#compra-data').value = hoje()
         el('#compra-fornecedor').value = ''
         el('#compra-documento').value = 'sem_nota'
@@ -765,6 +780,23 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
         itensNovos = []
         limparItemFormulario()
         renderItensNovos()
+        protecaoCompra.redefinir()
+        protecaoItem.redefinir()
+      }
+
+      async function limparCompra() {
+        const existemAlteracoes = protecaoCompra.temAlteracoes() || protecaoItem.temAlteracoes()
+        if (existemAlteracoes) {
+          const descartar = await confirmar({
+            titulo: 'Limpar o rascunho da compra?',
+            descricao: 'Os dados e itens ainda não salvos serão descartados.',
+            textoCancelar: 'Continuar editando',
+            textoBotao: 'Descartar alterações',
+          })
+          if (!descartar) return false
+        }
+        limparCamposCompra()
+        return true
       }
 
       let salvandoCompra = false
@@ -813,7 +845,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
               : `Compra ${dados?.numero ?? ''} ${aguardarRecebimento ? 'aguardando recebimento' : 'salva como rascunho'}.`,
           )
 
-          limparCompra()
+          limparCamposCompra()
           await carregarDados()
 
           if (origem === 'exemplo' && dados) {
@@ -838,15 +870,19 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
 
       el('#compra-salvar').addEventListener('click', () => salvarCompra(true))
       el('#compra-salvar-rascunho').addEventListener('click', () => salvarCompra(false))
-      el('#compra-limpar').addEventListener('click', limparCompra)
+      el('#compra-limpar').addEventListener('click', () => { void limparCompra() })
       // O botão só é renderizado para quem tem `compras.criar`; sem a
       // permissão o elemento não existe e o listener derrubava a tela toda.
-      el('[data-acao="nova-compra"]')?.addEventListener('click', () => {
+      el('[data-acao="nova-compra"]')?.addEventListener('click', async () => {
         if (!podeCriar()) {
           toast('Sua conta não tem permissão para registrar compras.')
           return
         }
-        limparCompra()
+        if (protecaoCompra.temAlteracoes() || protecaoItem.temAlteracoes()) {
+          if (!await limparCompra()) return
+        } else {
+          limparCamposCompra()
+        }
         mostrarAba('nova')
       })
 
@@ -896,10 +932,10 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
           render: (compra) => {
             const receber =
               podeEditar() && STATUS_ABERTOS.includes(compra.status)
-                ? `<button class="btn btn--ghost btn--sm" type="button" data-compra-acao="receber" data-id="${esc(compra.id)}" title="Receber mercadoria"><i data-lucide="check-circle-2"></i></button>`
+                ? `<button class="btn btn--ghost btn--sm" type="button" data-compra-acao="receber" data-id="${esc(compra.id)}" title="Receber mercadoria" aria-label="Receber mercadoria da compra ${esc(compra.id)}"><i data-lucide="check-circle-2"></i></button>`
                 : ''
             return `
-              <button class="btn btn--ghost btn--sm" type="button" data-compra-acao="detalhes" data-id="${esc(compra.id)}" title="Detalhes"><i data-lucide="eye"></i></button>
+              <button class="btn btn--ghost btn--sm" type="button" data-compra-acao="detalhes" data-id="${esc(compra.id)}" title="Detalhes" aria-label="Ver detalhes da compra ${esc(compra.id)}"><i data-lucide="eye"></i></button>
               ${receber}
             `
           },
@@ -965,6 +1001,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
 
       /* --------------------------------------------------------- modal -- */
       const modaisAbertos = new Set()
+      const protecoesModais = new Set()
 
       function abrirModal({ titulo, descricao = '', corpo, acoes = [], permitirFechar = () => true }) {
         const overlay = document.createElement('div')
@@ -998,12 +1035,23 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
         modaisAbertos.add(overlay)
         renderIcons(overlay)
 
-        const fechar = () => {
-          if (!permitirFechar()) return
+        const formulario = overlay.querySelector('form')
+        let protecao = null
+        const remover = () => {
+          if (!permitirFechar()) return false
           overlay.remove()
           modaisAbertos.delete(overlay)
+          protecao?.limpar()
+          protecoesModais.delete(protecao)
           if (!document.querySelector('.modal')) document.body.classList.remove('sem-scroll')
           document.removeEventListener('keydown', aoTeclar)
+          return true
+        }
+
+        const fechar = async () => {
+          if (!permitirFechar()) return false
+          if (protecao && !await protecao.confirmarDescarte()) return false
+          return remover()
         }
 
         const aoTeclar = (evento) => {
@@ -1015,8 +1063,18 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
 
         overlay.querySelectorAll('[data-fechar]').forEach((botao) => botao.addEventListener('click', fechar))
         document.addEventListener('keydown', aoTeclar)
+        if (formulario) {
+          protecao = protegerFormulario(formulario, {
+            aoDescartar: remover,
+          })
+          protecoesModais.add(protecao)
+        }
 
-        return { overlay, fechar }
+        return {
+          overlay,
+          fechar,
+          redefinirRascunho: () => protecao?.redefinir(),
+        }
       }
 
       function abrirDetalhes(compra) {
@@ -1216,7 +1274,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
           </p>
 
           <div class="compras-receber">
-            <table class="table">
+            <table class="table table--wide">
               <thead>
                 <tr>
                   <th scope="col">Item</th>
@@ -1251,7 +1309,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
         const recebidosIniciais = new Map(
           compra.itens.map((item) => [item.id, Number(item.quantidadeRecebida)]),
         )
-        const { overlay, fechar } = abrirModal({
+        const { overlay, fechar, redefinirRascunho } = abrirModal({
           titulo: `Receber compra ${compra.numero}`,
           descricao: `${compra.fornecedorNome} · ${rotuloDocumento(compra)}`,
           corpo,
@@ -1336,6 +1394,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
             )
 
             resultadoIncerto = false
+            redefinirRascunho()
             fechar()
             await carregarDados()
           } catch (erro) {
@@ -1442,6 +1501,7 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
             if (houveAlteracao) {
               resultadoIncerto = false
               tentativaIncerta = null
+              redefinirRascunho()
               fechar()
               toast('A situação da compra mudou. Os dados foram atualizados.')
               await carregarDados()
@@ -1520,8 +1580,8 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
           render: (f) =>
             podeEditar()
               ? `
-                <button class="btn btn--ghost btn--sm" type="button" data-fornecedor-acao="editar" data-id="${esc(f.id)}" title="Editar"><i data-lucide="pencil"></i></button>
-                <button class="btn btn--ghost btn--sm" type="button" data-fornecedor-acao="alternar" data-id="${esc(f.id)}" title="${f.ativo ? 'Desativar' : 'Ativar'}"><i data-lucide="${f.ativo ? 'user-x' : 'user-check'}"></i></button>
+                <button class="btn btn--ghost btn--sm" type="button" data-fornecedor-acao="editar" data-id="${esc(f.id)}" title="Editar" aria-label="Editar fornecedor ${esc(f.nome)}"><i data-lucide="pencil"></i></button>
+                <button class="btn btn--ghost btn--sm" type="button" data-fornecedor-acao="alternar" data-id="${esc(f.id)}" title="${f.ativo ? 'Desativar' : 'Ativar'}" aria-label="${f.ativo ? 'Desativar' : 'Ativar'} fornecedor ${esc(f.nome)}"><i data-lucide="${f.ativo ? 'user-x' : 'user-check'}"></i></button>
               `
               : '',
         },
@@ -1551,7 +1611,6 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
 
         abrirFormulario({
           titulo: editando ? 'Editar fornecedor' : 'Novo fornecedor',
-          protegerDescarte: true,
           descricao: 'O fornecedor é quem entrega a mercadoria. Não é usuário do sistema.',
           valores: fornecedor
             ? {
@@ -1753,7 +1812,11 @@ export function comprasPage({ fornecedoresOnly = false } = {}) {
 
       return () => {
         window.removeEventListener('busca-global', aoBuscarGlobal)
+        protecaoCompra.limpar()
+        protecaoItem.limpar()
         fecharFormulario()
+        protecoesModais.forEach((protecao) => protecao.limpar())
+        protecoesModais.clear()
         modaisAbertos.forEach((overlay) => overlay.remove())
         modaisAbertos.clear()
         if (!document.querySelector('.modal')) document.body.classList.remove('sem-scroll')

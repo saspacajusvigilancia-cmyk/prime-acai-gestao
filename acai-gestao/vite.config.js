@@ -1,5 +1,6 @@
 import { fileURLToPath } from 'node:url'
-import { defineConfig } from 'vite'
+import { defineConfig, loadEnv } from 'vite'
+import { carregarAmbiente, validarModoVite } from './neon/ambiente-teste.js'
 
 /**
  * Configuração do Vite.
@@ -20,30 +21,48 @@ import { defineConfig } from 'vite'
  */
 const loginSrc = fileURLToPath(new URL('../Login_projetos/src', import.meta.url)).replace(/\\/g, '/')
 
-export default defineConfig({
-  // O ambiente jsdom e o carregamento dos módulos são lentos quando a suíte roda
-  // inteira em paralelo (sobretudo no Windows/CI): os 5 s padrão produziam
-  // "Test timed out" em testes que passam sozinhos. 20 s dá folga sem esconder
-  // travamento de verdade.
-  test: {
-    testTimeout: 20_000,
-    hookTimeout: 20_000,
-  },
-  resolve: {
-    dedupe: ['lucide', '@neondatabase/neon-js'],
-    alias: [
-      { find: /^login-projetos\/estilo\.css$/, replacement: `${loginSrc}/styles/auth.css` },
-      { find: /^login-projetos\/pages\/(.+)$/, replacement: `${loginSrc}/pages/$1.js` },
-      { find: /^login-projetos\/(config|sessao|validacao|auth-ui|ui)$/, replacement: `${loginSrc}/$1.js` },
-      { find: /^login-projetos\/auth$/, replacement: `${loginSrc}/services/auth.js` },
-      { find: /^login-projetos\/neon$/, replacement: `${loginSrc}/lib/neon.js` },
-      { find: /^login-projetos\/icons$/, replacement: `${loginSrc}/lib/icons.js` },
-      { find: /^login-projetos$/, replacement: `${loginSrc}/index.js` },
+export default defineConfig(({ mode }) => {
+  const env = {
+    ...carregarAmbiente(mode),
+    ...loadEnv(mode, process.cwd(), ''),
+    ...process.env,
+  }
+  validarModoVite(mode, env)
+
+  return {
+    envPrefix: [
+      'VITE_NEON_URL',
+      'VITE_NEON_AUTH_URL',
+      'VITE_NEON_DATA_API_URL',
+      'VITE_CADASTRO_PUBLICO',
+      'VITE_CADASTRO_POR_CONVITE',
+      'VITE_APP_URL',
+      'VITE_DADOS_TESTE',
     ],
-  },
-  server: {
-    fs: {
-      allow: ['..'],
+    // O ambiente jsdom e o carregamento dos módulos são lentos quando a suíte roda
+    // inteira em paralelo (sobretudo no Windows/CI): os 5 s padrão produziam
+    // "Test timed out" em testes que passam sozinhos. 20 s dá folga sem esconder
+    // travamento de verdade.
+    test: {
+      testTimeout: 20_000,
+      hookTimeout: 20_000,
     },
-  },
+    resolve: {
+      dedupe: ['lucide', '@neondatabase/neon-js'],
+      alias: [
+        { find: /^login-projetos\/estilo\.css$/, replacement: `${loginSrc}/styles/auth.css` },
+        { find: /^login-projetos\/pages\/(.+)$/, replacement: `${loginSrc}/pages/$1.js` },
+        { find: /^login-projetos\/(config|sessao|validacao|auth-ui|ui)$/, replacement: `${loginSrc}/$1.js` },
+        { find: /^login-projetos\/auth$/, replacement: `${loginSrc}/services/auth.js` },
+        { find: /^login-projetos\/neon$/, replacement: `${loginSrc}/lib/neon.js` },
+        { find: /^login-projetos\/icons$/, replacement: `${loginSrc}/lib/icons.js` },
+        { find: /^login-projetos$/, replacement: `${loginSrc}/index.js` },
+      ],
+    },
+    server: {
+      fs: {
+        allow: ['..'],
+      },
+    },
+  }
 })

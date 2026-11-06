@@ -1,4 +1,10 @@
-import { describe, it, expect, beforeEach } from 'vitest'
+import { describe, it, expect, beforeEach, vi } from 'vitest'
+
+vi.mock('../src/services/base.js', () => ({
+  neon: { rpc: vi.fn() },
+  neonConfigurado: true,
+}))
+
 import { estadoSessao } from 'login-projetos/sessao'
 import { chave, pode, podeAcessar, ehAdmin } from '../src/services/permissoes.js'
 

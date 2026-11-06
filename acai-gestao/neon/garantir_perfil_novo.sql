@@ -10,16 +10,13 @@ declare
   nome  text;
   mail  text;
   conv  public.invites;
+  perfil_existente public.profiles;
   linha public.profiles;
   ativo_inicial boolean := false;
+  convites_pendentes integer;
 begin
   if uid is null then
     raise exception 'Sem sessao ativa.' using errcode = '42501';
-  end if;
-
-  select id into org from public.organizations order by created_at, id limit 1;
-  if org is null then
-    raise exception 'Nenhuma organizacao cadastrada.' using errcode = 'P0002';
   end if;
 
   select coalesce(nullif(btrim(u.name), ''), split_part(u.email, '@', 1)),
@@ -27,6 +24,42 @@ begin
     into nome, mail
     from neon_auth.user u
    where u.id = uid;
+
+  select * into perfil_existente
+    from public.profiles
+   where id = uid;
+
+  if perfil_existente.id is not null then
+    org := perfil_existente.organization_id;
+  else
+    select count(*) into convites_pendentes
+      from public.invites
+     where lower(email) = mail
+       and accepted_at is null;
+
+    if convites_pendentes > 1 then
+      raise exception 'Mais de um convite pendente para esta conta.'
+        using errcode = '22023';
+    end if;
+
+    if convites_pendentes = 1 then
+      select * into conv
+        from public.invites
+       where lower(email) = mail
+         and accepted_at is null
+       limit 1;
+      org := conv.organization_id;
+    else
+      select id into org
+        from public.organizations
+       order by created_at, id
+       limit 1;
+    end if;
+  end if;
+
+  if org is null then
+    raise exception 'Nenhuma organizacao cadastrada.' using errcode = 'P0002';
+  end if;
 
   select * into conv
     from public.invites
@@ -49,7 +82,8 @@ begin
     update public.profiles
        set role = conv.role, is_active = conv.is_active, full_name = coalesce(nullif(conv.full_name,''), full_name),
            aprovado_em = now()
-     where id = uid;
+     where id = uid
+       and organization_id = org;
 
     insert into public.user_permissions (user_id, permission_id, allowed)
     select uid, ip.permission_id, ip.allowed

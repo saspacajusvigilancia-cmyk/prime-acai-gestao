@@ -31,6 +31,7 @@ No PowerShell, a partir da raiz:
 Set-Location .\acai-gestao
 npm ci
 npm test
+npm run validar
 npm run validar:migracoes
 npm run build
 ```

@@ -19,22 +19,57 @@ npm run dev
 
 Abre em `http://localhost:5173` (ou na próxima porta livre).
 
+O modo padrão (`npm run dev`) conecta à branch Neon de desenvolvimento
+autorizada; sem essa configuração o comando falha antes de iniciar, em vez de
+abrir dados de demonstração ou apontar para produção. Para abrir a demonstração
+local explicitamente, use `npm run dev:demo`; seus dados ficam somente em
+memória e operações críticas não são apresentadas como persistidas.
+
 ## Configuração (`.env`)
 
-Copie `.env.example` para `.env` e preencha:
+O ambiente local conectado usa `.env.development.local`, ignorado pelo Git.
+Obtenha as variáveis Neon somente da branch de desenvolvimento aprovada:
+
+```powershell
+neon env pull --project-id solitary-bonus-43107617 --branch br-autumn-dream-b65h5n3g --file .env.development.local --service postgres --service auth --service data-api
+```
+
+Nesse arquivo, mapeie `NEON_AUTH_BASE_URL` para `VITE_NEON_AUTH_URL` e
+`NEON_DATA_API_URL` para `VITE_NEON_DATA_API_URL`, deixe `VITE_NEON_URL` vazio e
+inclua os identificadores `NEON_DEV_PROJECT_ID`, `NEON_DEV_BRANCH_ID` e
+`NEON_DEV_ENDPOINT_ID` do ambiente autorizado. Para este workspace, o arquivo
+já foi configurado localmente; não copie variáveis da produção.
 
 | Variável | Para que serve |
 |---|---|
-| `VITE_NEON_URL` | URL HTTPS do banco (host + database). Sem ela, o app roda em modo demonstração (dados de exemplo) |
+| `VITE_NEON_AUTH_URL` | URL pública HTTPS do Neon Auth |
+| `VITE_NEON_DATA_API_URL` | URL pública HTTPS da Data API |
+| `VITE_NEON_URL` | Compatibilidade legada em ambientes de teste; deve ficar vazia no modo local conectado |
 | `VITE_APP_URL` | Opcional; origem pública para os links de recuperação de senha |
 | `VITE_CADASTRO_PUBLICO` | `false` esconde o link "Criar conta" da tela de login |
-| `VITE_CADASTRO_POR_CONVITE` | Com a anterior em `false`, mantém a tela `#/cadastro` acessível por link direto — é assim que o convidado cria a própria conta |
-| `DATABASE_URL` | **Segredo**, opcional — conexão Postgres direta para aplicar migrações e rodar `npm run verificar:*`; nunca vai para o navegador |
-| `VITE_TESTE_EMAIL` / `VITE_TESTE_SENHA` | Opcional — só para `npm run testar:base` |
+| `VITE_CADASTRO_POR_CONVITE` | Com a anterior em `false`, mantém a tela `#/cadastro` acessível por link direto |
+| `DATABASE_URL` | Conexão PostgreSQL pooled; **segredo**, nunca vai para o navegador |
+| `DATABASE_URL_UNPOOLED` | Conexão PostgreSQL direta com `sslmode=verify-full`, usada nas migrações |
+| `VITE_TESTE_EMAIL` / `VITE_TESTE_SENHA` | Opcional — identidade de teste exclusiva para `npm run testar:base` |
+| `NEON_DEV_PROJECT_ID` | Identificador público do projeto local autorizado |
+| `NEON_DEV_BRANCH_ID` / `NEON_DEV_ENDPOINT_ID` | Identificadores públicos da branch e endpoint locais autorizados |
+| `NEON_TEST_DATASET` | Deve ser `synthetic` apenas em homologação sintética |
 
-Sem `VITE_NEON_URL`, a interface usa os dados de demonstração. Com a URL
-configurada, falhas de leitura não são substituídas por exemplos: a tela mostra
-um aviso no indicador de dados até uma consulta daquele conjunto funcionar.
+O Vite publica somente as URLs públicas de Auth e Data API e a lista explícita
+de configurações de `vite.config.js`. `VITE_TESTE_EMAIL` e `VITE_TESTE_SENHA`
+são exclusivos dos scripts Node; nunca os inclua na allowlist do navegador.
+
+`npm run db:migrate` aplica, por transação, somente migrations ainda não
+registradas na branch local, mantendo histórico e checksum. Exclui a migration
+de estudo 12 e não carrega dados fictícios da migration 00. `npm run db:check`
+verifica histórico, checksum, RLS e isolamento por filial. Use `npm run dev:demo`
+para abrir explicitamente a demonstração local em memória.
+
+Para homologação remota, configure `.env.test` com uma branch sintética aprovada
+e use `npm run dev:teste`. O Vite e os scripts remotos bloqueiam produção e
+exigem IDs explícitos. `npm test` também recusa quando as URLs efetivas apontam
+à produção; para rodar somente testes locais, mantenha as URLs Neon e
+`DATABASE_URL` vazias em `.env.test.local` (gitignored).
 
 ### Cadastro de usuários (por convite)
 
@@ -60,16 +95,17 @@ backend (o Data API não tem permissão para isso), o que hoje não existe.
 ### Conexão direta com o Postgres (`DATABASE_URL`)
 
 O app no navegador **não** usa essa variável: ele fala com o Data API pela
-`VITE_NEON_URL` (pública) e o RLS decide o que cada conta vê. `DATABASE_URL`
-serve só para os roteiros locais — aplicar migrações e rodar
-`npm run verificar:*` — e é **segredo** (o `.env` já está no `.gitignore`).
+`VITE_NEON_DATA_API_URL` (pública) e o RLS decide o que cada conta vê.
+`DATABASE_URL` e `DATABASE_URL_UNPOOLED` servem só para os roteiros locais;
+ambas são **segredos** e estão em arquivos ignorados pelo Git.
 
 1. No console do banco, selecione o projeto e a branch e clique em **Connect**.
 2. Desmarque **Connection pooling** e copie a string que começa com
    `postgresql://`. Para migração use o host **direto** (sem `-pooler`): o
    `aplicar.mjs` roda DDL e transações por arquivo, que não combinam com o
    pooler em modo transação.
-3. Cole no `acai-gestao/.env`:
+3. Use a URL direta, sem `-pooler`, com validação completa do certificado TLS
+   (`sslmode=verify-full`) em `DATABASE_URL_UNPOOLED`:
 
    ```dotenv
    DATABASE_URL=postgresql://usuario:senha@ep-xxx.c-2.us-east-2.aws.neon.tech/neondb?sslmode=require
@@ -77,24 +113,25 @@ serve só para os roteiros locais — aplicar migrações e rodar
 
    Se a senha tiver `@`, `:`, `/`, `#` ou espaço, use a versão já codificada que
    o Console mostra (ou codifique com `encodeURIComponent`).
-4. Confira a conexão sem gravar nada — o `verificar:vendas` abre uma transação,
-   testa e termina em `ROLLBACK`:
+4. No ambiente local de desenvolvimento, valide e aplique com os comandos
+   versionados:
 
    ```powershell
-   npm run verificar:vendas
+   npm run db:check
+   npm run db:migrate
+   npm run db:check
    ```
 
-5. Aplique a migração pendente e atualize o cache do Data API:
+5. Após aplicar migrations ou mudar o schema, atualize o cache do Data API
+   explicitamente para a mesma branch:
 
    ```powershell
-   npm run validar:migracoes
-   node neon/aplicar.mjs 36
-   npx neon data-api refresh-schema --database neondb
+   neon data-api refresh-schema --project-id solitary-bonus-43107617 --branch br-autumn-dream-b65h5n3g --database neondb
    ```
 
    Sem o CLI, use **Postgres database → Data API → Refresh schema cache** no
-   Console. O `garantir_perfil_novo.sql` é passo manual: cole o conteúdo em
-   **SQL Editor** (ou rode com `psql -f`), porque ele não é uma migração `NN_*`.
+   Console. O `garantir_perfil_novo.sql` é aplicado e registrado pelo comando
+   `npm run db:migrate`.
 
 Nunca comite o `.env` nem cole a string em issue/chat. Se ela vazar, troque a
 senha do papel no Console (**Roles → Reset password**); a `VITE_NEON_URL` pode
@@ -102,21 +139,23 @@ continuar a mesma.
 
 ### Branches do projeto
 
-O projeto `Prime Açaí` (`nameless-tooth-87377816`, região `aws-sa-east-1`) usa
-as branches abaixo. Trocar de branch é trocar o host na `DATABASE_URL`; a
-`VITE_NEON_URL` continua apontando para `production`.
+O projeto `Prime Açaí` (`nameless-tooth-87377816`, região `aws-sa-east-1`) tem
+as branches abaixo registradas historicamente:
 
 | Branch | Endpoint | Uso |
 |---|---|---|
 | `production` (padrão) | `ep-fragrant-snow-b6xa862f` | base real do app |
-| `prime-acai-predeploy-20261028` | `ep-plain-lake-b66do9gp` | ensaio de migração antes de produção |
+| `prime-acai-predeploy-20261028` | `ep-plain-lake-b66do9gp` | ensaio histórico; não usar sem nova validação |
 | `backup-antes-27-20261028` | sem endpoint | ponto de restauração anterior à migração 27 |
 | `backup-riscos-20261028` | sem endpoint | cópia verificada anterior às migrações 29, 31 e 32 |
 
-Crie o branch de ensaio a partir de `production` (`npx neon branches create --name <nome>`),
-aplique a migração nele, valide com `compare_database_schema` e só então repita em
-produção. Branch de ensaio defasado dá falso positivo: em 28/10/2026 o anterior
-estava quatro migrações atrás e foi recriado do zero. O backup
+Uma consulta de metadados em 02/11/2026 identificou `production` como branch
+padrão; os ramos `deploy-validation-20261031` e
+`prime-acai-predeploy-20261028` têm `production` como pai. Não foi feita conexão
+ao banco. Como uma branch derivada pode conter dados reais da origem, nenhum
+desses ramos foi considerado sintético ou autorizado para homologação.
+Não crie uma branch de teste a partir de produção sem sanitização e aprovação.
+O backup
 `backup-riscos-20261028` foi aberto e conferido (8.539 vendas, 12.803 itens e
 9 clientes) antes da aplicação em produção. A branch temporária
 `teste-migracao-32-20261028` foi usada no ensaio e excluída depois da limpeza.
@@ -245,7 +284,7 @@ O diagnóstico somente leitura de RLS, privilégios e chaves compostas é
 O banco é criado por **um arquivo só**: `neon/00_banco_neon.sql`
 (tabelas, índices, funções, views, GRANTs, RLS e os dados de exemplo).
 Depois dele, cada mudança veio numa migração numerada (`neon/01_…` até
-`neon/37_…`; a `12` é dados de estudo e não entra na aplicação padrão, a `16`
+`neon/38_…`; a `12` é dados de estudo e não entra na aplicação padrão, a `16`
 é Compras, a `17` aplica permissões de clientes/financeiro, a `18` acrescenta
 canais e pagamentos, a `19` habilita fotos persistentes de produtos, a `20` cria
 o catálogo de categorias, a `21` categoriza os tipos de venda, as `22`–`25`
@@ -257,9 +296,11 @@ chave estrangeira compostos que faltavam, a `32` torna códigos e idempotência
 únicos por organização, a `33` acrescenta empresas/filiais/depósitos e o
 financeiro integrado (títulos, baixas, caixa), a `34` instala a carga de
 demonstração protegida, a `36` reforça a idempotência do estoque e a `37` habilita
-o gerenciamento protegido do cadastro de filiais. A lista de filiais não muda,
-por si só, a filial usada nas operações: essa integração exige adaptação dos
-módulos operacionais e não deve ser simulada no frontend.
+o gerenciamento protegido do cadastro de filiais e a `38` adiciona contexto,
+acessos explícitos e isolamento operacional por filial. A migration 43 controla
+o fluxo de status das vendas e valida metadados por canal. As migrations 38 e 43
+estão somente no código local; não foram aplicadas no Neon nem aprovadas para
+produção.
 
 Na auditoria somente leitura de 31/10/2026, a produção tinha uma organização,
 uma empresa e uma matriz. As vendas, compras e registros financeiros auditados
@@ -386,16 +427,20 @@ diagnóstico.
 
 ```bash
 npm test                  # unitários (Vitest + jsdom), sem tocar no banco
-npm run validar:migracoes # a cadeia de migrações num Postgres em memória
+npm run validar           # alias da cadeia de migrações no PGlite em memória
+npm run validar:migracoes # comando completo de validação estrutural e reversões
 npm run testar:demonstracao # carga DEMO, travas, idempotência e consistência em PGlite
 ```
 
 O trabalho multifilial atual está documentado em
-[`docs/MULTIFILIAL.md`](../docs/MULTIFILIAL.md). A migration 38 ainda é local e
-não deve ser aplicada à produção: o isolamento precisa passar pela auditoria
-completa de RPCs e pela classificação administrativa dos históricos sem filial.
-Transferências entre filiais e o rollback seguro da migration 38 também continuam
-pendentes; não publique esta versão como SaaS multifilial completo.
+[`docs/MULTIFILIAL.md`](../docs/MULTIFILIAL.md), e a execução da Fase 2 em
+[`docs/RELATORIO_IMPLEMENTACAO_FASE_2.md`](../docs/RELATORIO_IMPLEMENTACAO_FASE_2.md).
+A validação PGlite testa a matriz de escopo, o status inicial da migration 43 e
+as reversões em instância limpa, mas isso não substitui homologação no Neon. Não
+aplique migrations nem suas reversões em produção sem ambiente autorizado,
+backup recuperável, revisão das RPCs e aprovação dos vínculos históricos. Transferência
+entre filiais ainda não foi implementada; não publique esta versão como SaaS
+multifilial completo.
 
 O pacote compartilhado tem a própria suíte (Node, sem dependências externas):
 

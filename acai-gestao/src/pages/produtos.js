@@ -1,5 +1,5 @@
 import { produtos as produtosExemplo } from '../data.js'
-import { confirmar, paraNumero } from '../formulario.js'
+import { confirmar, paraNumero, protegerFormulario } from '../formulario.js'
 import { renderIcons } from '../icons.js'
 import {
   ativarCamposMonetarios,
@@ -176,7 +176,7 @@ export function produtosPage() {
             <div><h2 id="produtos-lista-titulo">Catálogo</h2><p id="produtos-contagem" class="card__desc">Carregando produtos...</p></div>
           </header>
           <div class="produtos__filtros">
-            <label class="search search--inline" for="produtos-busca"><i data-lucide="search"></i><input id="produtos-busca" type="search" placeholder="Buscar nome, código ou categoria..." autocomplete="off" /></label>
+            <label class="search search--inline" for="produtos-busca"><i data-lucide="search" aria-hidden="true"></i><input id="produtos-busca" type="search" placeholder="Buscar nome, código ou categoria..." aria-label="Buscar nome, código ou categoria" autocomplete="off" /></label>
             <label class="produtos__filtro" for="produtos-filtro-categoria"><span>Categoria</span><select id="produtos-filtro-categoria" class="campo__input"><option value="">Todas</option></select></label>
             <label class="produtos__filtro" for="produtos-filtro-tipo"><span>Tipo</span><select id="produtos-filtro-tipo" class="campo__input"><option value="">Todos</option>${opcoesHtml(Object.entries(TIPOS_VENDA).map(([valor, rotulo]) => ({ valor, rotulo })), '')}</select></label>
             <label class="produtos__filtro" for="produtos-filtro-status"><span>Situação</span><select id="produtos-filtro-status" class="campo__input"><option value="">Todas</option>${opcoesHtml(SITUACOES, '')}</select></label>
@@ -273,6 +273,7 @@ export function produtosPage() {
       let editando = null
       let arquivoImagem = null
       let removerImagem = false
+      let salvando = false
       let urlPrevia = null
       let observerFotos = null
       const urlsImagens = new Map()
@@ -294,6 +295,7 @@ export function produtosPage() {
       const erroLista = root.querySelector('#produtos-erro')
       const formErro = root.querySelector('#produto-form-erro')
       const form = root.querySelector('#produto-form')
+      const protecao = protegerFormulario(form)
       const codigoInput = form.elements.namedItem('codigo')
       const codigoErro = root.querySelector('#produto-codigo-erro')
       const fileInput = root.querySelector('#produto-imagem-arquivo')
@@ -616,10 +618,12 @@ export function produtosPage() {
         }
         lista.hidden = true
         editor.hidden = false
+        protecao.redefinir()
         root.querySelector('#produto-nome').focus()
       }
 
-      function voltarLista() {
+      async function voltarLista() {
+        if (!await protecao.confirmarDescarte()) return
         limparPrevia()
         arquivoImagem = null
         removerImagem = false
@@ -627,6 +631,7 @@ export function produtosPage() {
         editor.hidden = true
         lista.hidden = false
         form.reset()
+        protecao.redefinir()
       }
 
       async function recarregar() {
@@ -702,10 +707,13 @@ export function produtosPage() {
 
       async function salvar(evento) {
         evento.preventDefault()
+        if (salvando) return
         formErro.hidden = true
         avisoImagem()
         if (!form.reportValidity()) return
+        salvando = true
         botaoSalvar.disabled = true
+        form.querySelectorAll('input, select, textarea').forEach((campo) => { campo.disabled = true })
         const textoBotao = botaoSalvar.innerHTML
         botaoSalvar.innerHTML = '<span>Salvando produto…</span>'
 
@@ -751,10 +759,12 @@ export function produtosPage() {
             if (idImagem) urlsImagens.delete(idImagem)
           }
           await recarregar()
-          voltarLista()
+          protecao.redefinir()
+          await voltarLista()
           toast(mensagem)
         } catch (erro) {
           console.error('[produtos] Não foi possível salvar o cadastro.', erro)
+          form.querySelectorAll('input, select, textarea').forEach((campo) => { campo.disabled = false })
           if (erro?.code === CODIGO_PRODUTO_DUPLICADO) {
             await mostrarCodigoDuplicado()
           } else {
@@ -762,6 +772,8 @@ export function produtosPage() {
             formErro.hidden = false
           }
         } finally {
+          salvando = false
+          form.querySelectorAll('input, select, textarea').forEach((campo) => { campo.disabled = false })
           botaoSalvar.disabled = false
           botaoSalvar.innerHTML = textoBotao
           renderIcons(botaoSalvar)
@@ -828,6 +840,7 @@ export function produtosPage() {
         limparPrevia()
         arquivoImagem = null
         removerImagem = Boolean(editando?.uuid && imagemPaths.has(editando.uuid))
+        protecao.marcarAlterado()
         fileInput.value = ''
         mostrarPrevia(null)
         imageRemove.disabled = true
@@ -846,7 +859,9 @@ export function produtosPage() {
           toast(erro?.message ?? 'Não foi possível abrir o cadastro de produto.')
         })
       })
-      root.querySelectorAll('[data-voltar-lista]').forEach((botao) => botao.addEventListener('click', voltarLista))
+      root.querySelectorAll('[data-voltar-lista]').forEach((botao) => {
+        botao.addEventListener('click', () => { void voltarLista() })
+      })
       busca.addEventListener('input', () => { pagina = 0; renderProdutos() })
       ;[filtroCategoria, filtroTipo, filtroStatus].forEach((filtro) =>
         filtro.addEventListener('change', () => { pagina = 0; renderProdutos() }),
@@ -875,6 +890,7 @@ export function produtosPage() {
       })
 
       return () => {
+        protecao.limpar()
         observerFotos?.disconnect()
         root.removeEventListener('error', imagemQuebrou, true)
         limparPrevia()

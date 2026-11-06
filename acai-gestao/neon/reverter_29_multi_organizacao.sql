@@ -137,6 +137,19 @@ drop index if exists public.idx_venda_detalhes_tipo;
 drop index if exists public.idx_venda_detalhes_forma;
 
 -- ---------------------------------------------------------------- colunas ---
+alter table public.itens_venda
+  drop constraint if exists itens_venda_organization_id_fkey,
+  alter column organization_id drop not null;
+alter table public.vendas
+  drop constraint if exists vendas_organization_id_fkey,
+  alter column organization_id drop not null;
+alter table public.clientes
+  drop constraint if exists clientes_organization_id_fkey,
+  alter column organization_id drop not null;
+alter table public.lancamentos
+  drop constraint if exists lancamentos_organization_id_fkey,
+  alter column organization_id drop not null;
+
 alter table public.itens_venda drop column if exists organization_id;
 alter table public.vendas      drop column if exists organization_id;
 alter table public.clientes    drop column if exists organization_id;

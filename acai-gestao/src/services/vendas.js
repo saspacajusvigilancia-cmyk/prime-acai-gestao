@@ -36,6 +36,13 @@ const paraApp = (linha) => {
     comissaoEstimada: Number(detalhes?.comissao_estimada ?? 0),
     valorLiquidoEstimado: Number(detalhes?.valor_liquido_estimado ?? linha.total),
     status: linha.status,
+    pagamentoStatus: linha.estornada_em
+      ? 'Estornado'
+      : linha.status === 'Concluída'
+        ? 'Confirmado'
+        : linha.status === 'Cancelada'
+          ? 'Cancelado'
+          : 'Pendente',
     // Preenchido só quando a venda foi estornada depois de registrada (migração
     // 11); é o que a tela usa para mostrar "Estornada" em vez de "Cancelada".
     estornadaEm: linha.estornada_em ?? null,
@@ -45,6 +52,37 @@ const paraApp = (linha) => {
 
 const CAMPOS =
   'id, codigo, status, pagamento, total, criado_em, estornada_em, clientes(nome), itens_venda(count), venda_detalhes(tipo_venda_nome, forma_pagamento_nome, taxa_entrega, plataforma, pedido_externo, taxa_aplicativo, total_cobrado, troco, comissao_estimada, valor_liquido_estimado)'
+
+const CAMPOS_DETALHE =
+  'id, codigo, status, pagamento, total, criado_em, estornada_em, filial_id, clientes(nome), venda_detalhes(tipo_venda_nome, forma_pagamento_nome, endereco_entrega, taxa_entrega, plataforma, pedido_externo, comissao_percentual, taxa_aplicativo, total_cobrado, valor_recebido, troco, comissao_estimada, valor_liquido_estimado), itens_venda(id, produto_id, descricao, quantidade, preco_unitario, total, metodo_peso, peso_bruto_g, tara_g, peso_liquido_g, recipiente_id)'
+
+const paraDetalhe = (linha) => {
+  const detalhes = Array.isArray(linha.venda_detalhes)
+    ? linha.venda_detalhes[0]
+    : linha.venda_detalhes
+
+  return {
+    ...paraApp(linha),
+    criadoEm: linha.criado_em,
+    filialId: linha.filial_id,
+    itensVenda: (linha.itens_venda ?? []).map((item) => ({
+      id: item.id,
+      produtoId: item.produto_id,
+      descricao: item.descricao,
+      quantidade: Number(item.quantidade),
+      precoUnitario: Number(item.preco_unitario),
+      total: Number(item.total),
+      metodoPeso: item.metodo_peso,
+      pesoBrutoGramas: item.peso_bruto_g == null ? null : Number(item.peso_bruto_g),
+      taraGramas: item.tara_g == null ? null : Number(item.tara_g),
+      pesoLiquidoGramas: item.peso_liquido_g == null ? null : Number(item.peso_liquido_g),
+      recipienteId: item.recipiente_id,
+    })),
+    enderecoEntrega: detalhes?.endereco_entrega ?? null,
+    valorRecebido: detalhes?.valor_recebido == null ? null : Number(detalhes.valor_recebido),
+    comissaoPercentual: Number(detalhes?.comissao_percentual ?? 0),
+  }
+}
 
 /**
  * Teto de segurança de um dia de pedidos — não é paginação.
@@ -86,6 +124,50 @@ export function listarVendas({ dia: diaPedido, limite = LIMITE_DIA } = {}) {
   })
 }
 
+/** Busca os dados históricos da venda sem recalcular com cadastro atual. */
+export function detalharVenda(vendaId) {
+  if (!vendaId) throw new Error('Informe a venda para consultar os detalhes.')
+
+  return carregar({
+    nome: 'detalhes da venda',
+    exemplo: null,
+    consulta: async (neon) => {
+      const { data, error } = await neon
+        .from('vendas')
+        .select(CAMPOS_DETALHE)
+        .eq('id', vendaId)
+        .maybeSingle()
+
+      if (error) throw error
+      if (!data) throw new Error('Venda não encontrada na filial ativa.')
+      return paraDetalhe(data)
+    },
+  })
+}
+
+/** Consulta as transições auditadas da venda, limitada à organização/filial ativa no banco. */
+export function historicoStatusVenda(vendaId) {
+  if (!vendaId) throw new Error('Informe a venda para consultar o histórico.')
+
+  return carregar({
+    nome: 'histórico de status da venda',
+    exemplo: [],
+    consulta: async (neon) => {
+      const { data, error } = await neon.rpc('historico_status_venda', {
+        p_venda_id: vendaId,
+      })
+      if (error) throw error
+      return (data ?? []).map((linha) => ({
+        statusAnterior: linha.status_anterior,
+        statusNovo: linha.status_novo,
+        motivo: linha.motivo,
+        usuarioId: linha.actor_user_id,
+        criadoEm: linha.criado_em,
+      }))
+    },
+  })
+}
+
 /** Últimos pedidos, de qualquer data — usado no resumo do dashboard. */
 export function listarVendasRecentes(limite = 8) {
   return carregar({
@@ -118,31 +200,10 @@ export function listarVendasRecentes(limite = 8) {
 export async function proximoCodigoVenda() {
   if (!neonConfigurado) return '#4822'
 
-  try {
-    const { data, error } = await neon.rpc('proximo_codigo_venda')
-    if (error) throw error
-    if (typeof data === 'string' && data.startsWith('#')) return data
-    throw new Error(`resposta inesperada da função: ${String(JSON.stringify(data)).slice(0, 40)}`)
-  } catch (erro) {
-    // Banco antigo (sem a função), sem permissão ou sem rede: resta adivinhar
-    // pelo último pedido gravado, só para o campo não ficar sem sugestão.
-    console.error('[neon] Não foi possível ler o próximo código do pedido.', erro)
-
-    try {
-      const { data, error } = await neon
-        .from('vendas')
-        .select('codigo')
-        .order('codigo', { ascending: false })
-        .limit(1)
-
-      if (error) throw error
-
-      const ultimo = Number(String(data?.[0]?.codigo ?? '').replace(/\D/g, '')) || 4821
-      return `#${ultimo + 1}`
-    } catch {
-      return `#${String(Date.now()).slice(-5)}`
-    }
-  }
+  const { data, error } = await neon.rpc('proximo_codigo_venda')
+  if (error) throw error
+  if (typeof data === 'string' && data.startsWith('#')) return data
+  throw new Error(`O banco devolveu um próximo código inválido: ${String(JSON.stringify(data)).slice(0, 40)}`)
 }
 
 /**
@@ -182,7 +243,6 @@ export function registrarVenda({
   comissaoPercentual = 0,
   taxaAplicativo = 0,
   valorRecebido,
-  status,
   pagamento,
   itens,
 }) {
@@ -266,7 +326,7 @@ export function registrarVenda({
     troco: Number(linha.troco ?? trocoEstimado),
     comissaoEstimada: Number(linha.comissao_estimada ?? comissaoEstimativa),
     valorLiquidoEstimado: Number(linha.valor_liquido_estimado ?? liquidoEstimado),
-    status: linha.status ?? status,
+    status: linha.status ?? 'Aguardando',
     hora: hora(linha.criado_em ?? agora.toISOString()),
     jaExistia: Boolean(linha.ja_existia),
     movimentos: Number(linha.movimentos ?? 0),
@@ -278,7 +338,7 @@ export function registrarVenda({
     codigo: String(codigo ?? '').trim() || `#${String(agora.getTime()).slice(-5)}`,
     total: totalEstimado,
     pagamento,
-    status,
+    status: 'Aguardando',
     criado_em: agora.toISOString(),
     total_cobrado: totalCobradoEstimado,
     forma_pagamento: formaPagamentoNome,
@@ -290,6 +350,7 @@ export function registrarVenda({
 
   return gravar({
     nome: 'venda',
+    exigirPersistencia: true,
     registro,
     escrever: async (neon) => {
       const { data, error } = await neon.rpc('registrar_venda_completa', {
@@ -298,7 +359,7 @@ export function registrarVenda({
         p_cliente_id: clienteId || null,
         p_tipo_venda_id: tipoVendaId,
         p_forma_pagamento_id: formaPagamentoId,
-        p_status: status,
+        p_status: 'Aguardando',
         p_codigo: String(codigo ?? '').trim() || null,
         p_endereco_entrega: enderecoEntrega || null,
         p_taxa_entrega: entrega,
@@ -319,6 +380,77 @@ export function registrarVenda({
   })
 }
 
+/** Atualiza o status usando transições permitidas e auditadas pelo banco. */
+export function atualizarStatusVenda({ vendaId, codigo, novoStatus }) {
+  if ((!vendaId && (neonConfigurado || !codigo)) || !['Em preparo', 'Concluída'].includes(novoStatus)) {
+    throw new Error('Informe uma venda e um status de destino válido.')
+  }
+
+  return gravar({
+    nome: 'status da venda',
+    exigirPersistencia: true,
+    registro: {
+      vendaId,
+      codigo,
+      status: novoStatus,
+      jaEstavaAtualizado: false,
+    },
+    escrever: async (neon) => {
+      const { data, error } = await neon.rpc('atualizar_status_venda', {
+        p_venda_id: vendaId,
+        p_novo_status: novoStatus,
+      })
+      if (error) throw error
+
+      const linha = Array.isArray(data) ? data[0] : data
+      if (!linha) throw new Error('O banco não devolveu a atualização de status.')
+      return {
+        vendaId: linha.venda_id,
+        codigo: linha.codigo,
+        status: linha.status,
+        jaEstavaAtualizado: Boolean(linha.ja_estava_atualizado),
+      }
+    },
+  })
+}
+
+/** Cancela uma venda ainda não concluída e reverte o movimento de estoque uma única vez. */
+export function cancelarVendaPendente({ vendaId, codigo, motivo }) {
+  const justificativa = String(motivo ?? '').trim()
+  if ((!vendaId && (neonConfigurado || !codigo)) || !justificativa) {
+    throw new Error('Informe a venda e o motivo do cancelamento.')
+  }
+
+  return gravar({
+    nome: 'cancelamento da venda',
+    exigirPersistencia: true,
+    registro: {
+      vendaId,
+      codigo,
+      status: 'Cancelada',
+      movimentos: 0,
+      jaCancelada: false,
+    },
+    escrever: async (neon) => {
+      const { data, error } = await neon.rpc('cancelar_venda_pendente', {
+        p_venda_id: vendaId,
+        p_motivo: justificativa,
+      })
+      if (error) throw error
+
+      const linha = Array.isArray(data) ? data[0] : data
+      if (!linha) throw new Error('O banco não devolveu o cancelamento.')
+      return {
+        vendaId: linha.venda_id,
+        codigo: linha.codigo,
+        status: linha.status,
+        movimentos: Number(linha.movimentos ?? 0),
+        jaCancelada: Boolean(linha.ja_cancelada),
+      }
+    },
+  })
+}
+
 /**
  * Estorna a venda pela RPC `estornar_venda` (migração 11).
  *
@@ -334,6 +466,7 @@ export function registrarVenda({
 export function estornarVenda({ vendaId, codigo, motivo }) {
   return gravar({
     nome: 'estorno',
+    exigirPersistencia: true,
     // Modo demonstração: o registro devolvido é o que a tela mostraria.
     registro: {
       id: codigo ?? '',

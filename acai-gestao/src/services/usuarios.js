@@ -12,6 +12,7 @@
 
 import { neon, neonConfigurado } from './base.js'
 import { sincronizarPermissoes } from './permissoes.js'
+import { enviarLinkDeRecuperacao } from 'login-projetos/auth'
 
 /** Erro amigável a partir da resposta do Neon/PostgREST. */
 function falha(erro) {
@@ -127,6 +128,5 @@ export async function definirPermissaoPerfil(role, modulo, acao, permitido) {
  * `public.pode()`; aqui só chamamos o provedor.
  */
 export async function enviarRecuperacaoDeSenha(email) {
-  const { enviarLinkDeRecuperacao } = await import('login-projetos/auth')
   await enviarLinkDeRecuperacao(email)
 }

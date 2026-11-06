@@ -21,16 +21,13 @@
  * Por isso `abrir()` queima a primeira avaliação e a ordem é sempre
  * "papel primeiro, claim depois".
  */
-import { readFileSync } from 'node:fs'
 import pg from 'pg'
+import { carregarAmbiente, exigirDestinoSintetico } from './ambiente-teste.js'
 
-function url() {
-  if (process.env.DATABASE_URL) return process.env.DATABASE_URL
-  const texto = readFileSync(new URL('../.env', import.meta.url), 'utf8')
-  const linha = texto.split(/\r?\n/).find((l) => l.startsWith('DATABASE_URL='))
-  if (!linha) throw new Error('DATABASE_URL não encontrado no .env')
-  return linha.slice('DATABASE_URL='.length).trim().replace(/^["']|["']$/g, '')
-}
+const env = carregarAmbiente('test')
+const connectionString = (env.DATABASE_URL || '').trim()
+if (!connectionString) throw new Error('DATABASE_URL não encontrado no ambiente de teste.')
+exigirDestinoSintetico(env)
 
 let falhas = 0
 const ok = (nome, cond, extra = '') => {
@@ -40,7 +37,7 @@ const ok = (nome, cond, extra = '') => {
 const titulo = (t) => console.log(`\n== ${t} ==`)
 const n = (v) => Number(v)
 const conectar = async () => {
-  const c = new pg.Client({ connectionString: url(), ssl: { rejectUnauthorized: false } })
+  const c = new pg.Client({ connectionString, ssl: { rejectUnauthorized: false } })
   await c.connect()
   return c
 }

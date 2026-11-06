@@ -13,39 +13,27 @@
  *   node neon/aplicar.mjs 12         # aplica explicitamente dados de estudo
  *   node neon/aplicar.mjs reverter_04 # aplica a reversão da migração 04
  *
- * A string de conexão é SEGREDO: passe por variável de ambiente (ou pelo
- * `DATABASE_URL` do .env), nunca comite. A URL usada pelo app no navegador
- * (`VITE_NEON_URL`) é pública e diferente desta.
+ * A string de conexão é SEGREDO e nunca é exibida. O script valida projeto,
+ * branch e endpoint sintético antes de abrir o PostgreSQL.
  */
 
 import { readFileSync, readdirSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { dirname, join } from 'node:path'
 import pg from 'pg'
+import { carregarAmbiente, exigirDestinoSintetico } from './ambiente-teste.js'
 
 const raiz = join(dirname(fileURLToPath(import.meta.url)), '..')
 
-function lerEnv() {
-  try {
-    const texto = readFileSync(join(raiz, '.env'), 'utf8')
-    const env = {}
-    for (const linha of texto.split(/\r?\n/)) {
-      if (linha.trim().startsWith('#')) continue
-      const m = linha.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/)
-      if (m) env[m[1]] = m[2].trim().replace(/^["']|["']$/g, '')
-    }
-    return env
-  } catch {
-    return {}
-  }
-}
-
-const url = process.env.DATABASE_URL || lerEnv().DATABASE_URL
-
-if (!url) {
-  console.error('\n  Falta a string de conexão. Defina DATABASE_URL no ambiente (ou no .env).\n')
+const env = carregarAmbiente('test')
+let endpointId
+try {
+  endpointId = exigirDestinoSintetico(env)
+} catch (erro) {
+  console.error(`\n  Migrations bloqueadas antes da conexão: ${erro.message}\n`)
   process.exit(1)
 }
+const url = String(env.DATABASE_URL).trim()
 
 const filtro = process.argv[2] || ''
 const pasta = join(raiz, 'neon')
@@ -74,13 +62,13 @@ if (arquivos.length === 0) {
   process.exit(1)
 }
 
-const apenas = (url) => url.replace(/:\/\/([^:]+):[^@]+@/, '://$1:***@')
-console.log(`\n  Aplicando em: ${apenas(url)}`)
+console.log(
+  `\n  Ambiente validado: projeto ${env.NEON_TEST_PROJECT_ID}, branch ${env.NEON_TEST_BRANCH_ID}, endpoint ${endpointId}.`,
+)
 console.log(`  Arquivos: ${arquivos.join(', ')}\n`)
 
 const client = new pg.Client({
   connectionString: url,
-  ssl: { rejectUnauthorized: false },
 })
 
 await client.connect()

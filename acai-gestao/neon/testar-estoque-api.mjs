@@ -19,28 +19,14 @@
  * outras são tentativas que o banco recusa de propósito. Por isso o usuário
  * pode ser apagado depois sem deixar rastro.
  *
- * No fim ele imprime o e-mail e o UID. Apague com:
+ * No fim ele imprime somente o UID sintético. Apague com:
  *   npx --yes neon@latest neon-auth user delete <UID> --project-id <PROJETO>
  *
  * Precisa do `DATABASE_URL` no `.env` (só para promover/rebaixar o perfil).
  */
 
-import { readFileSync } from 'node:fs'
-import { fileURLToPath } from 'node:url'
-import { dirname, join } from 'node:path'
 import pg from 'pg'
-
-const raiz = join(dirname(fileURLToPath(import.meta.url)), '..')
-
-function lerEnv() {
-  const env = {}
-  for (const linha of readFileSync(join(raiz, '.env'), 'utf8').split(/\r?\n/)) {
-    if (linha.trim().startsWith('#')) continue
-    const m = linha.match(/^\s*([A-Z0-9_]+)\s*=\s*(.*)$/)
-    if (m) env[m[1]] = m[2].trim().replace(/^["']|["']$/g, '')
-  }
-  return env
-}
+import { carregarAmbiente, exigirDestinoSintetico } from './ambiente-teste.js'
 
 function derivar(base) {
   const url = new URL(base)
@@ -53,8 +39,14 @@ function derivar(base) {
   }
 }
 
-const env = lerEnv()
+const env = carregarAmbiente('test')
 const ORIGEM = 'https://prime-acai-gestao.pages.dev'
+const urlBanco = env.DATABASE_URL
+if (!env.VITE_NEON_URL || !urlBanco) {
+  throw new Error('Teste de API bloqueado: configure as URLs de teste da Data API e do PostgreSQL.')
+}
+exigirDestinoSintetico(env)
+
 const { auth: authBase, data: dataBase } = derivar(env.VITE_NEON_URL)
 
 let falhas = 0
@@ -67,7 +59,7 @@ const stamp = Date.now()
 const email = `e2e.estoque.${stamp}@primeacai.local`
 const senha = `Teste!${stamp}`
 
-console.log(`\nAuth:  ${authBase}\nData:  ${dataBase}\nUser:  ${email}\n`)
+console.log('\nAmbiente sintético autorizado; iniciando teste autenticado de API.')
 
 const H = { 'Content-Type': 'application/json', Origin: ORIGEM }
 
@@ -84,7 +76,7 @@ const cookie = (sign.headers.getSetCookie?.() ?? []).map((c) => c.split(';')[0])
 
 const sess = await fetch(`${authBase}/get-session`, { headers: { Origin: ORIGEM, cookie } })
 const jwt = sess.headers.get('set-auth-jwt')
-ok('get-session devolve set-auth-jwt', Boolean(jwt && jwt.split('.').length === 3), jwt ? `${jwt.slice(0, 24)}…` : 'sem JWT')
+ok('get-session devolve set-auth-jwt', Boolean(jwt && jwt.split('.').length === 3), jwt ? 'JWT recebido (redigido)' : 'sem JWT')
 if (!jwt) {
   console.log('\n  Sem JWT; abortando.\n')
   process.exit(1)
@@ -112,11 +104,6 @@ const rpc = (fn, body = {}) =>
 // admin pelo SQL (é o mesmo que aprovar alguém no sistema).
 await rpc('garantir_perfil')
 
-const urlBanco = process.env.DATABASE_URL || env.DATABASE_URL
-if (!urlBanco) {
-  console.log('\n  Sem DATABASE_URL (defina no ambiente ou no .env); abortando.\n')
-  process.exit(1)
-}
 const db = new pg.Client({ connectionString: urlBanco, ssl: { rejectUnauthorized: false } })
 await db.connect()
 const virar = async (papel) => {
@@ -243,7 +230,6 @@ ok('o saldo do item é o mesmo de antes', Number(fim.json?.[0]?.quantidade) === 
 await db.query(`delete from public.notifications where titulo ilike '%E2E%' or mensagem ilike '%E2E%'`).catch(() => {})
 await db.end()
 
-console.log(`\n  EMAIL=${email}`)
 console.log(`  UID=${uid ?? ''}`)
 console.log(`\n  Apague com:\n  npx --yes neon@latest neon-auth user delete ${uid} --project-id <PROJETO>\n`)
 console.log(falhas === 0 ? '  Tudo certo.\n' : `  ${falhas} falha(s).\n`)

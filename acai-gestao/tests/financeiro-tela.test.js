@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
-const { mockBaixar, mockListarTitulos, mockResumo } = vi.hoisted(() => ({
+const { mockBaixar, mockLancamentos, mockListarTitulos, mockResumo } = vi.hoisted(() => ({
   mockBaixar: vi.fn(),
+  mockLancamentos: vi.fn(),
   mockListarTitulos: vi.fn(),
   mockResumo: vi.fn(),
 }))
@@ -18,7 +19,7 @@ vi.mock('chart.js/auto', () => ({
 }))
 
 vi.mock('../src/services/lancamentos.js', () => ({
-  listarLancamentos: async () => ({ dados: [], origem: 'neon' }),
+  listarLancamentos: (...args) => mockLancamentos(...args),
   carregarFluxoMensal: async () => ({
     dados: { labels: [], entradas: [], saidas: [] },
     origem: 'neon',
@@ -97,6 +98,7 @@ function montar() {
 
 beforeEach(() => {
   mockBaixar.mockReset()
+  mockLancamentos.mockReset().mockResolvedValue({ dados: [], origem: 'neon' })
   mockListarTitulos.mockReset()
   mockResumo.mockReset()
 
@@ -119,6 +121,58 @@ afterEach(() => {
 })
 
 describe('financeiro · títulos', () => {
+  it('filtra lançamentos carregados por período e tipo sem perder a busca local', async () => {
+    mockLancamentos.mockResolvedValue({
+      dados: [
+        { id: 'L1', data: '2026-10-01', descricao: 'Venda balcão', categoria: 'Vendas', tipo: 'entrada', valor: 50, forma: 'Pix' },
+        { id: 'L2', data: '2026-10-12', descricao: 'Compra fruta', categoria: 'Compras', tipo: 'saida', valor: 20, forma: 'Dinheiro' },
+        { id: 'L3', data: '2026-11-02', descricao: 'Venda delivery', categoria: 'Vendas', tipo: 'entrada', valor: 70, forma: 'Pix' },
+      ],
+      origem: 'neon',
+    })
+    desmontar?.()
+    fechar()
+    root.innerHTML = ''
+    montar()
+    await tick()
+
+    root.querySelector('#filtro-financeiro-desde').value = '2026-10-01'
+    root.querySelector('#filtro-financeiro-ate').value = '2026-10-31'
+    root.querySelector('#filtro-financeiro-ate').dispatchEvent(new Event('change'))
+    root.querySelector('#filtro-financeiro-tipo').value = 'saida'
+    root.querySelector('#filtro-financeiro-tipo').dispatchEvent(new Event('change'))
+    root.querySelector('#busca-financeiro').value = 'fruta'
+    root.querySelector('#busca-financeiro').dispatchEvent(new Event('input'))
+
+    const linhas = [...root.querySelectorAll('#tabela-financeiro tbody tr')]
+    expect(linhas).toHaveLength(1)
+    expect(linhas[0].textContent).toContain('Compra fruta')
+    expect(root.querySelector('#contagem-financeiro').textContent).toBe('1 de 3 lançamentos')
+    expect(root.querySelector('#erro-filtro-financeiro').hidden).toBe(true)
+  })
+
+  it('não exibe resultados quando o período está invertido e informa o erro', async () => {
+    mockLancamentos.mockResolvedValue({
+      dados: [
+        { id: 'L1', data: '2026-10-12', descricao: 'Compra fruta', categoria: 'Compras', tipo: 'saida', valor: 20, forma: 'Dinheiro' },
+      ],
+      origem: 'neon',
+    })
+    desmontar?.()
+    fechar()
+    root.innerHTML = ''
+    montar()
+    await tick()
+
+    root.querySelector('#filtro-financeiro-desde').value = '2026-10-31'
+    root.querySelector('#filtro-financeiro-ate').value = '2026-10-01'
+    root.querySelector('#filtro-financeiro-ate').dispatchEvent(new Event('change'))
+
+    expect(root.querySelector('#tabela-financeiro tbody').textContent).not.toContain('Compra fruta')
+    expect(root.querySelector('#erro-filtro-financeiro').hidden).toBe(false)
+    expect(root.querySelector('#erro-filtro-financeiro').textContent).toContain('anterior ou igual')
+  })
+
   it('mostra o saldo vindo do banco e abre a baixa preenchida', async () => {
     await tick()
 

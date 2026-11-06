@@ -71,6 +71,7 @@ export function registrarPerdaBuffet({
 
   return gravar({
     nome: 'perda do Estoque Buffet',
+    exigirPersistencia: true,
     registro: { produtoId, quantidade: qtd, motivo, observacoes: texto },
     escrever: async (neon) => {
       const { data, error } = await neon.rpc('registrar_perda_buffet', {
@@ -107,6 +108,7 @@ export function devolverProdutoBuffet({
 
   return gravar({
     nome: 'devolução ao Estoque Normal',
+    exigirPersistencia: true,
     registro: { produtoId, quantidade: qtd, condicao, motivo: textoMotivo, observacoes: textoObservacoes },
     escrever: async (neon) => {
       const { data, error } = await neon.rpc('devolver_produto_buffet', {

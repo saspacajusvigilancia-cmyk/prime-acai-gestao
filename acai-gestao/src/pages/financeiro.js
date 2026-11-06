@@ -62,12 +62,17 @@ const colunas = [
   },
 ]
 
-const filtrar = (dados, termo) => {
+const filtrar = (dados, termo, { desde = '', ate = '', tipo = '' } = {}) => {
   const busca = termo.trim().toLowerCase()
-  if (!busca) return dados
-  return dados.filter((l) =>
-    [l.id, l.descricao, l.categoria, l.forma, l.tipo].join(' ').toLowerCase().includes(busca),
-  )
+  return dados.filter((l) => {
+    if (desde && l.data < desde) return false
+    if (ate && l.data > ate) return false
+    if (tipo && l.tipo !== tipo) return false
+    return !busca || [l.id, l.descricao, l.categoria, l.forma, l.tipo]
+      .join(' ')
+      .toLowerCase()
+      .includes(busca)
+  })
 }
 
 const statusTitulo = (titulo) => {
@@ -207,10 +212,32 @@ export function financeiroPage() {
       <section class="card">
         ${cardHead({
           titulo: 'Lançamentos',
-          descricao: 'Movimentações recentes do caixa',
+          descricao: 'Movimentações recentes do caixa (até 60 registros carregados)',
           acoes: botaoPrimario({ label: 'Novo lançamento', icon: 'plus', acao: 'novo-lancamento' }),
         })}
-        ${toolbar({ buscaId: 'busca-financeiro', placeholder: 'Buscar por descrição, categoria ou tipo...' })}
+        ${toolbar({
+          buscaId: 'busca-financeiro',
+          placeholder: 'Buscar por descrição, categoria ou tipo...',
+          filtros: `
+            <label class="campo" for="filtro-financeiro-desde">
+              <span class="campo__label">De</span>
+              <input class="campo__input" id="filtro-financeiro-desde" type="date" />
+            </label>
+            <label class="campo" for="filtro-financeiro-ate">
+              <span class="campo__label">Até</span>
+              <input class="campo__input" id="filtro-financeiro-ate" type="date" />
+            </label>
+            <label class="campo" for="filtro-financeiro-tipo">
+              <span class="campo__label">Tipo</span>
+              <select class="campo__input" id="filtro-financeiro-tipo">
+                <option value="">Todos</option>
+                <option value="entrada">Entradas</option>
+                <option value="saida">Saídas</option>
+              </select>
+            </label>
+          `,
+        })}
+        <p class="campo__erro" id="erro-filtro-financeiro" role="alert" hidden></p>
         <p class="table__count" id="contagem-financeiro"></p>
         ${tabela({ colunas, linhas: lancamentosExemplo, id: 'tabela-financeiro' })}
       </section>
@@ -245,6 +272,10 @@ export function financeiroPage() {
 
       const contagem = root.querySelector('#contagem-financeiro')
       const input = root.querySelector('#busca-financeiro')
+      const filtroDesde = root.querySelector('#filtro-financeiro-desde')
+      const filtroAte = root.querySelector('#filtro-financeiro-ate')
+      const filtroTipo = root.querySelector('#filtro-financeiro-tipo')
+      const erroFiltro = root.querySelector('#erro-filtro-financeiro')
 
       const pintarEntradas = () =>
         atualizarKpi(root, 'entradas', {
@@ -253,7 +284,22 @@ export function financeiroPage() {
         })
 
       const aplicar = (termo) => {
-        const linhas = filtrar(dados, termo)
+        const desde = filtroDesde.value
+        const ate = filtroAte.value
+        if (desde && ate && desde > ate) {
+          erroFiltro.textContent = 'A data inicial deve ser anterior ou igual à data final.'
+          erroFiltro.hidden = false
+          atualizarTabela(root, 'tabela-financeiro', colunas, [])
+          contagem.textContent = `0 de ${dados.length} lançamentos`
+          return
+        }
+
+        erroFiltro.hidden = true
+        const linhas = filtrar(dados, termo, {
+          desde,
+          ate,
+          tipo: filtroTipo.value,
+        })
         atualizarTabela(root, 'tabela-financeiro', colunas, linhas)
         contagem.textContent = `${linhas.length} de ${dados.length} lançamentos`
       }
@@ -261,6 +307,9 @@ export function financeiroPage() {
       aplicar('')
 
       input.addEventListener('input', () => aplicar(input.value))
+      filtroDesde.addEventListener('change', () => aplicar(input.value))
+      filtroAte.addEventListener('change', () => aplicar(input.value))
+      filtroTipo.addEventListener('change', () => aplicar(input.value))
 
       const aoBuscarGlobal = (evento) => {
         input.value = evento.detail

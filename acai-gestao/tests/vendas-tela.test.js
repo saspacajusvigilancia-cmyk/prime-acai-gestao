@@ -11,11 +11,41 @@ const fixture = vi.hoisted(() => ({
     { id: 'pag-pix', nome: 'PIX', categoria: 'pix', ativo: true },
     { id: 'pag-dinheiro', nome: 'Dinheiro', categoria: 'dinheiro', ativo: true },
   ],
+  vendas: [
+    {
+      id: '#4821',
+      cliente: 'Maria Souza',
+      itens: 3,
+      total: 64.5,
+      pagamento: 'Pix',
+      tipoVenda: 'Balcão',
+      plataforma: null,
+      status: 'Concluída',
+      hora: '14:32',
+    },
+    {
+      id: '#4820',
+      cliente: 'Carlos Lima',
+      itens: 1,
+      total: 21.9,
+      pagamento: 'Crédito',
+      tipoVenda: 'Aplicativo',
+      plataforma: 'iFood',
+      status: 'Em preparo',
+      hora: '14:18',
+    },
+  ],
+  consultas: [],
+  observadores: [],
+  consultaVendas: null,
 }))
 
 vi.mock('../src/services/base.js', () => ({
   hoje: () => '2026-10-20',
-  observar: () => () => {},
+  observar: (promessa, callback) => {
+    fixture.observadores.push({ promessa, callback })
+    return () => {}
+  },
 }))
 vi.mock('../src/services/clientes.js', () => ({
   listarClientes: async () => ({ dados: [], origem: 'exemplo' }),
@@ -40,9 +70,14 @@ vi.mock('../src/services/vendas.js', async (importOriginal) => {
   const original = await importOriginal()
   return {
     ...original,
+    detalharVenda: async () => ({ dados: null, origem: 'exemplo' }),
     estornarVenda: vi.fn(),
+    historicoStatusVenda: async () => ({ dados: [], origem: 'exemplo' }),
     // O CSV é puro: usa o gerador de verdade, só a consulta é simulada.
-    listarVendas: async () => ({ dados: [], origem: 'exemplo' }),
+    listarVendas: (...args) => {
+      fixture.consultas.push(args)
+      return fixture.consultaVendas ?? Promise.resolve({ dados: [], origem: 'exemplo' })
+    },
     proximoCodigoVenda: async () => '#1',
     registrarVenda: vi.fn(),
   }
@@ -51,33 +86,12 @@ vi.mock('../src/services/permissoes.js', () => ({
   pode: () => true,
 }))
 
-// A exportação precisa de linhas previsíveis. Em teste o `.env` pode ter
-// VITE_NEON_URL, e aí `vendas` de exemplo nasce vazia — o CSV não teria o que
-// baixar. Mantém o resto do módulo e troca só a lista de vendas.
+// Em teste o `.env` pode ter VITE_NEON_URL; mantenha vendas previsíveis.
 vi.mock('../src/data.js', async (importOriginal) => {
   const original = await importOriginal()
   return {
     ...original,
-    vendas: [
-      {
-        id: '#4821',
-        cliente: 'Maria Souza',
-        itens: 3,
-        total: 64.5,
-        pagamento: 'Pix',
-        status: 'Concluída',
-        hora: '14:32',
-      },
-      {
-        id: '#4820',
-        cliente: 'Carlos Lima',
-        itens: 1,
-        total: 21.9,
-        pagamento: 'Crédito',
-        status: 'Em preparo',
-        hora: '14:18',
-      },
-    ],
+    vendas: fixture.vendas,
   }
 })
 
@@ -92,7 +106,16 @@ const tick = async () => {
 }
 
 beforeEach(() => {
-  document.body.innerHTML = '<div id="app"></div>'
+  fixture.vendas.splice(2)
+  fixture.consultas.length = 0
+  fixture.observadores.length = 0
+  fixture.consultaVendas = null
+  document.body.innerHTML = `
+    <select id="filial-atual">
+      <option value="filial-1" selected>LOJA 01 — Centro</option>
+    </select>
+    <div id="app"></div>
+  `
   root = document.querySelector('#app')
   const pagina = vendasPage()
   root.innerHTML = pagina.html
@@ -107,6 +130,16 @@ afterEach(() => {
 })
 
 describe('formulário de venda por canal e forma de pagamento', () => {
+  it('não permite escolher o status inicial e apresenta pedido pendente por padrão', async () => {
+    root.querySelector('[data-acao="nova-venda"]').click()
+    await tick()
+
+    const modal = document.querySelector('.modal')
+    expect(modal.querySelector('[name="status"]')).toBeNull()
+    expect(modal.querySelector('.modal__desc').textContent).toContain('começam Aguardando')
+    modal.querySelector('[data-fechar]').click()
+  })
+
   it('mostra campos de delivery, aplicativo e troco apenas quando aplicáveis', async () => {
     root.querySelector('[data-acao="nova-venda"]').click()
     await tick()
@@ -136,6 +169,141 @@ describe('formulário de venda por canal e forma de pagamento', () => {
     forma.value = 'pag-dinheiro'
     forma.dispatchEvent(new Event('change', { bubbles: true }))
     expect(dinheiro.hidden).toBe(false)
+  })
+})
+
+describe('ações contextuais e detalhes históricos', () => {
+  it('mostra apenas as ações compatíveis com o estado do pedido', () => {
+    const linhas = [...root.querySelectorAll('#tabela-vendas tbody tr')]
+    expect(linhas[0].querySelector('[data-acao="detalhes-venda"]')).toBeTruthy()
+    expect(linhas[0].querySelector('[data-acao="estornar-venda"]')).toBeTruthy()
+    expect(linhas[0].querySelector('[data-acao="cancelar-venda"]')).toBeNull()
+    expect(linhas[1].querySelector('[data-acao="concluir-venda"]')).toBeTruthy()
+    expect(linhas[1].querySelector('[data-acao="cancelar-venda"]')).toBeTruthy()
+    expect(linhas[1].querySelector('[data-acao="estornar-venda"]')).toBeNull()
+  })
+
+  it('abre detalhes com aviso explícito para dados temporários de demonstração', async () => {
+    root.querySelector('[data-acao="detalhes-venda"]').click()
+    await tick()
+
+    const modal = document.querySelector('.venda-detalhe')
+    expect(modal).toBeTruthy()
+    expect(modal.textContent).toContain('Situação do pagamento')
+    expect(modal.textContent).toContain('não são registrados separadamente')
+    expect(modal.textContent).toContain('Dados de demonstração são temporários')
+    modal.querySelector('[data-detalhe-fechar]:not(.modal__scrim)').click()
+  })
+})
+
+describe('filtros locais de vendas', () => {
+  it('combina status, canal/origem, pagamento e busca sem consultar novamente', () => {
+    const status = root.querySelector('#filtro-vendas-status')
+    const canal = root.querySelector('#filtro-vendas-canal')
+    const pagamento = root.querySelector('#filtro-vendas-pagamento')
+
+    status.value = 'Em preparo'
+    status.dispatchEvent(new Event('change'))
+    canal.value = 'plataforma:iFood'
+    canal.dispatchEvent(new Event('change'))
+    pagamento.value = 'Crédito'
+    pagamento.dispatchEvent(new Event('change'))
+    root.querySelector('#busca-vendas').value = 'Carlos'
+    root.querySelector('#busca-vendas').dispatchEvent(new Event('input'))
+
+    let linhas = [...root.querySelectorAll('#tabela-vendas tbody tr')]
+    expect(linhas).toHaveLength(1)
+    expect(linhas[0].textContent).toContain('Carlos Lima')
+
+    root.querySelector('#busca-vendas').value = 'Maria'
+    root.querySelector('#busca-vendas').dispatchEvent(new Event('input'))
+    linhas = [...root.querySelectorAll('#tabela-vendas tbody tr')]
+    expect(linhas).toHaveLength(1)
+    expect(linhas[0].textContent).toContain('Nenhum registro encontrado.')
+    expect(fixture.consultas).toHaveLength(1)
+  })
+
+  it('usa somente as opções presentes nos pedidos carregados', () => {
+    const status = [...root.querySelectorAll('#filtro-vendas-status option')].map((opcao) => opcao.value)
+    const canal = [...root.querySelectorAll('#filtro-vendas-canal option')].map((opcao) => opcao.value)
+    const pagamento = [...root.querySelectorAll('#filtro-vendas-pagamento option')].map((opcao) => opcao.value)
+
+    expect(status).toEqual(['', 'Concluída', 'Em preparo'])
+    expect(canal).toEqual(['', 'plataforma:iFood', 'tipo:Aplicativo', 'tipo:Balcão'])
+    expect(pagamento).toEqual(['', 'Crédito', 'Pix'])
+  })
+})
+
+describe('relatório de vendas', () => {
+  it('informa período, filial indicada, origem, cobertura e resumo dos filtros atuais', () => {
+    const meta = root.querySelector('#relatorio-vendas-metadados')
+    const resumo = root.querySelector('#relatorio-vendas-resumo')
+    const relatorio = root.querySelector('#relatorio-vendas')
+
+    expect(meta.textContent).toContain('20/10/2026')
+    expect(meta.textContent).toContain('LOJA 01 — Centro')
+    expect(meta.textContent).toContain('Dados de demonstração')
+    expect(meta.textContent).toContain('Demonstração; não representa dados operacionais.')
+    expect(resumo.textContent).toContain('2')
+    expect(resumo.textContent).toContain('Pedidos no resultado')
+    expect(resumo.textContent.replace(/\u00a0/g, ' ')).toContain('R$ 86,40')
+    expect(root.querySelector('#relatorio-vendas-grupos').textContent).toContain('Em preparo')
+    expect(root.querySelector('#relatorio-vendas-grupos').textContent).toContain('Pix')
+  })
+
+  it('mantém o relatório coerente com a busca e os filtros, inclusive quando vazio', () => {
+    root.querySelector('#filtro-vendas-pagamento').value = 'Crédito'
+    root.querySelector('#filtro-vendas-pagamento').dispatchEvent(new Event('change'))
+    root.querySelector('#busca-vendas').value = 'Maria'
+    root.querySelector('#busca-vendas').dispatchEvent(new Event('input'))
+
+    expect(root.querySelector('#relatorio-vendas-resumo').textContent).toContain('0')
+    expect(root.querySelector('#relatorio-vendas-metadados').textContent).toContain(
+      'Busca: Maria · Pagamento: Crédito',
+    )
+    expect(root.querySelector('#relatorio-vendas-grupos').textContent).toContain(
+      'Nenhum pedido com os filtros atuais.',
+    )
+  })
+
+  it('identifica os dados reais quando a consulta da Data API é resolvida', () => {
+    fixture.observadores[0].callback({ dados: fixture.vendas, origem: 'neon' })
+
+    expect(root.querySelector('#relatorio-vendas-metadados').textContent).toContain('Neon Data API')
+    expect(root.querySelector('#relatorio-vendas-metadados').textContent).toContain(
+      'Consulta do dia abaixo do limite de 300',
+    )
+  })
+
+  it('atualiza a filial do relatório quando o cabeçalho termina de carregar', async () => {
+    const seletor = document.querySelector('#filial-atual')
+    seletor.replaceChildren(new Option('LOJA 02 — Centro', 'filial-2', true, true))
+    await tick()
+
+    expect(root.querySelector('#relatorio-vendas-metadados').textContent).toContain(
+      'LOJA 02 — Centro',
+    )
+  })
+
+  it('mantém o período correspondente aos dados e bloqueia CSV enquanto outro dia carrega', async () => {
+    let concluirConsulta
+    fixture.consultaVendas = new Promise((resolve) => {
+      concluirConsulta = resolve
+    })
+    const campoDia = root.querySelector('#dia-vendas')
+    campoDia.value = '2026-10-19'
+    campoDia.dispatchEvent(new Event('change'))
+    await tick()
+
+    expect(root.querySelector('[data-acao="exportar-vendas"]').disabled).toBe(true)
+    expect(root.querySelector('#relatorio-vendas-metadados').textContent).toContain('20/10/2026')
+
+    concluirConsulta({ dados: [], origem: 'neon' })
+    await tick()
+
+    expect(root.querySelector('[data-acao="exportar-vendas"]').disabled).toBe(false)
+    expect(root.querySelector('#relatorio-vendas-metadados').textContent).toContain('19/10/2026')
+    expect(root.querySelector('#relatorio-vendas-metadados').textContent).toContain('Neon Data API')
   })
 })
 
@@ -200,6 +368,37 @@ describe('exportação das vendas em CSV', () => {
     const { texto: csv } = await lerBlob(criarUrl.mock.calls[0][0])
     expect(csv).toContain('"Carlos Lima"')
     expect(csv).not.toContain('"Maria Souza"')
+  })
+
+  it('exporta somente as linhas que passam pelos filtros combinados', async () => {
+    root.querySelector('#filtro-vendas-status').value = 'Em preparo'
+    root.querySelector('#filtro-vendas-status').dispatchEvent(new Event('change'))
+    root.querySelector('#filtro-vendas-canal').value = 'plataforma:iFood'
+    root.querySelector('#filtro-vendas-canal').dispatchEvent(new Event('change'))
+    root.querySelector('#filtro-vendas-pagamento').value = 'Crédito'
+    root.querySelector('#filtro-vendas-pagamento').dispatchEvent(new Event('change'))
+
+    root.querySelector('[data-acao="exportar-vendas"]').click()
+
+    const { texto: csv } = await lerBlob(criarUrl.mock.calls[0][0])
+    expect(csv).toContain('"Carlos Lima"')
+    expect(csv).not.toContain('"Maria Souza"')
+  })
+
+  it('bloqueia a exportação quando o limite pode deixar o dia incompleto', () => {
+    fixture.vendas.push(...Array.from({ length: 298 }, () => fixture.vendas[1]))
+    root.querySelector('#busca-vendas').dispatchEvent(new Event('input', { bubbles: true }))
+
+    expect(root.querySelector('#contagem-vendas').textContent).toContain('mostrando os mais recentes')
+    expect(root.querySelector('#relatorio-vendas-metadados').textContent).toContain(
+      'O teto de 300 registros carregados também foi atingido; a amostra pode estar incompleta.',
+    )
+    root.querySelector('[data-acao="exportar-vendas"]').click()
+
+    expect(criarUrl).not.toHaveBeenCalled()
+    expect(document.querySelector('#toasts')?.textContent).toContain(
+      'Exportação bloqueada: o dia atingiu o limite de 300 pedidos',
+    )
   })
 
   it('avisa e não baixa arquivo quando o filtro não deixa nenhuma venda', () => {

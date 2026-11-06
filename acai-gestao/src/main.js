@@ -13,19 +13,26 @@ import {
 import { renderIcons } from './icons.js'
 import { esc, toast } from './ui.js'
 import { renderShell } from './layout/shell.js'
+import { mostrarSaidaDemonstracao } from './demo-saida.js'
 import { loginProjetosConfig } from './login-config.js'
-import { authConfigurado, neonConfigurado } from 'login-projetos/neon'
+import { authConfigurado, clienteAuth, neonConfigurado } from 'login-projetos/neon'
 import { createRouter } from './router.js'
 import { routes } from './routes.js'
 import { observarAuth, sair, sessaoAtual } from 'login-projetos/auth'
 import { carregarEmpresa, carregarLogo, urlDaLogo } from './services/empresa.js'
 import { carregarPermissoes, podeAcessar, sincronizarPermissoes } from './services/permissoes.js'
-import { EVENTOS_DADOS } from './services/base.js'
+import { classificarErroNeon, EVENTOS_DADOS, verificarConexaoNeon } from './services/base.js'
 import { contarNaoLidas, listarNotificacoes, marcarLida, marcarTodasLidas } from './services/notificacoes.js'
 import { estadoSessao, iniciais, logado } from 'login-projetos/sessao'
 import { initTheme } from './theme.js'
 import { dadosTesteHabilitados } from './demo-test-data.js'
 import { minhasFiliaisAutorizadas, selecionarFilial } from './services/filiais.js'
+import {
+  cancelarAprovacaoSaida,
+  confirmar,
+  confirmarSaidaComRascunhos,
+  suprimirProximoAvisoAntesDeSair,
+} from './formulario.js'
 
 const app = document.querySelector('#app')
 
@@ -45,6 +52,11 @@ configurarLogin(loginProjetosConfig)
 
 async function lerSessao() {
   try {
+    if (authConfigurado()) {
+      const { error } = await clienteAuth().auth.getSession({ forceFetch: true })
+      if (error) throw error
+    }
+
     const sessao = await sessaoAtual()
 
     estadoSessao.usuario = sessao?.usuario ?? null
@@ -67,9 +79,11 @@ async function lerSessao() {
       estadoSessao.aviso = `${motivo} Fale com um administrador.`
     } else {
       await carregarPermissoes()
+      estadoConexaoNeon = (await verificarConexaoNeon()).status
     }
   } catch (erro) {
     console.error('[auth] Nao foi possivel ler a sessao:', erro)
+    estadoConexaoNeon = classificarErroNeon(erro)
     estadoSessao.usuario = null
     estadoSessao.perfil = null
     estadoSessao.permissoes = new Set()
@@ -81,7 +95,8 @@ async function lerSessao() {
 
 let router = null
 let sincronizando = null
-const falhasCarregamento = new Set()
+const falhasCarregamento = new Map()
+let estadoConexaoNeon = neonConfigurado ? 'verificando' : 'nao-configurado'
 
 function sincronizar() {
   if (sincronizando) return sincronizando
@@ -95,9 +110,22 @@ function sincronizar() {
   return sincronizando
 }
 
-/* ==========================================================================
-   Guarda de rota
-   ========================================================================== */
+async function renovarSessao() {
+  if (!authConfigurado() || !logado()) return
+
+  try {
+    const { data, error } = await clienteAuth().auth.getSession({ forceFetch: true })
+    if (error) throw error
+    if (!data.session) await sincronizar()
+  } catch (erro) {
+    console.error('[auth] Não foi possível renovar a sessão automaticamente.', erro)
+  }
+}
+
+setInterval(() => void renovarSessao(), 10 * 60 * 1000)
+window.addEventListener('focus', () => void renovarSessao())
+
+/* Guarda de rota */
 
 function guarda(rota) {
   if (!authConfigurado()) return rota.publica ? '/' : null
@@ -195,23 +223,39 @@ function pintarOrigemDados() {
   pill.classList.remove('status-pill--ok', 'status-pill--exemplo', 'status-pill--erro')
 
   if (neonConfigurado) {
-    if (falhasCarregamento.size) {
+    const falha = [...falhasCarregamento.values()].at(-1)
+    const estado = falha ?? estadoConexaoNeon
+    const mensagens = {
+      conectado: ['Banco conectado', 'Conexão com o Neon confirmada.'],
+      verificando: ['Verificando banco', 'Aguardando confirmação de conexão com o Neon.'],
+      indisponivel: ['Banco indisponível', 'Falha de rede ou tempo limite ao acessar o banco. Verifique a conexão.'],
+      autenticacao: ['Falha de autenticação', 'A sessão não foi aceita pelo Neon Auth. Entre novamente.'],
+      permissao: ['Sem permissão', 'O banco recusou o acesso desta conta ou filial. Confira as permissões.'],
+      consulta: ['Erro no banco', 'O banco recusou a consulta. Confira o schema e as permissões.'],
+    }
+
+    if (estado !== 'conectado') {
       pill.classList.add('status-pill--erro')
-      texto.textContent = 'Falha ao carregar'
-      pill.title =
-        'A consulta ao banco falhou. Os números na tela podem ser de demonstração — recarregue para tentar de novo.'
+      const [rotulo, descricao] = mensagens[estado] ?? mensagens.consulta
+      texto.textContent = rotulo
+      pill.title = descricao
       return
     }
 
     pill.classList.add('status-pill--ok')
-    texto.textContent = 'Banco'
-    pill.title = 'Lendo dados do seu banco.'
+    const [rotulo, descricao] = mensagens.conectado
+    texto.textContent = rotulo
+    pill.title = descricao
   } else {
     pill.classList.add('status-pill--exemplo')
-    texto.textContent = dadosTesteHabilitados ? 'Teste fictício' : 'Dados de exemplo'
-    pill.title = dadosTesteHabilitados
-      ? 'Dados fictícios de demonstração; nenhuma alteração é gravada no banco.'
-      : 'Preencha VITE_NEON_URL no arquivo .env para usar dados reais.'
+    texto.textContent = import.meta.env.MODE === 'demo'
+      ? 'Demo local'
+      : dadosTesteHabilitados
+        ? 'Teste fictício'
+        : 'Dados de exemplo'
+    pill.title = import.meta.env.MODE === 'demo'
+      ? 'O modo demo não conecta ao banco. Para testar persistência, use npm run dev:teste com homologação sintética; não use a configuração de produção.'
+      : 'Dados de exemplo; operações críticas exigem conexão confirmada com o Neon.'
   }
 }
 
@@ -293,8 +337,6 @@ function montarShellApp(raiz) {
 
   raiz.querySelector('#btn-config')?.addEventListener('click', () => router.navigate('/configuracoes'))
 
-  if (!authConfigurado()) raiz.querySelector('#btn-sair')?.remove()
-
   const aoTeclar = (evento) => {
     if (evento.key === 'Escape') fecharMenu()
   }
@@ -308,6 +350,12 @@ function montarShellApp(raiz) {
 
   raiz.querySelector('#btn-sair')?.addEventListener('click', async (evento) => {
     const botao = evento.currentTarget
+    if (!authConfigurado()) {
+      mostrarSaidaDemonstracao(app, () => router?.navigate('/'))
+      return
+    }
+
+    if (!await confirmarSaidaComRascunhos()) return
     const tituloOriginal = botao.title
     botao.disabled = true
     botao.title = 'Saindo...'
@@ -322,6 +370,7 @@ function montarShellApp(raiz) {
       estadoSessao.carregando = false
       router?.navigate(config.rotas.depoisDoLogout)
     } catch (erro) {
+      cancelarAprovacaoSaida()
       console.error('[auth] Falha ao sair:', erro)
       botao.disabled = false
       botao.title = tituloOriginal
@@ -344,37 +393,45 @@ function montarShellApp(raiz) {
     if (!badge) return
     try {
       const n = await contarNaoLidas()
-      if (n > 0) { badge.textContent = n > 99 ? '99+' : String(n); badge.style.display = 'block' }
-      else { badge.style.display = 'none' }
-    } catch (e) { /* silencioso */ }
+      badge.textContent = n > 99 ? '99+' : String(n)
+      badge.hidden = n === 0
+    } catch (erro) {
+      console.error('[notificacoes] Falha ao consultar notificações não lidas.', erro)
+    }
+  }
+
+  function definirPainelNotif(aberto) {
+    if (!painel) return
+    painel.hidden = !aberto
+    btnNotif?.setAttribute('aria-expanded', String(aberto))
   }
 
   async function carregarPainel() {
     if (!lista) return
-    lista.innerHTML = '<p style="padding:8px;font-size:12px;color:var(--texto-fraco)">Carregando...</p>'
+    lista.innerHTML = '<p class="notif-estado">Carregando...</p>'
     try {
       const notifs = await listarNotificacoes(20)
       if (!notifs.length) {
-        lista.innerHTML = '<p style="padding:8px;font-size:12px;color:var(--texto-fraco)">Sem notificacoes.</p>'
+        lista.innerHTML = '<p class="notif-estado">Sem notificações.</p>'
         return
       }
       lista.innerHTML = notifs.map((n) => {
         const acao = n.tipo === 'novo_usuario_pendente' ? 'Definir perfil de acesso' : 'Ver'
         return `
-        <div style="padding:8px;border-bottom:1px solid var(--borda);${n.lida ? 'opacity:0.6' : ''}">
-          <div style="display:flex;justify-content:space-between;gap:6px">
-            <strong style="font-size:12px">${esc(n.titulo)}</strong>
-            ${n.lida ? '' : '<span style="font-size:10px;color:var(--alerta)">nova</span>'}
+        <article class="notif-item${n.lida ? ' is-lida' : ''}">
+          <div class="notif-item__top">
+            <strong class="notif-item__titulo">${esc(n.titulo)}</strong>
+            ${n.lida ? '' : '<span class="notif-item__nova">Nova</span>'}
           </div>
-          <p style="font-size:12px;margin:2px 0;color:var(--texto-suave)">${esc(n.mensagem)}</p>
-          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:4px;gap:6px;flex-wrap:wrap">
-            <span style="font-size:10px;color:var(--texto-fraco)">${esc(n.tipo || '')} · ${new Date(n.criado_em).toLocaleString('pt-BR')}</span>
-            <div style="display:flex;gap:4px">
+          <p class="notif-item__mensagem">${esc(n.mensagem)}</p>
+          <div class="notif-item__rodape">
+            <span class="notif-item__meta">${esc(n.tipo || '')} · ${new Date(n.criado_em).toLocaleString('pt-BR')}</span>
+            <div class="notif-item__acoes">
               ${n.link ? `<button class="btn btn--ghost btn--sm" type="button" data-notif-link="${esc(n.link)}" data-notif-id="${esc(n.id)}" data-notif-alvo="${esc(n.actor_id || '')}">${acao}</button>` : ''}
               ${!n.lida ? `<button class="btn btn--ghost btn--sm" type="button" data-notif-lida="${esc(n.id)}">Marcar lida</button>` : ''}
             </div>
           </div>
-        </div>
+        </article>
       `}).join('')
       renderIcons(lista)
 
@@ -388,20 +445,26 @@ function montarShellApp(raiz) {
       lista.querySelectorAll('[data-notif-link]').forEach((btn) => {
         btn.addEventListener('click', async () => {
           await marcarLida(btn.dataset.notifId)
-          painel.hidden = true
+          definirPainelNotif(false)
           window.__notifAlvo = btn.dataset.notifAlvo || null
           router?.navigate(btn.dataset.notifLink)
           await atualizarBadge()
         })
       })
-    } catch (e) {
-      lista.innerHTML = '<p style="padding:8px;font-size:12px;color:var(--texto-fraco)">Erro ao carregar.</p>'
+    } catch (erro) {
+      console.error('[notificacoes] Falha ao carregar o painel.', erro)
+      lista.innerHTML = '<p class="notif-estado" role="alert">Não foi possível carregar as notificações. Tente novamente.</p>'
     }
   }
 
+  const aoTeclarNotif = (evento) => {
+    if (evento.key === 'Escape' && painel && !painel.hidden) definirPainelNotif(false)
+  }
+  document.addEventListener('keydown', aoTeclarNotif)
+
   btnNotif?.addEventListener('click', async () => {
     if (!painel) return
-    painel.hidden = !painel.hidden
+    definirPainelNotif(painel.hidden)
     if (!painel.hidden) await carregarPainel()
   })
 
@@ -414,7 +477,7 @@ function montarShellApp(raiz) {
   // fecha painel ao clicar fora
   const aoClicarFora = (e) => {
     if (painel && !painel.hidden && !raiz.querySelector('#notif-wrap')?.contains(e.target)) {
-      painel.hidden = true
+      definirPainelNotif(false)
     }
   }
   document.addEventListener('click', aoClicarFora)
@@ -426,6 +489,7 @@ function montarShellApp(raiz) {
     limparSeletorFilial()
     clearInterval(intervalo)
     document.removeEventListener('click', aoClicarFora)
+    document.removeEventListener('keydown', aoTeclarNotif)
     document.removeEventListener('keydown', aoTeclar)
     window.removeEventListener('logo-mudou', aoAtualizarEmpresa)
     window.removeEventListener('empresa-mudou', aoAtualizarEmpresa)
@@ -454,11 +518,36 @@ function instalarSeletorFilial(raiz) {
 
     trocando = true
     seletor.disabled = true
+    status.textContent = 'Confirme a troca de filial.'
+    const confirmado = await confirmar({
+      titulo: 'Trocar filial operacional?',
+      descricao:
+        'A troca recarrega o sistema e pode descartar o que ainda não foi salvo nesta tela. Salve rascunhos e alterações antes de continuar.',
+      textoBotao: 'Trocar filial',
+    })
+    if (!confirmado) {
+      seletor.value = filialAnterior
+      seletor.disabled = false
+      status.textContent = 'Unidade operacional'
+      trocando = false
+      return
+    }
+
+    if (!await confirmarSaidaComRascunhos()) {
+      seletor.value = filialAnterior
+      seletor.disabled = false
+      status.textContent = 'Unidade operacional'
+      trocando = false
+      return
+    }
+
     status.textContent = 'Validando acesso...'
     try {
       await selecionarFilial(filialId)
+      suprimirProximoAvisoAntesDeSair()
       window.location.reload()
     } catch (erro) {
+      cancelarAprovacaoSaida()
       console.error('[filiais] Não foi possível atualizar o contexto operacional.', {
         code: erro?.code ?? 'sem código',
         name: erro?.name ?? 'Error',
@@ -526,11 +615,27 @@ async function iniciar() {
   initTheme()
 
   window.addEventListener(EVENTOS_DADOS.carregamentoFalhou, (evento) => {
-    falhasCarregamento.add(evento.detail?.nome ?? 'consulta')
+    const nome = evento.detail?.nome ?? 'consulta'
+    falhasCarregamento.set(`consulta:${nome}`, evento.detail?.categoria ?? 'consulta')
+    estadoConexaoNeon = evento.detail?.categoria ?? 'consulta'
     pintarOrigemDados()
   })
   window.addEventListener(EVENTOS_DADOS.carregamentoConcluido, (evento) => {
-    falhasCarregamento.delete(evento.detail?.nome ?? 'consulta')
+    const nome = evento.detail?.nome ?? 'consulta'
+    falhasCarregamento.delete(`consulta:${nome}`)
+    estadoConexaoNeon = 'conectado'
+    pintarOrigemDados()
+  })
+  window.addEventListener(EVENTOS_DADOS.operacaoFalhou, (evento) => {
+    const nome = evento.detail?.nome ?? 'operação'
+    falhasCarregamento.set(`operacao:${nome}`, evento.detail?.categoria ?? 'consulta')
+    estadoConexaoNeon = evento.detail?.categoria ?? 'consulta'
+    pintarOrigemDados()
+  })
+  window.addEventListener(EVENTOS_DADOS.operacaoConcluida, (evento) => {
+    const nome = evento.detail?.nome ?? 'operação'
+    falhasCarregamento.delete(`operacao:${nome}`)
+    estadoConexaoNeon = 'conectado'
     pintarOrigemDados()
   })
 
@@ -547,6 +652,7 @@ async function iniciar() {
     raiz: app,
     shells,
     guarda,
+    beforeNavigate: confirmarSaidaComRascunhos,
     onRender({ rota, path, outlet, shell }) {
       const rotulo = rota.title ?? rota.label
       document.title = `${rotulo} - Prime Acai`
@@ -556,11 +662,16 @@ async function iniciar() {
         const subtitulo = app.querySelector('#page-subtitle')
         const titulos = app.querySelector('.topbar__titles')
         const buscaGlobal = app.querySelector('#busca-global')
+        const controleBuscaGlobal = buscaGlobal?.closest('.search')
+        const buscaLocal = outlet.querySelector('input[type="search"]')
 
         if (titulo) titulo.textContent = rotulo
         if (subtitulo) subtitulo.textContent = rota.subtitle ?? ''
         if (titulos) titulos.hidden = Boolean(rota.hideTopbarTitle)
         if (buscaGlobal) buscaGlobal.value = ''
+        if (controleBuscaGlobal) {
+          controleBuscaGlobal.hidden = Boolean(buscaLocal) || rota.path === '/configuracoes'
+        }
 
         marcarMenuAtivo(path)
         fecharMenu()

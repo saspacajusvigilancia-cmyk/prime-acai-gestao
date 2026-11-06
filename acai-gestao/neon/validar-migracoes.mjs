@@ -41,6 +41,24 @@ const CASHIER = 'a0000000-0000-4000-8000-000000000002'
 const MANAGER = 'a0000000-0000-4000-8000-000000000003'
 const ADMIN2 = 'a0000000-0000-4000-8000-000000000004'
 const ADMIN_FILIAL2 = 'a0000000-0000-4000-8000-000000000005'
+const INVITED_ORG2 = 'a0000000-0000-4000-8000-000000000006'
+const TABELAS_CATALOGO_COMPARTILHADO = [
+  'categorias_produtos',
+  'clientes',
+  'fornecedores',
+  'formas_pagamento',
+  'produtos',
+  'tipos_venda',
+]
+const TABELAS_OPERACIONAIS_FILIAL = [
+  'compras',
+  'estoque_locais',
+  'fechamentos_buffet',
+  'lancamentos',
+  'movimentacoes_estoque',
+  'titulos_financeiros',
+  'vendas',
+]
 
 let falhas = 0
 const log = (texto = '') => console.log(texto)
@@ -51,7 +69,7 @@ const podeFalhar = (nome, detalhe) => {
 }
 const ok = (nome, extra = '') => log(`  ok    ${nome}${extra ? ` — ${extra}` : ''}`)
 
-const db = new PGlite()
+let db = new PGlite()
 const um = async (sql) => (await db.query(sql)).rows[0]
 const contar = async (sql) => Number((await um(sql)).n)
 
@@ -78,6 +96,125 @@ async function devePassar(nome, sql) {
   }
 }
 
+async function validarEscopoPorFilial() {
+  const tabelasFilial = (await db.query(`
+    select c.relname,
+           c.relrowsecurity,
+           exists (
+             select 1
+               from pg_policies p
+              where p.schemaname = 'public'
+                and p.tablename = c.relname
+                and p.policyname = 'isolamento_filial_ativo'
+                and p.permissive = 'RESTRICTIVE'
+                and p.roles @> array['authenticated']::name[]
+                and lower(coalesce(p.qual, '')) like '%filial_ativa%'
+                and lower(coalesce(p.with_check, '')) like '%filial_ativa%'
+                and (
+                  not exists (
+                    select 1
+                      from pg_attribute a
+                     where a.attrelid = c.oid
+                       and a.attname = 'organization_id'
+                       and a.attnum > 0
+                       and not a.attisdropped
+                  )
+                  or (
+                    lower(coalesce(p.qual, '')) like '%minha_organizacao%'
+                    and lower(coalesce(p.with_check, '')) like '%minha_organizacao%'
+                  )
+                )
+           ) as tem_politica_de_filial
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'public'
+       and c.relkind = 'r'
+       and c.relname not in ('profiles', 'acessos_filiais')
+       and exists (
+         select 1
+           from pg_attribute a
+          where a.attrelid = c.oid
+            and a.attname = 'filial_id'
+            and a.attnum > 0
+            and not a.attisdropped
+       )
+     order by c.relname
+  `)).rows
+  const semIsolamento = tabelasFilial
+    .filter((tabela) => !tabela.relrowsecurity || !tabela.tem_politica_de_filial)
+    .map((tabela) => tabela.relname)
+  const ausentes = TABELAS_OPERACIONAIS_FILIAL.filter(
+    (nome) => !tabelasFilial.some((tabela) => tabela.relname === nome),
+  )
+
+  if (semIsolamento.length === 0 && ausentes.length === 0) {
+    ok(
+      'escopo operacional por filial tem RLS restritiva em todas as tabelas dimensionadas',
+      `${tabelasFilial.length} tabelas; ${tabelasFilial.map((tabela) => tabela.relname).join(', ')}`,
+    )
+  } else {
+    podeFalhar(
+      'escopo operacional por filial',
+      `sem política/RLS: ${semIsolamento.join(', ') || 'nenhuma'}; ` +
+        `tabelas operacionais sem filial: ${ausentes.join(', ') || 'nenhuma'}`,
+    )
+  }
+
+  const catalogos = (await db.query(`
+    select c.relname,
+           bool_or(a.attname = 'organization_id') as tem_organizacao,
+           bool_or(a.attname = 'filial_id') as tem_filial
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+      join pg_attribute a
+        on a.attrelid = c.oid
+       and a.attnum > 0
+       and not a.attisdropped
+     where n.nspname = 'public'
+       and c.relkind = 'r'
+       and c.relname = any($1::text[])
+     group by c.relname
+  `, [TABELAS_CATALOGO_COMPARTILHADO])).rows
+  const catalogosIncorretos = TABELAS_CATALOGO_COMPARTILHADO.filter((nome) => {
+    const tabela = catalogos.find((item) => item.relname === nome)
+    return !tabela || !tabela.tem_organizacao || tabela.tem_filial
+  })
+
+  if (catalogosIncorretos.length === 0) {
+    ok(
+      'catálogos compartilhados permanecem no escopo da organização',
+      TABELAS_CATALOGO_COMPARTILHADO.join(', '),
+    )
+  } else {
+    podeFalhar('escopo dos catálogos compartilhados', catalogosIncorretos.join(', '))
+  }
+
+  const politicaItensCompra = await um(`
+    select c.relrowsecurity,
+           exists (
+             select 1
+               from pg_policies p
+              where p.schemaname = 'public'
+                and p.tablename = 'compras_itens'
+                and p.policyname = 'compras_itens_filial_ativa'
+                and p.permissive = 'RESTRICTIVE'
+                and p.roles @> array['authenticated']::name[]
+                and lower(coalesce(p.qual, '')) like '%compras%'
+                and lower(coalesce(p.with_check, '')) like '%compras%'
+           ) as politica
+      from pg_class c
+      join pg_namespace n on n.oid = c.relnamespace
+     where n.nspname = 'public'
+       and c.relname = 'compras_itens'
+       and c.relkind = 'r'
+  `)
+  if (politicaItensCompra?.relrowsecurity && politicaItensCompra.politica) {
+    ok('itens de compra herdam o escopo da filial pela compra vinculada')
+  } else {
+    podeFalhar('escopo de compras_itens', 'RLS ou política restritiva vinculada à compra ausente')
+  }
+}
+
 /* ------------------------------------------------------ ambiente Neon ------ */
 
 /**
@@ -88,19 +225,23 @@ async function devePassar(nome, sql) {
  * reproduz — e é por isso que os testes abaixo autenticam por
  * `request.jwt.claims` e não por `request.jwt.claim.sub`.
  */
-await db.exec(`
-  create role anonymous;
-  create role authenticated;
-  create schema if not exists auth;
-  create schema if not exists neon_auth;
-  create table if not exists neon_auth.user (id uuid primary key, email text);
+async function prepararBanco() {
+ await db.exec(`
+   create role anonymous;
+   create role authenticated;
+   create schema if not exists auth;
+   create schema if not exists neon_auth;
+   create table if not exists neon_auth.user (id uuid primary key, email text);
 
-  create or replace function auth.uid() returns uuid
-  language sql stable
-  as $$
-    select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid
-  $$;
-`)
+   create or replace function auth.uid() returns uuid
+   language sql stable
+   as $$
+     select (nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub')::uuid
+   $$;
+ `)
+}
+
+await prepararBanco()
 
 /**
  * `create extension "pgcrypto"` não existe no PGlite. No Postgres 13+ o
@@ -210,9 +351,58 @@ if (migracoes.length === 0) {
   console.error('\n  Nenhum arquivo NN_*.sql encontrado em neon/.\n')
   process.exit(1)
 }
-for (const arquivo of migracoes) await aplicar(arquivo)
+log('\n== A 00 não cria dados fictícios por padrão ==')
+await aplicar('00_banco_neon.sql')
+const registrosDeDemonstracao = await contar(`
+  select
+    (select count(*) from public.produtos) +
+    (select count(*) from public.clientes) +
+    (select count(*) from public.vendas) +
+    (select count(*) from public.itens_venda) +
+    (select count(*) from public.lancamentos) as n
+`)
+if (registrosDeDemonstracao === 0) {
+  ok('schema inicial vazio de dados operacionais de demonstração')
+} else {
+  podeFalhar('schema inicial vazio de dados operacionais de demonstração', `${registrosDeDemonstracao} registros`)
+}
+await db.close()
+db = new PGlite()
+await prepararBanco()
+await db.query(`select set_config('app.semear', 'on', false)`)
+// O roteiro abaixo verifica contratos históricos que criam vendas já
+// concluídas. A migration 43 altera esse contrato intencionalmente; ela é
+// exercitada em uma instância limpa ao final, após os testes legados.
+for (const arquivo of migracoes.filter((nome) => nome !== '43_fluxo_controlado_vendas.sql')) {
+  await aplicar(arquivo)
+}
 await aplicar('24_baixa_automatica_venda_direta.sql')
 await aplicar('38_isolamento_operacional_filiais.sql')
+await aplicar('39_buffet_rpcs_escopo_filial.sql')
+log('\n== Fase 2 · Matriz de escopo por organização e filial ==')
+await validarEscopoPorFilial()
+{
+  const privilegios = await um(`
+    select has_function_privilege(
+             'authenticated',
+             'public.saldo_estoque_local_v2(uuid,text)',
+             'execute'
+           ) as autenticado,
+           has_function_privilege(
+             'anonymous',
+             'public.saldo_estoque_local_v2(uuid,text)',
+             'execute'
+           ) as anonimo
+  `)
+  if (privilegios.autenticado && !privilegios.anonimo) {
+    ok('saldo por local disponível somente para authenticated')
+  } else {
+    podeFalhar(
+      'privilégio da consulta de saldo por local',
+      `authenticated=${privilegios.autenticado}; anonymous=${privilegios.anonimo}`,
+    )
+  }
+}
 
 // Passo manual do projeto (não casa com `NN_*.sql`, então o aplicar.mjs não o
 // pega): a versão de garantir_perfil() que lê e-mail e convite.
@@ -784,6 +974,31 @@ log('\n== Categorias de produtos: unicidade e isolamento por organização ==')
     insert into public.profiles (id, full_name, organization_id, role)
       values ('${ADMIN2}', 'Admin da Segunda Loja', '${ORG2}', 'admin');
   `)
+  await db.exec(`
+    alter table neon_auth.user add column if not exists name text;
+    insert into neon_auth.user (id, email, name)
+      values ('${INVITED_ORG2}', 'convite-org2@teste.local', 'Admin convidado da Segunda Loja');
+    insert into public.invites (organization_id, email, full_name, role, is_active)
+      values ('${ORG2}', 'convite-org2@teste.local', 'Admin convidado da Segunda Loja', 'admin', true);
+  `)
+  const perfilConvidadoOrg2 = await rpcComo(
+    INVITED_ORG2,
+    `select organization_id, role, is_active from public.garantir_perfil()`,
+  )
+  const conviteAplicado = perfilConvidadoOrg2.linhas[0]
+  if (
+    !perfilConvidadoOrg2.erro &&
+    conviteAplicado?.organization_id === ORG2 &&
+    conviteAplicado?.role === 'admin' &&
+    conviteAplicado?.is_active === true
+  ) {
+    ok('garantir_perfil aplica convite da organização do usuário antes de usar a organização padrão')
+  } else {
+    podeFalhar(
+      'convite para organização diferente da padrão',
+      perfilConvidadoOrg2.erro?.message ?? JSON.stringify(perfilConvidadoOrg2.linhas),
+    )
+  }
   const filialNovaOrg = await um(`
       select id, numero, tipo
         from public.filiais
@@ -1998,6 +2213,157 @@ log('\n== P2 · Estoque geral e transferências ==')
       'métricas do fechamento Buffet',
       resumoFechamento.erro?.message ?? JSON.stringify(metricasFechamento),
     )
+  }
+
+  const filialBuffet2 = await um(`
+    select id from public.filiais where organization_id = '${ORG}' and codigo <> 'MATRIZ'
+    order by numero limit 1
+  `)
+  const produtoBuffetFiliais = await um(`
+    insert into public.produtos (
+      organization_id, codigo, nome, categoria, tipo_venda, unidade, preco,
+      tipo_produto, controla_estoque, metodo_estoque, regra_baixa_estoque,
+      local_estoque_origem
+    ) values (
+      '${ORG}', 'TESTE-BUFFET-RPC-FILIAIS', 'Produto Buffet entre filiais',
+      'Teste', 'unidade', 'un', 1, 'insumo', true, 'movimentacoes',
+      'manual', 'estoque'
+    )
+    returning id
+  `)
+  const entradaBuffetFilial2 = await rpcComoEmSavepoint(
+    ADMIN_FILIAL2,
+    `select * from public.registrar_movimentacao_local_v3(
+      '${produtoBuffetFiliais.id}', 1, 'fornecedor', 'estoque',
+      'Entrada de teste da Loja 02', 'buffet-rpc-entrada-filial2-39')`,
+  )
+  const fechamentoAbertoFilial2 = await rpcComoEmSavepoint(
+    ADMIN_FILIAL2,
+    `select * from public.abrir_fechamento_buffet_turno('Teste filial 02')`,
+  )
+  const abastecimentoBuffetFilial2 = await rpcComoEmSavepoint(
+    ADMIN_FILIAL2,
+    `select * from public.transferir_estoque_local_v2(
+      '${produtoBuffetFiliais.id}', 1, 'loja', 'buffet',
+      'Abastecimento de teste Loja 02', 'buffet-rpc-abastecimento-filial2-39')`,
+  )
+  const perdaBuffetFilial2 = await rpcComoEmSavepoint(
+    ADMIN_FILIAL2,
+    `select * from public.registrar_perda_buffet(
+      '${produtoBuffetFiliais.id}', 0.5, 'outro',
+      'Teste local da Loja 02', 'buffet-rpc-perda-filial2-39')`,
+  )
+  const itensContadosFilial2 = (await db.query(`
+    select a.produto_id,
+           public.saldo_estoque_local_v2(a.produto_id, 'buffet') as quantidade
+      from public.fechamentos_buffet_abertura a
+     where a.fechamento_id = '${fechamentoAbertoFilial2.linhas[0]?.id}'
+  `)).rows.map((item) => ({
+    produto_id: item.produto_id,
+    quantidade: Number(item.quantidade),
+  }))
+  const payloadFechamentoFilial2 = JSON.stringify(itensContadosFilial2).replace(/'/g, "''")
+  const fechamentoFilial2Sql = `select * from public.fechar_fechamento_buffet(
+    '${fechamentoAbertoFilial2.linhas[0]?.id}',
+    '${payloadFechamentoFilial2}'::jsonb)`
+  const fechamentoFilial2 = await rpcComoEmSavepoint(ADMIN_FILIAL2, fechamentoFilial2Sql)
+  const fechamentosComoMatriz = await rpcComoEmSavepoint(
+    ADMIN,
+    'select * from public.listar_fechamentos_buffet()',
+  )
+  const fechamentosComoFilial2 = await rpcComoEmSavepoint(
+    ADMIN_FILIAL2,
+    'select * from public.listar_fechamentos_buffet()',
+  )
+  const itensComoMatriz = await rpcComoEmSavepoint(
+    ADMIN,
+    `select * from public.listar_itens_fechamento_buffet('${fechamentoAberto.linhas[0]?.id}')`,
+  )
+  const itensCruzados = await rpcComoEmSavepoint(
+    ADMIN,
+    `select * from public.listar_itens_fechamento_buffet('${fechamentoAbertoFilial2.linhas[0]?.id}')`,
+  )
+  const itensComoFilial2 = await rpcComoEmSavepoint(
+    ADMIN_FILIAL2,
+    `select * from public.listar_itens_fechamento_buffet('${fechamentoAbertoFilial2.linhas[0]?.id}')`,
+  )
+  const resumoCruzado = await rpcComoEmSavepoint(
+    ADMIN,
+    `select * from public.resumo_fechamento_buffet('${fechamentoAbertoFilial2.linhas[0]?.id}')`,
+  )
+  const resumoComoFilial2 = await rpcComoEmSavepoint(
+    ADMIN_FILIAL2,
+    `select * from public.resumo_fechamento_buffet('${fechamentoAbertoFilial2.linhas[0]?.id}')`,
+  )
+  const operacoesComoMatriz = await rpcComoEmSavepoint(
+    ADMIN,
+    `select * from public.listar_operacoes_buffet(null, null, '${produtoBuffetFiliais.id}')`,
+  )
+  const operacoesComoFilial2 = await rpcComoEmSavepoint(
+    ADMIN_FILIAL2,
+    `select * from public.listar_operacoes_buffet(null, null, '${produtoBuffetFiliais.id}')`,
+  )
+  const grantsBuffetRpcs = await um(`
+    select
+      bool_and(has_function_privilege('authenticated', signature, 'execute')) as autenticado,
+      bool_and(not has_function_privilege('anonymous', signature, 'execute')) as anonimo_bloqueado,
+      bool_and(p.prosecdef) as security_definer
+      from (values
+        ('public.listar_fechamentos_buffet()'),
+        ('public.listar_itens_fechamento_buffet(uuid)'),
+        ('public.listar_operacoes_buffet(date, date, uuid)'),
+        ('public.resumo_fechamento_buffet(uuid)')
+      ) as funcs(signature)
+      join pg_proc p on p.oid = signature::regprocedure
+  `)
+  if (
+    filialBuffet2?.id &&
+    !entradaBuffetFilial2.erro &&
+    !fechamentoAbertoFilial2.erro &&
+    !abastecimentoBuffetFilial2.erro &&
+    !perdaBuffetFilial2.erro &&
+    !fechamentoFilial2.erro &&
+    !fechamentosComoMatriz.erro &&
+    !fechamentosComoFilial2.erro &&
+    fechamentosComoMatriz.linhas.some((linha) => linha.id === fechamentoAberto.linhas[0]?.id) &&
+    !fechamentosComoMatriz.linhas.some((linha) => linha.id === fechamentoAbertoFilial2.linhas[0]?.id) &&
+    fechamentosComoFilial2.linhas.some((linha) => linha.id === fechamentoAbertoFilial2.linhas[0]?.id) &&
+    !itensComoMatriz.erro &&
+    itensComoMatriz.linhas.length > 0 &&
+    itensCruzados.erro &&
+    !itensComoFilial2.erro &&
+    itensComoFilial2.linhas.some((linha) => linha.produto_id === produtoBuffetFiliais.id) &&
+    resumoCruzado.erro &&
+    !resumoComoFilial2.erro &&
+    resumoComoFilial2.linhas.some((linha) => linha.produto_id === produtoBuffetFiliais.id) &&
+    !operacoesComoMatriz.erro &&
+    operacoesComoMatriz.linhas.length === 0 &&
+    !operacoesComoFilial2.erro &&
+    operacoesComoFilial2.linhas.some((linha) => linha.tipo === 'perda') &&
+    grantsBuffetRpcs.autenticado &&
+    grantsBuffetRpcs.anonimo_bloqueado &&
+    grantsBuffetRpcs.security_definer
+  ) {
+    ok('RPCs SECURITY DEFINER do Buffet isolam duas filiais da mesma organização em chamadas authenticated')
+  } else {
+    podeFalhar('isolamento das RPCs Buffet por filial', JSON.stringify({
+      filialBuffet2,
+      entradaBuffetFilial2: entradaBuffetFilial2.erro?.message,
+      fechamentoAbertoFilial2: fechamentoAbertoFilial2.erro?.message,
+      abastecimentoBuffetFilial2: abastecimentoBuffetFilial2.erro?.message,
+      perdaBuffetFilial2: perdaBuffetFilial2.erro?.message,
+      fechamentoFilial2: fechamentoFilial2.erro?.message,
+      fechamentosComoMatriz: fechamentosComoMatriz.erro?.message ?? fechamentosComoMatriz.linhas,
+      fechamentosComoFilial2: fechamentosComoFilial2.erro?.message ?? fechamentosComoFilial2.linhas,
+      itensComoMatriz: itensComoMatriz.erro?.message ?? itensComoMatriz.linhas,
+      itensCruzados: itensCruzados.erro?.message ?? itensCruzados.linhas,
+      itensComoFilial2: itensComoFilial2.erro?.message ?? itensComoFilial2.linhas,
+      resumoCruzado: resumoCruzado.erro?.message ?? resumoCruzado.linhas,
+      resumoComoFilial2: resumoComoFilial2.erro?.message ?? resumoComoFilial2.linhas,
+      operacoesComoMatriz: operacoesComoMatriz.erro?.message ?? operacoesComoMatriz.linhas,
+      operacoesComoFilial2: operacoesComoFilial2.erro?.message ?? operacoesComoFilial2.linhas,
+      grantsBuffetRpcs,
+    }))
   }
 
   const reabertura = await rpcComoEmSavepoint(
@@ -3281,9 +3647,107 @@ log('\n== Reversão conservadora da migração 37 ==')
   `)
 }
 
+log('\n== Proteção das reversões com dados operacionais ==')
+{
+  const casos = [
+    {
+      arquivo: 'reverter_25_estoque_buffet_locais_operacionais.sql',
+      mensagem: /movimentações criadas pelas operações locais da migração 25/i,
+      nome: 'reversão 25 preserva movimentos operacionais',
+    },
+    {
+      arquivo: 'reverter_38_isolamento_operacional_filiais.sql',
+      mensagem: /acessos explícitos a filiais/i,
+      nome: 'reversão 38 preserva acessos explícitos a filiais',
+    },
+    {
+      arquivo: 'reverter_39_buffet_rpcs_escopo_filial.sql',
+      mensagem: /reversão 39 abortada: a migration 38 ainda está instalada/i,
+      nome: 'reversão 39 recusa remover escopo de Buffet enquanto 38 está ativa',
+    },
+  ]
+
+  for (const caso of casos) {
+    await db.exec('begin')
+    let protegeuDados = false
+    try {
+      await db.exec(readFileSync(join(PASTA, caso.arquivo), 'utf8'))
+    } catch (erro) {
+      protegeuDados = caso.mensagem.test(erro.message)
+    } finally {
+      await db.exec('rollback').catch(() => {})
+    }
+
+    if (protegeuDados) ok(caso.nome)
+    else podeFalhar(caso.nome, 'a reversão não preservou os dados operacionais')
+  }
+}
+
+// Operações exercitadas acima criam dados que corretamente impedem algumas
+// reversões. A cadeia completa é validada em outra instância descartável limpa.
+await db.close()
+db = new PGlite()
+await prepararBanco()
+for (const arquivo of migracoes) await aplicar(arquivo)
+await aplicar('24_baixa_automatica_venda_direta.sql')
+await aplicar('38_isolamento_operacional_filiais.sql')
+await aplicar('39_buffet_rpcs_escopo_filial.sql')
+await aplicar('garantir_perfil_novo.sql')
+
+log('\n== 43 · Venda nova começa pendente ==')
+{
+  const defaultStatus = await um(`
+    select column_default
+      from information_schema.columns
+     where table_schema = 'public'
+       and table_name = 'vendas'
+       and column_name = 'status'
+  `)
+  if (defaultStatus?.column_default?.includes('Aguardando')) {
+    ok('status padrão de uma venda nova é Aguardando')
+  } else {
+    podeFalhar('status padrão da migration 43', JSON.stringify(defaultStatus))
+  }
+
+  await deveFalhar(
+    'banco impede inserir venda nova diretamente como concluída',
+    `insert into public.vendas (codigo, status, pagamento, total)
+     values ('#43-NEGADA', 'Concluída', 'Pix', 1)`,
+    'deve iniciar como Aguardando',
+  )
+
+  const rpcPreservada = await um(`
+    select count(*)::int as n
+      from pg_proc
+     where oid = 'public.registrar_venda(jsonb,text,uuid,text,text,text)'::regprocedure
+  `)
+  if (Number(rpcPreservada?.n) === 1) {
+    ok('RPC de venda mantém a assinatura usada pelas migrações anteriores')
+  } else {
+    podeFalhar('assinatura da RPC registrar_venda', JSON.stringify(rpcPreservada))
+  }
+}
+
 log('\n== Reversão ==')
+const reversoesComEscopoDeFilial = [
+  'reverter_38_isolamento_operacional_filiais.sql',
+  'reverter_39_buffet_rpcs_escopo_filial.sql',
+]
+try {
+  await db.exec('begin')
+  for (const arquivo of reversoesComEscopoDeFilial) {
+    await db.exec(readFileSync(join(PASTA, arquivo), 'utf8'))
+  }
+  await db.exec('commit')
+  for (const arquivo of reversoesComEscopoDeFilial) log(`  ok    ${arquivo}`)
+} catch (erro) {
+  await db.exec('rollback').catch(() => {})
+  podeFalhar('reversões 38/39 na mesma transação', erro.message)
+}
+
 for (const arquivo of readdirSync(PASTA)
   .filter((nome) => /^reverter_.*\.sql$/i.test(nome))
+  .filter((nome) => !reversoesComEscopoDeFilial.includes(nome))
   .sort()
   .reverse()) {
   try {
@@ -3335,6 +3799,49 @@ for (const arquivo of readdirSync(PASTA)
       where pronamespace = 'public'::regnamespace
         and proname = 'salvar_produto_com_imagem'`,
   )
+  const sobrasFilial38 = await contar(`
+    select
+      (select count(*) from information_schema.columns
+        where table_schema = 'public'
+          and table_name in (
+            'fechamentos_buffet', 'fechamentos_buffet_itens',
+            'fechamentos_buffet_abertura', 'perdas_buffet', 'devolucoes_buffet',
+            'estoque_operacoes_idempotencia', 'recebimentos_compra_idempotencia',
+            'estoque_operacoes_locais_v2'
+          )
+          and column_name = 'filial_id')
+      + (select count(*) from pg_policy where polname in (
+          'isolamento_filial_ativo', 'compras_itens_filial_ativa'))
+      + (select count(*) from pg_proc
+          where pronamespace = 'public'::regnamespace
+            and proname in (
+              'filial_ativa', 'minhas_filiais_autorizadas',
+              'selecionar_filial', 'listar_acessos_filiais',
+              'gerenciar_acesso_filial', 'bloquear_alteracao_direta_filial_perfil',
+              'validar_contexto_filial_operacional', 'validar_contexto_item_compra',
+              'criar_locais_estoque_da_filial'))
+      + (select count(*) from pg_trigger
+          where not tgisinternal
+            and tgname in (
+              'zz_validar_contexto_filial',
+              'bloquear_alteracao_direta_filial_perfil',
+              'criar_locais_estoque_da_filial'))
+      + (select count(*) from pg_class
+          where relkind = 'i'
+            and relname in (
+              'acessos_filiais_org_usuario_ativo_idx',
+              'acessos_filiais_filial_ativo_idx',
+              'fechamentos_buffet_filial_idx',
+              'fechamentos_buffet_itens_filial_idx',
+              'fechamentos_buffet_abertura_filial_idx',
+              'perdas_buffet_filial_idx', 'devolucoes_buffet_filial_idx',
+              'estoque_operacoes_idempotencia_filial_idx',
+              'recebimentos_compra_idempotencia_filial_idx',
+              'estoque_locais_org_filial_codigo_uidx',
+              'fechamento_buffet_um_aberto_por_filial'))
+      + case when to_regclass('public.acessos_filiais') is null then 0 else 1 end
+      as n
+  `)
 
   if (
     sobrou === 0 &&
@@ -3345,14 +3852,16 @@ for (const arquivo of readdirSync(PASTA)
     gatilhos === 0 &&
     colunasVenda === 0 &&
     colunasVendaTabela === 0 &&
-    !sequencia.seq
+    !sequencia.seq &&
+    sobrasFilial38 === 0
   ) {
-    ok('os reverters removeram a RPC e preservaram a tabela de imagens para evitar perda de arquivos')
+    ok('os reverters removeram os objetos esperados e preservaram imagens de produtos')
   } else {
     podeFalhar(
       'reversão incompleta',
       `colunas ${sobrou}, tabelas ${JSON.stringify(tabelas)}, RPC imagem ${imagemRpc}, funções ${sobraFuncao}, gatilhos ${gatilhos}, ` +
-        `colunas de item ${colunasVenda}, colunas de venda ${colunasVendaTabela}, sequência ${sequencia.seq}`,
+        `colunas de item ${colunasVenda}, colunas de venda ${colunasVendaTabela}, sequência ${sequencia.seq}, ` +
+        `objetos da migração 38 ${sobrasFilial38}`,
     )
   }
 }
