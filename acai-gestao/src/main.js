@@ -64,7 +64,10 @@ async function lerSessao() {
 
     const semAcesso = estadoSessao.usuario && (!estadoSessao.perfil || !estadoSessao.perfil.ativo)
 
-    if (semAcesso) {
+    if (!estadoSessao.usuario) {
+      estadoSessao.permissoes = new Set()
+      estadoConexaoNeon = neonConfigurado ? 'verificando' : 'nao-configurado'
+    } else if (semAcesso) {
       const motivo = estadoSessao.perfil
         ? (estadoSessao.perfil.aprovadoEm ? 'Esta conta esta desativada.' : 'Esta conta esta pendente de aprovacao pelo administrador.')
         : 'Nao encontramos o perfil desta conta.'
