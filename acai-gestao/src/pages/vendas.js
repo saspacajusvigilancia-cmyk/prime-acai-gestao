@@ -612,6 +612,8 @@ export function vendasPage() {
             placeholder: 'Ex.: cliente desistiu, pedido lançado em duplicidade...',
           }],
           textoBotao: 'Cancelar pedido',
+          fecharAoClicarFora: false,
+          fecharComEscape: false,
           aoSalvar: async ({ motivo }) => {
             const { dados: cancelada, origem } = await cancelarVendaPendente({
               vendaId: venda.uuid ?? null,
@@ -650,7 +652,7 @@ export function vendasPage() {
         modalDetalhes.setAttribute('aria-modal', 'true')
         modalDetalhes.setAttribute('aria-labelledby', 'venda-detalhe-titulo')
         modalDetalhes.innerHTML = `
-          <div class="modal__scrim" data-detalhe-fechar></div>
+          <div class="modal__scrim"></div>
           <section class="modal__caixa venda-detalhe__caixa">
             <header class="modal__head">
               <div>
@@ -779,6 +781,8 @@ export function vendasPage() {
             },
           ],
           textoBotao: 'Estornar venda',
+          fecharAoClicarFora: false,
+          fecharComEscape: false,
           aoSalvar: async ({ motivo }) => {
             const { dados: estornada, origem } = await estornarVenda({
               vendaId: venda.uuid ?? null,
@@ -970,6 +974,8 @@ export function vendasPage() {
               taxaAplicativo: 0,
             },
             textoBotao: 'Registrar venda',
+            fecharAoClicarFora: false,
+            fecharComEscape: false,
             aoSalvar: async (valores) => {
               const tipoVenda = tiposVenda.find((tipo) => tipo.id === valores.tipoVendaId)
               const formaPagamento = formasPagamento.find(

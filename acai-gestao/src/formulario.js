@@ -285,13 +285,24 @@ export function abrirFormulario({
   campos,
   valores = {},
   textoBotao = 'Salvar',
+  fecharAoClicarFora = true,
+  fecharComEscape = true,
   aoSalvar,
 }) {
   if (aberto && solicitarFechamentoAberto) {
     if (formularioAtualTemAlteracoes?.()) {
       void solicitarFechamentoAberto().then((podeAbrir) => {
         if (podeAbrir && !aberto) {
-          abrirFormulario({ titulo, descricao, campos, valores, textoBotao, aoSalvar })
+          abrirFormulario({
+            titulo,
+            descricao,
+            campos,
+            valores,
+            textoBotao,
+            fecharAoClicarFora,
+            fecharComEscape,
+            aoSalvar,
+          })
         }
       })
       return
@@ -304,7 +315,7 @@ export function abrirFormulario({
   const overlay = document.createElement('div')
   overlay.className = 'modal'
   overlay.innerHTML = `
-    <div class="modal__scrim" data-fechar></div>
+    <div class="modal__scrim"${fecharAoClicarFora ? ' data-fechar' : ''}></div>
     <div class="modal__caixa" role="dialog" aria-modal="true" aria-labelledby="modal-titulo">
       <header class="modal__head">
         <div>
@@ -391,6 +402,11 @@ export function abrirFormulario({
 
   function aoTeclar(evento) {
     if (evento.key === 'Escape') {
+      if (!fecharComEscape) {
+        evento.preventDefault()
+        evento.stopPropagation()
+        return
+      }
       if (!salvando && overlay.contains(document.activeElement)) {
         evento.preventDefault()
         evento.stopPropagation()

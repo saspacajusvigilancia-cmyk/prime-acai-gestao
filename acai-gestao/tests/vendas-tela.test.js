@@ -140,6 +140,54 @@ describe('formulário de venda por canal e forma de pagamento', () => {
     modal.querySelector('[data-fechar]').click()
   })
 
+  it('mantém a venda aberta e preserva os campos ao clicar fora ou pressionar Escape', async () => {
+    root.querySelector('[data-acao="nova-venda"]').click()
+    await tick()
+
+    const modal = document.querySelector('.modal')
+    const codigo = modal.querySelector('[name="codigo"]')
+    codigo.value = 'Rascunho preservado'
+    codigo.dispatchEvent(new Event('input', { bubbles: true }))
+
+    modal.querySelector('.modal__scrim').click()
+    modal.querySelector('.modal__caixa').click()
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true, cancelable: true }))
+
+    expect(document.querySelectorAll('.modal')).toHaveLength(1)
+    expect(document.querySelector('.modal')).toBe(modal)
+    expect(codigo.value).toBe('Rascunho preservado')
+  })
+
+  it('mantém o fechamento explícito pelo botão Cancelar e pelo X', async () => {
+    root.querySelector('[data-acao="nova-venda"]').click()
+    await tick()
+
+    document.querySelector('.modal__acoes [data-fechar]').click()
+    expect(document.querySelector('.modal')).toBeNull()
+
+    root.querySelector('[data-acao="nova-venda"]').click()
+    await tick()
+
+    document.querySelector('.modal__x').click()
+    expect(document.querySelector('.modal')).toBeNull()
+  })
+
+  it('pede confirmação explícita antes de descartar uma venda alterada', async () => {
+    root.querySelector('[data-acao="nova-venda"]').click()
+    await tick()
+
+    const codigo = document.querySelector('[name="codigo"]')
+    codigo.value = 'Pedido em edição'
+    codigo.dispatchEvent(new Event('input', { bubbles: true }))
+    document.querySelector('.modal__acoes [data-fechar]').click()
+
+    expect(document.querySelectorAll('.modal')).toHaveLength(2)
+    document.querySelector('.modal [data-cancelar]').click()
+    await tick()
+    expect(document.querySelectorAll('.modal')).toHaveLength(1)
+    expect(document.querySelector('[name="codigo"]').value).toBe('Pedido em edição')
+  })
+
   it('mostra campos de delivery, aplicativo e troco apenas quando aplicáveis', async () => {
     root.querySelector('[data-acao="nova-venda"]').click()
     await tick()
@@ -192,7 +240,10 @@ describe('ações contextuais e detalhes históricos', () => {
     expect(modal.textContent).toContain('Situação do pagamento')
     expect(modal.textContent).toContain('não são registrados separadamente')
     expect(modal.textContent).toContain('Dados de demonstração são temporários')
+    modal.querySelector('.modal__scrim').click()
+    expect(document.querySelector('.venda-detalhe')).toBe(modal)
     modal.querySelector('[data-detalhe-fechar]:not(.modal__scrim)').click()
+    expect(document.querySelector('.venda-detalhe')).toBeNull()
   })
 })
 
